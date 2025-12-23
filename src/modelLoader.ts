@@ -58,7 +58,7 @@ const CACHE_TIMEOUT = 5 * 60 * 1000;
 export function loadModels(forceReload: boolean = false): ModelInfo[] {
     const now = Date.now();
 
-    if (!forceReload && cachedModels && (now - lastLoadTime) < CACHE_TIMEOUT) {
+    if (!forceReload && cachedModels && now - lastLoadTime < CACHE_TIMEOUT) {
         return cachedModels;
     }
 
@@ -82,7 +82,7 @@ export function loadModels(forceReload: boolean = false): ModelInfo[] {
 export function loadPricing(forceReload: boolean = false): Record<string, ModelPricing> {
     const now = Date.now();
 
-    if (!forceReload && cachedPricing && (now - lastLoadTime) < CACHE_TIMEOUT) {
+    if (!forceReload && cachedPricing && now - lastLoadTime < CACHE_TIMEOUT) {
         return cachedPricing;
     }
 
@@ -106,7 +106,7 @@ export function loadPricing(forceReload: boolean = false): Record<string, ModelP
 export function loadEncodings(forceReload: boolean = false): Record<string, ModelEncoding> {
     const now = Date.now();
 
-    if (!forceReload && cachedEncodings && (now - lastLoadTime) < CACHE_TIMEOUT) {
+    if (!forceReload && cachedEncodings && now - lastLoadTime < CACHE_TIMEOUT) {
         return cachedEncodings;
     }
 
@@ -128,9 +128,9 @@ export function loadEncodings(forceReload: boolean = false): Record<string, Mode
  * Kiểm tra xem data files có tồn tại không
  */
 export function hasDataFiles(): boolean {
-    return fs.existsSync(MODELS_FILE) &&
-        fs.existsSync(PRICING_FILE) &&
-        fs.existsSync(ENCODINGS_FILE);
+    return (
+        fs.existsSync(MODELS_FILE) && fs.existsSync(PRICING_FILE) && fs.existsSync(ENCODINGS_FILE)
+    );
 }
 
 /**
@@ -163,10 +163,11 @@ export function findModel(modelId: string): ModelInfo | undefined {
     const models = loadModels();
     const id = modelId.toLowerCase();
 
-    return models.find(m =>
-        m.id.toLowerCase() === id ||
-        m.id.toLowerCase().endsWith('/' + id) ||
-        m.name.toLowerCase() === id
+    return models.find(
+        m =>
+            m.id.toLowerCase() === id ||
+            m.id.toLowerCase().endsWith('/' + id) ||
+            m.name.toLowerCase() === id
     );
 }
 

@@ -38,7 +38,7 @@ const MODEL_ENCODINGS: Record<string, ModelEncoding> = {
     'gpt-3.5-turbo-16k': 'cl100k_base',
     'gpt-3.5-turbo-instruct': 'cl100k_base',
     // OpenAI o1/o3 Reasoning Models
-    'o1': 'o200k_base',
+    o1: 'o200k_base',
     'o1-2024-12-17': 'o200k_base',
     'o1-preview': 'o200k_base',
     'o1-preview-2024-09-12': 'o200k_base',
@@ -53,10 +53,10 @@ const MODEL_ENCODINGS: Record<string, ModelEncoding> = {
     'text-davinci-003': 'p50k_base',
     'text-davinci-002': 'p50k_base',
     'code-davinci-002': 'p50k_base',
-    'davinci': 'r50k_base',
-    'curie': 'r50k_base',
-    'babbage': 'r50k_base',
-    'ada': 'r50k_base',
+    davinci: 'r50k_base',
+    curie: 'r50k_base',
+    babbage: 'r50k_base',
+    ada: 'r50k_base',
 
     // ==================== Anthropic Claude Models ====================
     // Claude 3.5 Series
@@ -142,7 +142,7 @@ const MODEL_ENCODINGS: Record<string, ModelEncoding> = {
     'mixtral-8x7b': 'cl100k_base',
     'mixtral-8x7b-instruct': 'cl100k_base',
     'mixtral-8x22b': 'cl100k_base',
-    'codestral': 'cl100k_base',
+    codestral: 'cl100k_base',
     'codestral-2405': 'cl100k_base',
     'pixtral-12b': 'cl100k_base',
     'ministral-3b': 'cl100k_base',
@@ -151,7 +151,7 @@ const MODEL_ENCODINGS: Record<string, ModelEncoding> = {
     // ==================== Cohere Models ====================
     'command-r-plus': 'cl100k_base',
     'command-r': 'cl100k_base',
-    'command': 'cl100k_base',
+    command: 'cl100k_base',
     'command-light': 'cl100k_base',
     'command-nightly': 'cl100k_base',
     'embed-english-v3.0': 'cl100k_base',
@@ -263,7 +263,7 @@ async function tryLoadEncodings(): Promise<Record<string, ModelEncoding>> {
 }
 
 // Khởi tạo load ngay khi module được import
-tryLoadEncodings().catch(() => { });
+tryLoadEncodings().catch(() => {});
 
 export function getEncodingForModel(model: string): ModelEncoding {
     const modelLower = model.toLowerCase();

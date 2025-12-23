@@ -4,7 +4,12 @@
 
 import { countTokens, countTokensBatch, getSupportedModels } from './tokenCounter.js';
 import { UsageTracker } from './usageTracker.js';
-import { calculateCost, compareCosts, getAvailableModels, estimateProjectCost } from './costCalculator.js';
+import {
+    calculateCost,
+    compareCosts,
+    getAvailableModels,
+    estimateProjectCost,
+} from './costCalculator.js';
 
 // Test Token Counter
 console.log('=== Testing Token Counter ===');
@@ -12,7 +17,9 @@ console.log('=== Testing Token Counter ===');
 const text1 = 'Hello, how are you today?';
 const result1 = countTokens(text1, 'gpt-4');
 console.log(`Text: "${text1}"`);
-console.log(`Tokens: ${result1.tokenCount} (model: ${result1.model}, encoding: ${result1.encoding})`);
+console.log(
+    `Tokens: ${result1.tokenCount} (model: ${result1.model}, encoding: ${result1.encoding})`
+);
 
 const text2 = 'Xin chào, bạn có khỏe không?';
 const result2 = countTokens(text2, 'gpt-4');

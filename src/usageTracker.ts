@@ -116,8 +116,8 @@ export class UsageTracker {
      * Lấy records theo model
      */
     getRecordsByModel(model: string): UsageRecord[] {
-        return this.records.filter(
-            record => record.model.toLowerCase().includes(model.toLowerCase())
+        return this.records.filter(record =>
+            record.model.toLowerCase().includes(model.toLowerCase())
         );
     }
 
