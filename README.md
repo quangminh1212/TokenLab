@@ -7,22 +7,28 @@ A Model Context Protocol (MCP) server for token counting, usage tracking, and co
 - **🔢 Token Counting**: Accurate token counting using [tiktoken](https://github.com/openai/tiktoken) - the official OpenAI tokenizer
 - **📊 Usage Tracking**: Track input/output tokens per session with detailed statistics
 - **💰 Cost Calculation**: Calculate costs based on real pricing from major LLM providers
-- **📈 Model Comparison**: Compare costs across different models (GPT-4, Claude, Gemini, etc.)
+- **📈 Model Comparison**: Compare costs across different models
 - **🎯 Project Estimation**: Estimate monthly/yearly costs for your AI projects
+- **🔄 Auto-Update**: Crawl latest model data from OpenRouter API
 
 ## Supported Models
 
-### Token Counting
-- GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o Mini
-- GPT-3.5 Turbo
-- Claude 3/3.5 (approximate)
-- Legacy models (davinci, curie, etc.)
+### 350+ Models from 15+ Providers
 
-### Pricing
-- **OpenAI**: GPT-4o, GPT-4o Mini, GPT-4 Turbo, GPT-4, GPT-3.5 Turbo
-- **Anthropic**: Claude 3.5 Sonnet/Haiku, Claude 3 Opus/Sonnet/Haiku
-- **Google**: Gemini 1.5 Pro/Flash
-- **DeepSeek**: DeepSeek Chat
+| Provider | Models |
+|----------|--------|
+| **OpenAI** | GPT-4o, GPT-4o Mini, GPT-4 Turbo, o1, o3-mini, Embeddings |
+| **Anthropic** | Claude 3.5 Sonnet/Haiku, Claude 3 Opus/Sonnet/Haiku |
+| **Google** | Gemini 2.0, Gemini 1.5 Pro/Flash |
+| **Meta** | Llama 3.3, 3.2, 3.1, Code Llama |
+| **Mistral** | Mistral Large/Medium/Small, Mixtral, Codestral |
+| **DeepSeek** | DeepSeek V3, Chat, Coder |
+| **Alibaba** | Qwen Max/Plus/Turbo, Qwen 2.5 |
+| **xAI** | Grok 2, Grok Vision |
+| **Cohere** | Command R+, Command R |
+| **Amazon** | Nova Pro/Lite/Micro, Titan |
+| **AI21** | Jamba 1.5, Jurassic-2 |
+| **+ More** | Perplexity, Yi, GLM, Inflection... |
 
 ## Installation
 
@@ -55,6 +61,16 @@ Add to your MCP client configuration:
 }
 ```
 
+### Update Model Data
+
+```bash
+# Update pricing data from OpenRouter API
+npm run update-models
+
+# Or use the batch script (Windows)
+update-models.bat
+```
+
 ### Development
 
 ```bash
@@ -66,6 +82,31 @@ npm test
 
 # Lint
 npm run lint
+```
+
+## Project Structure
+
+```
+MCP_TokenSage/
+├── src/
+│   ├── index.ts          # MCP Server với 10 tools
+│   ├── tokenCounter.ts   # Token counting với tiktoken
+│   ├── costCalculator.ts # Cost calculation với pricing data
+│   ├── usageTracker.ts   # Session usage tracking
+│   ├── crawler.ts        # OpenRouter API crawler
+│   ├── modelLoader.ts    # Data loader với caching
+│   ├── config.ts         # Configuration constants
+│   ├── types.ts          # TypeScript type definitions
+│   └── test.ts           # Test suite
+├── data/
+│   ├── models.json       # Full model data (từ crawler)
+│   ├── pricing.json      # Pricing data
+│   └── encodings.json    # Token encoding mappings
+├── dist/                 # Build output
+├── package.json
+├── tsconfig.json
+├── update-models.bat     # Windows script để update data
+└── README.md
 ```
 
 ## Available Tools
@@ -176,6 +217,29 @@ Reset usage statistics.
   }
 }
 ```
+
+### Model Comparison (Top 5 Cheapest)
+```
+1. Gemini 2.0 Flash Exp: $0.0000
+2. DeepSeek Chat: $0.0700
+3. GPT-4o Mini: $0.1350
+4. Claude 3 Haiku: $0.2750
+5. Mistral Small: $0.8000
+```
+
+## Configuration
+
+Configuration is centralized in `src/config.ts`:
+
+- **Cache timeout**: 5 minutes
+- **Default encoding**: cl100k_base
+- **Cost decimals**: 6 places
+- **API endpoints**: OpenRouter
+
+## Data Sources
+
+- **Primary**: [OpenRouter API](https://openrouter.ai/api/v1/models) - 350+ models with real-time pricing
+- **Fallback**: Hardcoded data in `costCalculator.ts` - Updated December 2024
 
 ## License
 
