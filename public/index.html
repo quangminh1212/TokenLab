@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP TokenSage - Token Counter & Cost Calculator</title>
+    <meta name="description" content="Token counting, usage tracking, and cost calculation for 350+ LLM models">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a24;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0b0;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --success: #10b981;
+            --border: #2a2a3a;
+            --gradient-1: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #d946ef 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header */
+        header {
+            padding: 24px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--gradient-1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 24px;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        /* Hero */
+        .hero {
+            padding: 80px 0;
+            text-align: center;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 24px;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto 40px;
+        }
+
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 48px;
+            margin-bottom: 48px;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .cta-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+        }
+
+        .btn {
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+            font-size: 1rem;
+        }
+
+        .btn-primary {
+            background: var(--gradient-1);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-secondary);
+            border-color: var(--accent);
+        }
+
+        /* Demo Section */
+        .demo-section {
+            padding: 80px 0;
+        }
+
+        .demo-section h2 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 48px;
+        }
+
+        .demo-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+        }
+
+        .demo-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid var(--border);
+        }
+
+        .demo-card h3 {
+            margin-bottom: 16px;
+            color: var(--accent);
+        }
+
+        .demo-input {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 1rem;
+            margin-bottom: 16px;
+            font-family: inherit;
+        }
+
+        .demo-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        textarea.demo-input {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        select.demo-input {
+            cursor: pointer;
+        }
+
+        .demo-result {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            color: var(--success);
+            min-height: 80px;
+        }
+
+        /* Features */
+        .features {
+            padding: 80px 0;
+            background: var(--bg-secondary);
+        }
+
+        .features h2 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 48px;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 32px;
+            border: 1px solid var(--border);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent);
+        }
+
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: 16px;
+        }
+
+        .feature-card h3 {
+            margin-bottom: 12px;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+        }
+
+        /* API Docs */
+        .api-docs {
+            padding: 80px 0;
+        }
+
+        .api-docs h2 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 48px;
+        }
+
+        .api-endpoint {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 16px;
+            border: 1px solid var(--border);
+        }
+
+        .api-method {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            margin-right: 12px;
+        }
+
+        .api-method.get {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+        }
+
+        .api-method.post {
+            background: rgba(99, 102, 241, 0.2);
+            color: #6366f1;
+        }
+
+        .api-path {
+            font-family: 'Monaco', 'Consolas', monospace;
+            color: var(--text-primary);
+        }
+
+        .api-desc {
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        /* Footer */
+        footer {
+            padding: 48px 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .hero-stats {
+                flex-direction: column;
+                gap: 24px;
+            }
+
+            .demo-container {
+                grid-template-columns: 1fr;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container header-content">
+            <div class="logo">
+                <div class="logo-icon">🔢</div>
+                <span>TokenSage</span>
+            </div>
+            <nav class="nav-links">
+                <a href="#demo">Demo</a>
+                <a href="#features">Features</a>
+                <a href="#api">API</a>
+                <a href="https://github.com/quangminh1212/MCP_TokenSage" target="_blank">GitHub</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h1>Token Counter & Cost Calculator</h1>
+                <p>Accurate token counting, usage tracking, and cost calculation for 350+ LLM models from OpenAI, Anthropic, Google, Meta, and more.</p>
+                
+                <div class="hero-stats">
+                    <div class="stat">
+                        <div class="stat-value" id="modelCount">350+</div>
+                        <div class="stat-label">Models Supported</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">15+</div>
+                        <div class="stat-label">Providers</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">10</div>
+                        <div class="stat-label">API Tools</div>
+                    </div>
+                </div>
+
+                <div class="cta-buttons">
+                    <a href="#demo" class="btn btn-primary">Try Demo</a>
+                    <a href="https://github.com/quangminh1212/MCP_TokenSage" class="btn btn-secondary" target="_blank">View on GitHub</a>
+                </div>
+            </div>
+        </section>
+
+        <section class="demo-section" id="demo">
+            <div class="container">
+                <h2>Try It Now</h2>
+                
+                <div class="demo-container">
+                    <div class="demo-card">
+                        <h3>🔢 Token Counter</h3>
+                        <textarea class="demo-input" id="tokenText" placeholder="Enter your text here...">Hello, how are you today? This is a test message to count tokens.</textarea>
+                        <select class="demo-input" id="tokenModel">
+                            <option value="gpt-4">GPT-4</option>
+                            <option value="gpt-4o">GPT-4o</option>
+                            <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                            <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="countTokens()">Count Tokens</button>
+                        <div class="demo-result" id="tokenResult">Click "Count Tokens" to see the result...</div>
+                    </div>
+
+                    <div class="demo-card">
+                        <h3>💰 Cost Calculator</h3>
+                        <input type="number" class="demo-input" id="inputTokens" placeholder="Input tokens" value="10000">
+                        <input type="number" class="demo-input" id="outputTokens" placeholder="Output tokens" value="20000">
+                        <select class="demo-input" id="costModel">
+                            <option value="gpt-4o">GPT-4o ($2.5/$10 per 1M)</option>
+                            <option value="gpt-4o-mini">GPT-4o Mini ($0.15/$0.60 per 1M)</option>
+                            <option value="claude-3.5-sonnet">Claude 3.5 Sonnet ($3/$15 per 1M)</option>
+                            <option value="gemini-1.5-flash">Gemini 1.5 Flash ($0.075/$0.30 per 1M)</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="calculateCost()">Calculate Cost</button>
+                        <div class="demo-result" id="costResult">Click "Calculate Cost" to see the result...</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="features" id="features">
+            <div class="container">
+                <h2>Features</h2>
+                
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">🔢</div>
+                        <h3>Accurate Token Counting</h3>
+                        <p>Uses tiktoken - the official OpenAI tokenizer for precise token counts.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">💰</div>
+                        <h3>Real-time Pricing</h3>
+                        <p>Up-to-date pricing from OpenRouter API for 350+ models.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📊</div>
+                        <h3>Usage Tracking</h3>
+                        <p>Track token usage per session with detailed statistics.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📈</div>
+                        <h3>Model Comparison</h3>
+                        <p>Compare costs across different models to find the best value.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🎯</div>
+                        <h3>Project Estimation</h3>
+                        <p>Estimate monthly costs for your AI projects.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3>MCP Compatible</h3>
+                        <p>Works with Claude Desktop and other MCP clients.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="api-docs" id="api">
+            <div class="container">
+                <h2>API Endpoints</h2>
+                
+                <div class="api-endpoint">
+                    <span class="api-method get">GET</span>
+                    <span class="api-path">/api/mcp</span>
+                    <p class="api-desc">Get API info and list of available tools</p>
+                </div>
+                
+                <div class="api-endpoint">
+                    <span class="api-method post">POST</span>
+                    <span class="api-path">/api/mcp</span>
+                    <p class="api-desc">Execute a tool. Body: { "tool": "count_tokens", "args": { "text": "Hello", "model": "gpt-4" } }</p>
+                </div>
+                
+                <div class="api-endpoint">
+                    <span class="api-method get">GET</span>
+                    <span class="api-path">/api/health</span>
+                    <p class="api-desc">Health check endpoint</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>Built with ❤️ by <a href="https://github.com/quangminh1212">quangminh1212</a></p>
+            <p style="margin-top: 8px;">Powered by <a href="https://openrouter.ai">OpenRouter</a> | <a href="https://github.com/openai/tiktoken">tiktoken</a></p>
+        </div>
+    </footer>
+
+    <script>
+        const API_BASE = '/api/mcp';
+
+        async function countTokens() {
+            const text = document.getElementById('tokenText').value;
+            const model = document.getElementById('tokenModel').value;
+            const resultEl = document.getElementById('tokenResult');
+            
+            resultEl.textContent = 'Loading...';
+            
+            try {
+                const res = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tool: 'count_tokens',
+                        args: { text, model }
+                    })
+                });
+                const data = await res.json();
+                resultEl.textContent = JSON.stringify(data.result, null, 2);
+            } catch (error) {
+                resultEl.textContent = 'Error: ' + error.message;
+            }
+        }
+
+        async function calculateCost() {
+            const inputTokens = parseInt(document.getElementById('inputTokens').value);
+            const outputTokens = parseInt(document.getElementById('outputTokens').value);
+            const model = document.getElementById('costModel').value;
+            const resultEl = document.getElementById('costResult');
+            
+            resultEl.textContent = 'Loading...';
+            
+            try {
+                const res = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tool: 'calculate_cost',
+                        args: { 
+                            model, 
+                            input_tokens: inputTokens, 
+                            output_tokens: outputTokens 
+                        }
+                    })
+                });
+                const data = await res.json();
+                const result = data.result;
+                resultEl.textContent = `Model: ${result.model}
+Input: ${result.inputTokens.toLocaleString()} tokens → $${result.inputCost.toFixed(4)}
+Output: ${result.outputTokens.toLocaleString()} tokens → $${result.outputCost.toFixed(4)}
+Total: $${result.totalCost.toFixed(4)} USD`;
+            } catch (error) {
+                resultEl.textContent = 'Error: ' + error.message;
+            }
+        }
+
+        // Load model count on page load
+        fetch('/api/health')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('modelCount').textContent = data.stats.pricingModels + '+';
+            })
+            .catch(() => {});
+    </script>
+</body>
+</html>
