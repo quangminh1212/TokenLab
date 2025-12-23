@@ -10,7 +10,9 @@
     "dev": "tsx src/index.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "lint": "eslint src/**/*.ts",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "update-models": "tsx src/crawler.ts",
+    "crawl": "tsx src/crawler.ts"
   },
   "keywords": [
     "mcp",
