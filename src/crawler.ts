@@ -67,18 +67,18 @@ interface CrawlResult {
 
 // Encoding mapping cho token counting
 const TOKENIZER_TO_ENCODING: Record<string, string> = {
-    'tiktoken': 'cl100k_base',
-    'cl100k_base': 'cl100k_base',
-    'o200k_base': 'o200k_base',
-    'p50k_base': 'p50k_base',
-    'r50k_base': 'r50k_base',
+    tiktoken: 'cl100k_base',
+    cl100k_base: 'cl100k_base',
+    o200k_base: 'o200k_base',
+    p50k_base: 'p50k_base',
+    r50k_base: 'r50k_base',
     // Các model mới của OpenAI thường dùng o200k_base
     'gpt-4o': 'o200k_base',
     'gpt-4': 'cl100k_base',
-    'claude': 'cl100k_base',
-    'llama': 'cl100k_base',
-    'mistral': 'cl100k_base',
-    'gemini': 'cl100k_base',
+    claude: 'cl100k_base',
+    llama: 'cl100k_base',
+    mistral: 'cl100k_base',
+    gemini: 'cl100k_base',
 };
 
 /**
@@ -104,7 +104,12 @@ function determineEncoding(modelId: string, tokenizer?: string): string {
     }
 
     // Legacy OpenAI
-    if (id.includes('davinci') || id.includes('curie') || id.includes('babbage') || id.includes('ada')) {
+    if (
+        id.includes('davinci') ||
+        id.includes('curie') ||
+        id.includes('babbage') ||
+        id.includes('ada')
+    ) {
         if (id.includes('text-davinci-003') || id.includes('text-davinci-002')) {
             return 'p50k_base';
         }
@@ -155,7 +160,7 @@ async function crawlOpenRouter(): Promise<CrawlResult> {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        const data = await response.json() as { data: OpenRouterModel[] };
+        const data = (await response.json()) as { data: OpenRouterModel[] };
         const models: ModelInfo[] = [];
 
         for (const model of data.data) {
@@ -223,20 +228,26 @@ function generateEncodingMap(models: ModelInfo[]): Record<string, string> {
 /**
  * Tạo file pricing từ models data
  */
-function generatePricingMap(models: ModelInfo[]): Record<string, {
-    name: string;
-    inputPricePer1M: number;
-    outputPricePer1M: number;
-    contextWindow: number;
-    description: string;
-}> {
-    const pricing: Record<string, {
+function generatePricingMap(models: ModelInfo[]): Record<
+    string,
+    {
         name: string;
         inputPricePer1M: number;
         outputPricePer1M: number;
         contextWindow: number;
         description: string;
-    }> = {};
+    }
+> {
+    const pricing: Record<
+        string,
+        {
+            name: string;
+            inputPricePer1M: number;
+            outputPricePer1M: number;
+            contextWindow: number;
+            description: string;
+        }
+    > = {};
 
     for (const model of models) {
         // Dùng ID ngắn cho key

@@ -29,7 +29,7 @@ async function tryLoadPricing(): Promise<Record<string, ModelPricing>> {
 }
 
 // Initialize on module load
-tryLoadPricing().catch(() => { });
+tryLoadPricing().catch(() => {});
 
 // Fallback Pricing data (Updated December 2024)
 // Prices are in USD per 1 Million tokens
@@ -38,110 +38,110 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // GPT-4o Series
     'gpt-4o': {
         name: 'GPT-4o',
-        inputPricePer1M: 2.50,
-        outputPricePer1M: 10.00,
+        inputPricePer1M: 2.5,
+        outputPricePer1M: 10.0,
         contextWindow: 128000,
         description: 'Most capable multimodal GPT-4 model',
     },
     'gpt-4o-2024-11-20': {
         name: 'GPT-4o (Nov 2024)',
-        inputPricePer1M: 2.50,
-        outputPricePer1M: 10.00,
+        inputPricePer1M: 2.5,
+        outputPricePer1M: 10.0,
         contextWindow: 128000,
         description: 'GPT-4o November 2024 snapshot',
     },
     'gpt-4o-mini': {
         name: 'GPT-4o Mini',
         inputPricePer1M: 0.15,
-        outputPricePer1M: 0.60,
+        outputPricePer1M: 0.6,
         contextWindow: 128000,
         description: 'Affordable small GPT-4o variant',
     },
     'chatgpt-4o-latest': {
         name: 'ChatGPT-4o Latest',
-        inputPricePer1M: 5.00,
-        outputPricePer1M: 15.00,
+        inputPricePer1M: 5.0,
+        outputPricePer1M: 15.0,
         contextWindow: 128000,
         description: 'Latest ChatGPT model',
     },
     // GPT-4 Turbo Series
     'gpt-4-turbo': {
         name: 'GPT-4 Turbo',
-        inputPricePer1M: 10.00,
-        outputPricePer1M: 30.00,
+        inputPricePer1M: 10.0,
+        outputPricePer1M: 30.0,
         contextWindow: 128000,
         description: 'GPT-4 with 128K context',
     },
     'gpt-4-turbo-preview': {
         name: 'GPT-4 Turbo Preview',
-        inputPricePer1M: 10.00,
-        outputPricePer1M: 30.00,
+        inputPricePer1M: 10.0,
+        outputPricePer1M: 30.0,
         contextWindow: 128000,
         description: 'GPT-4 Turbo preview version',
     },
     // GPT-4 Base Series
     'gpt-4': {
         name: 'GPT-4',
-        inputPricePer1M: 30.00,
-        outputPricePer1M: 60.00,
+        inputPricePer1M: 30.0,
+        outputPricePer1M: 60.0,
         contextWindow: 8192,
         description: 'Original GPT-4 8K model',
     },
     'gpt-4-32k': {
         name: 'GPT-4 32K',
-        inputPricePer1M: 60.00,
-        outputPricePer1M: 120.00,
+        inputPricePer1M: 60.0,
+        outputPricePer1M: 120.0,
         contextWindow: 32768,
         description: 'GPT-4 with 32K context',
     },
     // GPT-3.5 Turbo Series
     'gpt-3.5-turbo': {
         name: 'GPT-3.5 Turbo',
-        inputPricePer1M: 0.50,
-        outputPricePer1M: 1.50,
+        inputPricePer1M: 0.5,
+        outputPricePer1M: 1.5,
         contextWindow: 16385,
         description: 'Fast and affordable',
     },
     'gpt-3.5-turbo-16k': {
         name: 'GPT-3.5 Turbo 16K',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 4.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 4.0,
         contextWindow: 16385,
         description: 'GPT-3.5 with 16K context',
     },
     'gpt-3.5-turbo-instruct': {
         name: 'GPT-3.5 Turbo Instruct',
-        inputPricePer1M: 1.50,
-        outputPricePer1M: 2.00,
+        inputPricePer1M: 1.5,
+        outputPricePer1M: 2.0,
         contextWindow: 4096,
         description: 'Instruction-tuned GPT-3.5',
     },
     // OpenAI o1/o3 Reasoning Models
-    'o1': {
+    o1: {
         name: 'o1',
-        inputPricePer1M: 15.00,
-        outputPricePer1M: 60.00,
+        inputPricePer1M: 15.0,
+        outputPricePer1M: 60.0,
         contextWindow: 200000,
         description: 'OpenAI reasoning model',
     },
     'o1-preview': {
         name: 'o1 Preview',
-        inputPricePer1M: 15.00,
-        outputPricePer1M: 60.00,
+        inputPricePer1M: 15.0,
+        outputPricePer1M: 60.0,
         contextWindow: 128000,
         description: 'o1 preview version',
     },
     'o1-mini': {
         name: 'o1 Mini',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 12.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 12.0,
         contextWindow: 128000,
         description: 'Smaller o1 variant',
     },
     'o3-mini': {
         name: 'o3 Mini',
-        inputPricePer1M: 1.10,
-        outputPricePer1M: 4.40,
+        inputPricePer1M: 1.1,
+        outputPricePer1M: 4.4,
         contextWindow: 200000,
         description: 'Latest reasoning model',
     },
@@ -149,21 +149,21 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     'text-embedding-3-large': {
         name: 'Embedding 3 Large',
         inputPricePer1M: 0.13,
-        outputPricePer1M: 0.00,
+        outputPricePer1M: 0.0,
         contextWindow: 8191,
         description: 'Best embedding model',
     },
     'text-embedding-3-small': {
         name: 'Embedding 3 Small',
         inputPricePer1M: 0.02,
-        outputPricePer1M: 0.00,
+        outputPricePer1M: 0.0,
         contextWindow: 8191,
         description: 'Affordable embedding model',
     },
     'text-embedding-ada-002': {
         name: 'Embedding Ada 002',
-        inputPricePer1M: 0.10,
-        outputPricePer1M: 0.00,
+        inputPricePer1M: 0.1,
+        outputPricePer1M: 0.0,
         contextWindow: 8191,
         description: 'Legacy embedding model',
     },
@@ -172,44 +172,44 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // Claude 3.5 Series
     'claude-3-5-sonnet-20241022': {
         name: 'Claude 3.5 Sonnet (Oct 2024)',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 15.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 15.0,
         contextWindow: 200000,
         description: 'Latest Claude 3.5 Sonnet',
     },
     'claude-3.5-sonnet': {
         name: 'Claude 3.5 Sonnet',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 15.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 15.0,
         contextWindow: 200000,
         description: 'Best Claude for most tasks',
     },
     'claude-3-5-haiku-20241022': {
         name: 'Claude 3.5 Haiku',
-        inputPricePer1M: 0.80,
-        outputPricePer1M: 4.00,
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 4.0,
         contextWindow: 200000,
         description: 'Fast and affordable Claude 3.5',
     },
     'claude-3.5-haiku': {
         name: 'Claude 3.5 Haiku',
-        inputPricePer1M: 0.80,
-        outputPricePer1M: 4.00,
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 4.0,
         contextWindow: 200000,
         description: 'Fast and affordable Claude 3.5',
     },
     // Claude 3 Series
     'claude-3-opus': {
         name: 'Claude 3 Opus',
-        inputPricePer1M: 15.00,
-        outputPricePer1M: 75.00,
+        inputPricePer1M: 15.0,
+        outputPricePer1M: 75.0,
         contextWindow: 200000,
         description: 'Most powerful Claude 3',
     },
     'claude-3-sonnet': {
         name: 'Claude 3 Sonnet',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 15.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 15.0,
         contextWindow: 200000,
         description: 'Balanced Claude 3',
     },
@@ -223,22 +223,22 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // Claude 2 Series
     'claude-2.1': {
         name: 'Claude 2.1',
-        inputPricePer1M: 8.00,
-        outputPricePer1M: 24.00,
+        inputPricePer1M: 8.0,
+        outputPricePer1M: 24.0,
         contextWindow: 200000,
         description: 'Legacy Claude 2.1',
     },
     'claude-2': {
         name: 'Claude 2',
-        inputPricePer1M: 8.00,
-        outputPricePer1M: 24.00,
+        inputPricePer1M: 8.0,
+        outputPricePer1M: 24.0,
         contextWindow: 100000,
         description: 'Legacy Claude 2',
     },
     'claude-instant-1.2': {
         name: 'Claude Instant 1.2',
-        inputPricePer1M: 0.80,
-        outputPricePer1M: 2.40,
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 2.4,
         contextWindow: 100000,
         description: 'Fast legacy Claude',
     },
@@ -247,15 +247,15 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // Gemini 2.0
     'gemini-2.0-flash-exp': {
         name: 'Gemini 2.0 Flash Exp',
-        inputPricePer1M: 0.00,
-        outputPricePer1M: 0.00,
+        inputPricePer1M: 0.0,
+        outputPricePer1M: 0.0,
         contextWindow: 1000000,
         description: 'Experimental Gemini 2.0 (Free)',
     },
     'gemini-2.0-flash-thinking-exp': {
         name: 'Gemini 2.0 Flash Thinking',
-        inputPricePer1M: 0.00,
-        outputPricePer1M: 0.00,
+        inputPricePer1M: 0.0,
+        outputPricePer1M: 0.0,
         contextWindow: 1000000,
         description: 'Reasoning Gemini 2.0 (Free)',
     },
@@ -263,14 +263,14 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     'gemini-1.5-pro': {
         name: 'Gemini 1.5 Pro',
         inputPricePer1M: 1.25,
-        outputPricePer1M: 5.00,
+        outputPricePer1M: 5.0,
         contextWindow: 2000000,
         description: 'Most capable Gemini',
     },
     'gemini-1.5-flash': {
         name: 'Gemini 1.5 Flash',
         inputPricePer1M: 0.075,
-        outputPricePer1M: 0.30,
+        outputPricePer1M: 0.3,
         contextWindow: 1000000,
         description: 'Fast Gemini model',
     },
@@ -284,15 +284,15 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // Gemini 1.0
     'gemini-1.0-pro': {
         name: 'Gemini 1.0 Pro',
-        inputPricePer1M: 0.50,
-        outputPricePer1M: 1.50,
+        inputPricePer1M: 0.5,
+        outputPricePer1M: 1.5,
         contextWindow: 32760,
         description: 'Legacy Gemini Pro',
     },
     'gemini-pro': {
         name: 'Gemini Pro',
-        inputPricePer1M: 0.50,
-        outputPricePer1M: 1.50,
+        inputPricePer1M: 0.5,
+        outputPricePer1M: 1.5,
         contextWindow: 32760,
         description: 'Legacy Gemini Pro',
     },
@@ -307,8 +307,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     },
     'llama-3.2-90b-vision': {
         name: 'Llama 3.2 90B Vision',
-        inputPricePer1M: 0.90,
-        outputPricePer1M: 0.90,
+        inputPricePer1M: 0.9,
+        outputPricePer1M: 0.9,
         contextWindow: 128000,
         description: 'Multimodal Llama',
     },
@@ -335,8 +335,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     },
     'llama-3.1-405b': {
         name: 'Llama 3.1 405B',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 3.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 3.0,
         contextWindow: 128000,
         description: 'Largest open model',
     },
@@ -370,8 +370,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     },
     'codellama-70b': {
         name: 'Code Llama 70B',
-        inputPricePer1M: 0.70,
-        outputPricePer1M: 0.90,
+        inputPricePer1M: 0.7,
+        outputPricePer1M: 0.9,
         contextWindow: 16384,
         description: 'Coding-focused Llama',
     },
@@ -379,29 +379,29 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Mistral AI Models ====================
     'mistral-large': {
         name: 'Mistral Large',
-        inputPricePer1M: 2.00,
-        outputPricePer1M: 6.00,
+        inputPricePer1M: 2.0,
+        outputPricePer1M: 6.0,
         contextWindow: 128000,
         description: 'Most capable Mistral',
     },
     'mistral-large-2411': {
         name: 'Mistral Large (Nov 2024)',
-        inputPricePer1M: 2.00,
-        outputPricePer1M: 6.00,
+        inputPricePer1M: 2.0,
+        outputPricePer1M: 6.0,
         contextWindow: 128000,
         description: 'Latest Mistral Large',
     },
     'mistral-medium': {
         name: 'Mistral Medium',
-        inputPricePer1M: 2.70,
-        outputPricePer1M: 8.10,
+        inputPricePer1M: 2.7,
+        outputPricePer1M: 8.1,
         contextWindow: 32000,
         description: 'Balanced Mistral model',
     },
     'mistral-small': {
         name: 'Mistral Small',
-        inputPricePer1M: 0.20,
-        outputPricePer1M: 0.60,
+        inputPricePer1M: 0.2,
+        outputPricePer1M: 0.6,
         contextWindow: 128000,
         description: 'Affordable Mistral',
     },
@@ -426,10 +426,10 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
         contextWindow: 65536,
         description: 'Large MoE model - 176B params',
     },
-    'codestral': {
+    codestral: {
         name: 'Codestral',
-        inputPricePer1M: 0.20,
-        outputPricePer1M: 0.60,
+        inputPricePer1M: 0.2,
+        outputPricePer1M: 0.6,
         contextWindow: 32000,
         description: 'Coding-focused Mistral',
     },
@@ -449,8 +449,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     },
     'ministral-8b': {
         name: 'Ministral 8B',
-        inputPricePer1M: 0.10,
-        outputPricePer1M: 0.10,
+        inputPricePer1M: 0.1,
+        outputPricePer1M: 0.1,
         contextWindow: 128000,
         description: 'Small Mistral model',
     },
@@ -458,43 +458,43 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Cohere Models ====================
     'command-r-plus': {
         name: 'Command R+',
-        inputPricePer1M: 2.50,
-        outputPricePer1M: 10.00,
+        inputPricePer1M: 2.5,
+        outputPricePer1M: 10.0,
         contextWindow: 128000,
         description: 'Most capable Cohere model',
     },
     'command-r': {
         name: 'Command R',
         inputPricePer1M: 0.15,
-        outputPricePer1M: 0.60,
+        outputPricePer1M: 0.6,
         contextWindow: 128000,
         description: 'Balanced Cohere model',
     },
-    'command': {
+    command: {
         name: 'Command',
-        inputPricePer1M: 1.00,
-        outputPricePer1M: 2.00,
+        inputPricePer1M: 1.0,
+        outputPricePer1M: 2.0,
         contextWindow: 4096,
         description: 'Legacy Command model',
     },
     'command-light': {
         name: 'Command Light',
-        inputPricePer1M: 0.30,
-        outputPricePer1M: 0.60,
+        inputPricePer1M: 0.3,
+        outputPricePer1M: 0.6,
         contextWindow: 4096,
         description: 'Fast Command variant',
     },
     'embed-english-v3.0': {
         name: 'Embed English v3',
-        inputPricePer1M: 0.10,
-        outputPricePer1M: 0.00,
+        inputPricePer1M: 0.1,
+        outputPricePer1M: 0.0,
         contextWindow: 512,
         description: 'English embeddings',
     },
     'embed-multilingual-v3.0': {
         name: 'Embed Multilingual v3',
-        inputPricePer1M: 0.10,
-        outputPricePer1M: 0.00,
+        inputPricePer1M: 0.1,
+        outputPricePer1M: 0.0,
         contextWindow: 512,
         description: 'Multilingual embeddings',
     },
@@ -517,7 +517,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     'deepseek-v3': {
         name: 'DeepSeek V3',
         inputPricePer1M: 0.27,
-        outputPricePer1M: 1.10,
+        outputPricePer1M: 1.1,
         contextWindow: 64000,
         description: 'Latest DeepSeek model',
     },
@@ -532,15 +532,15 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Alibaba Qwen Models ====================
     'qwen-max': {
         name: 'Qwen Max',
-        inputPricePer1M: 2.40,
-        outputPricePer1M: 2.40,
+        inputPricePer1M: 2.4,
+        outputPricePer1M: 2.4,
         contextWindow: 32000,
         description: 'Most capable Qwen',
     },
     'qwen-plus': {
         name: 'Qwen Plus',
-        inputPricePer1M: 0.80,
-        outputPricePer1M: 0.80,
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 0.8,
         contextWindow: 131072,
         description: 'Balanced Qwen model',
     },
@@ -553,29 +553,29 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     },
     'qwen-2.5-72b': {
         name: 'Qwen 2.5 72B',
-        inputPricePer1M: 0.90,
-        outputPricePer1M: 0.90,
+        inputPricePer1M: 0.9,
+        outputPricePer1M: 0.9,
         contextWindow: 131072,
         description: 'Large Qwen 2.5',
     },
     'qwen-2.5-coder-32b': {
         name: 'Qwen 2.5 Coder 32B',
-        inputPricePer1M: 0.60,
-        outputPricePer1M: 0.60,
+        inputPricePer1M: 0.6,
+        outputPricePer1M: 0.6,
         contextWindow: 131072,
         description: 'Coding-focused Qwen',
     },
     'qwq-32b-preview': {
         name: 'QwQ 32B Preview',
-        inputPricePer1M: 0.60,
-        outputPricePer1M: 0.60,
+        inputPricePer1M: 0.6,
+        outputPricePer1M: 0.6,
         contextWindow: 32000,
         description: 'Reasoning Qwen model',
     },
     'qwen-vl-max': {
         name: 'Qwen VL Max',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 3.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 3.0,
         contextWindow: 32000,
         description: 'Multimodal Qwen',
     },
@@ -583,22 +583,22 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== xAI Grok Models ====================
     'grok-2': {
         name: 'Grok 2',
-        inputPricePer1M: 2.00,
-        outputPricePer1M: 10.00,
+        inputPricePer1M: 2.0,
+        outputPricePer1M: 10.0,
         contextWindow: 131072,
         description: 'xAI flagship model',
     },
     'grok-2-vision-1212': {
         name: 'Grok 2 Vision',
-        inputPricePer1M: 2.00,
-        outputPricePer1M: 10.00,
+        inputPricePer1M: 2.0,
+        outputPricePer1M: 10.0,
         contextWindow: 32768,
         description: 'Multimodal Grok',
     },
     'grok-beta': {
         name: 'Grok Beta',
-        inputPricePer1M: 5.00,
-        outputPricePer1M: 15.00,
+        inputPricePer1M: 5.0,
+        outputPricePer1M: 15.0,
         contextWindow: 131072,
         description: 'Grok beta version',
     },
@@ -606,29 +606,29 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Amazon Models ====================
     'amazon-titan-text-express': {
         name: 'Titan Text Express',
-        inputPricePer1M: 0.20,
-        outputPricePer1M: 0.60,
+        inputPricePer1M: 0.2,
+        outputPricePer1M: 0.6,
         contextWindow: 8192,
         description: 'Fast Amazon model',
     },
     'amazon-titan-text-lite': {
         name: 'Titan Text Lite',
         inputPricePer1M: 0.15,
-        outputPricePer1M: 0.20,
+        outputPricePer1M: 0.2,
         contextWindow: 4096,
         description: 'Lightweight Amazon model',
     },
     'amazon-titan-text-premier': {
         name: 'Titan Text Premier',
-        inputPricePer1M: 0.50,
-        outputPricePer1M: 1.50,
+        inputPricePer1M: 0.5,
+        outputPricePer1M: 1.5,
         contextWindow: 32000,
         description: 'Most capable Titan',
     },
     'amazon-nova-pro': {
         name: 'Amazon Nova Pro',
-        inputPricePer1M: 0.80,
-        outputPricePer1M: 3.20,
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 3.2,
         contextWindow: 300000,
         description: 'Capable Nova model',
     },
@@ -650,29 +650,29 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== AI21 Models ====================
     'jamba-1.5-large': {
         name: 'Jamba 1.5 Large',
-        inputPricePer1M: 2.00,
-        outputPricePer1M: 8.00,
+        inputPricePer1M: 2.0,
+        outputPricePer1M: 8.0,
         contextWindow: 256000,
         description: 'Large hybrid model',
     },
     'jamba-1.5-mini': {
         name: 'Jamba 1.5 Mini',
-        inputPricePer1M: 0.20,
-        outputPricePer1M: 0.40,
+        inputPricePer1M: 0.2,
+        outputPricePer1M: 0.4,
         contextWindow: 256000,
         description: 'Efficient hybrid model',
     },
     'j2-ultra': {
         name: 'Jurassic-2 Ultra',
-        inputPricePer1M: 15.00,
-        outputPricePer1M: 15.00,
+        inputPricePer1M: 15.0,
+        outputPricePer1M: 15.0,
         contextWindow: 8192,
         description: 'Legacy AI21 model',
     },
     'j2-mid': {
         name: 'Jurassic-2 Mid',
-        inputPricePer1M: 10.00,
-        outputPricePer1M: 10.00,
+        inputPricePer1M: 10.0,
+        outputPricePer1M: 10.0,
         contextWindow: 8192,
         description: 'Legacy AI21 model',
     },
@@ -680,22 +680,22 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Perplexity Models ====================
     'llama-3.1-sonar-large-128k-online': {
         name: 'Sonar Large Online',
-        inputPricePer1M: 1.00,
-        outputPricePer1M: 1.00,
+        inputPricePer1M: 1.0,
+        outputPricePer1M: 1.0,
         contextWindow: 128000,
         description: 'Large online search model',
     },
     'llama-3.1-sonar-small-128k-online': {
         name: 'Sonar Small Online',
-        inputPricePer1M: 0.20,
-        outputPricePer1M: 0.20,
+        inputPricePer1M: 0.2,
+        outputPricePer1M: 0.2,
         contextWindow: 128000,
         description: 'Small online search model',
     },
     'llama-3.1-sonar-huge-128k-online': {
         name: 'Sonar Huge Online',
-        inputPricePer1M: 5.00,
-        outputPricePer1M: 5.00,
+        inputPricePer1M: 5.0,
+        outputPricePer1M: 5.0,
         contextWindow: 128000,
         description: 'Huge online search model',
     },
@@ -703,8 +703,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Yi (01.AI) Models ====================
     'yi-large': {
         name: 'Yi Large',
-        inputPricePer1M: 3.00,
-        outputPricePer1M: 3.00,
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 3.0,
         contextWindow: 32000,
         description: 'Large Yi model',
     },
@@ -717,8 +717,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     },
     'yi-34b': {
         name: 'Yi 34B',
-        inputPricePer1M: 0.80,
-        outputPricePer1M: 0.80,
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 0.8,
         contextWindow: 4096,
         description: 'Open-source Yi 34B',
     },
@@ -726,22 +726,22 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Zhipu/GLM Models ====================
     'glm-4': {
         name: 'GLM-4',
-        inputPricePer1M: 1.40,
-        outputPricePer1M: 1.40,
+        inputPricePer1M: 1.4,
+        outputPricePer1M: 1.4,
         contextWindow: 128000,
         description: 'Zhipu flagship model',
     },
     'glm-4-plus': {
         name: 'GLM-4 Plus',
-        inputPricePer1M: 7.00,
-        outputPricePer1M: 7.00,
+        inputPricePer1M: 7.0,
+        outputPricePer1M: 7.0,
         contextWindow: 128000,
         description: 'Most capable GLM',
     },
     'glm-4v': {
         name: 'GLM-4V',
-        inputPricePer1M: 7.00,
-        outputPricePer1M: 7.00,
+        inputPricePer1M: 7.0,
+        outputPricePer1M: 7.0,
         contextWindow: 2048,
         description: 'Multimodal GLM',
     },
@@ -749,15 +749,15 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== Inflection Models ====================
     'inflection-3': {
         name: 'Inflection 3',
-        inputPricePer1M: 0.80,
-        outputPricePer1M: 0.80,
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 0.8,
         contextWindow: 8192,
         description: 'Latest Inflection model',
     },
     'inflection-2.5': {
         name: 'Inflection 2.5',
-        inputPricePer1M: 0.50,
-        outputPricePer1M: 0.50,
+        inputPricePer1M: 0.5,
+        outputPricePer1M: 0.5,
         contextWindow: 8192,
         description: 'Balanced Inflection model',
     },
@@ -863,9 +863,7 @@ export function getAvailableModels(): ModelPricing[] {
         ...(loadedPricing || {}),
     };
 
-    return Object.values(allPricing).sort((a, b) =>
-        a.inputPricePer1M - b.inputPricePer1M
-    );
+    return Object.values(allPricing).sort((a, b) => a.inputPricePer1M - b.inputPricePer1M);
 }
 
 /**
@@ -883,11 +881,7 @@ export function estimateProjectCost(
         dailyInputTokens * ESTIMATION_DEFAULTS.DAYS,
         dailyOutputTokens * ESTIMATION_DEFAULTS.DAYS
     );
-    const projected = calculateCost(
-        model,
-        dailyInputTokens * days,
-        dailyOutputTokens * days
-    );
+    const projected = calculateCost(model, dailyInputTokens * days, dailyOutputTokens * days);
 
     return { daily, monthly, projected };
 }
@@ -908,4 +902,3 @@ export function isModelSupported(model: string): boolean {
     const pricing = findPricing(model);
     return pricing.description !== DEFAULT_PRICING.description;
 }
-

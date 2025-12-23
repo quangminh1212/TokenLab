@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * MCP TokenSage - MCP Server for Token Counting, Usage Tracking and Cost Calculation
- * 
+ *
  * Tools:
  * - count_tokens: Đếm số token trong text
  * - record_usage: Ghi nhận lượng token sử dụng
@@ -19,15 +19,26 @@ import {
     Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { countTokens, countTokensBatch, getSupportedModels, cleanupEncoders } from './tokenCounter.js';
+import {
+    countTokens,
+    countTokensBatch,
+    getSupportedModels,
+    cleanupEncoders,
+} from './tokenCounter.js';
 import { getGlobalTracker } from './usageTracker.js';
-import { calculateCost, compareCosts, getAvailableModels, estimateProjectCost } from './costCalculator.js';
+import {
+    calculateCost,
+    compareCosts,
+    getAvailableModels,
+    estimateProjectCost,
+} from './costCalculator.js';
 
 // Tool definitions
 const TOOLS: Tool[] = [
     {
         name: 'count_tokens',
-        description: 'Đếm số token trong text sử dụng tiktoken. Hỗ trợ các model GPT-4, GPT-3.5, Claude, etc.',
+        description:
+            'Đếm số token trong text sử dụng tiktoken. Hỗ trợ các model GPT-4, GPT-3.5, Claude, etc.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -225,7 +236,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args } = request.params;
     const tracker = getGlobalTracker();
 
@@ -376,7 +387,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     content: [
                         {
                             type: 'text',
-                            text: JSON.stringify({ message: 'Usage statistics reset successfully', sessionId: tracker.getSessionId() }, null, 2),
+                            text: JSON.stringify(
+                                {
+                                    message: 'Usage statistics reset successfully',
+                                    sessionId: tracker.getSessionId(),
+                                },
+                                null,
+                                2
+                            ),
                         },
                     ],
                 };
@@ -417,7 +435,7 @@ async function main() {
     console.error('MCP TokenSage server started');
 }
 
-main().catch((error) => {
+main().catch(error => {
     console.error('Failed to start server:', error);
     process.exit(1);
 });
