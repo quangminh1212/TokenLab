@@ -1,16 +1,37 @@
 /**
  * Cost Calculator - Tính chi phí sử dụng token theo model
+ * Ưu tiên sử dụng data từ crawler, fallback về hardcoded data
  */
 
-export interface ModelPricing {
-    name: string;
-    inputPricePer1M: number;  // USD per 1M tokens
-    outputPricePer1M: number; // USD per 1M tokens
-    contextWindow: number;
-    description?: string;
+import type { ModelPricing, CostResult, ProjectEstimation } from './types.js';
+import { DEFAULT_PRICING, FORMATTING, ESTIMATION_DEFAULTS } from './config.js';
+
+// Re-export types
+export type { ModelPricing, CostResult, ProjectEstimation };
+
+// Cached loader data
+let loadedPricing: Record<string, ModelPricing> | null = null;
+
+// Lazy load pricing from crawler data
+async function tryLoadPricing(): Promise<Record<string, ModelPricing>> {
+    if (loadedPricing !== null) {
+        return loadedPricing;
+    }
+
+    try {
+        const { loadPricing } = await import('./modelLoader.js');
+        loadedPricing = loadPricing();
+        return loadedPricing;
+    } catch {
+        loadedPricing = {};
+        return loadedPricing;
+    }
 }
 
-// Pricing data (Updated December 2024)
+// Initialize on module load
+tryLoadPricing().catch(() => { });
+
+// Fallback Pricing data (Updated December 2024)
 // Prices are in USD per 1 Million tokens
 export const MODEL_PRICING: Record<string, ModelPricing> = {
     // ==================== OpenAI Models ====================
@@ -742,16 +763,44 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     },
 };
 
-export interface CostResult {
-    model: string;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-    inputCost: number;
-    outputCost: number;
-    totalCost: number;
-    currency: string;
-    pricing: ModelPricing;
+/**
+ * Tìm pricing cho model
+ * Ưu tiên: 1. Loader data, 2. Hardcoded data, 3. Default
+ */
+function findPricing(model: string): ModelPricing {
+    const modelLower = model.toLowerCase();
+
+    // 1. Thử tìm trong loaded data (từ crawler)
+    if (loadedPricing && Object.keys(loadedPricing).length > 0) {
+        // Exact match
+        if (loadedPricing[modelLower]) {
+            return loadedPricing[modelLower];
+        }
+        // Partial match
+        for (const [key, value] of Object.entries(loadedPricing)) {
+            if (modelLower.includes(key.toLowerCase()) || key.toLowerCase().includes(modelLower)) {
+                return value;
+            }
+        }
+    }
+
+    // 2. Fallback về hardcoded data
+    if (MODEL_PRICING[modelLower]) {
+        return MODEL_PRICING[modelLower];
+    }
+
+    // Partial match in hardcoded
+    for (const [key, value] of Object.entries(MODEL_PRICING)) {
+        if (modelLower.includes(key.toLowerCase())) {
+            return value;
+        }
+    }
+
+    // 3. Default pricing
+    return {
+        name: model,
+        ...DEFAULT_PRICING,
+    };
 }
 
 /**
@@ -762,43 +811,23 @@ export function calculateCost(
     inputTokens: number,
     outputTokens: number
 ): CostResult {
-    // Tìm pricing phù hợp
-    let pricing = MODEL_PRICING[model.toLowerCase()];
-
-    if (!pricing) {
-        // Thử tìm theo prefix
-        for (const [key, value] of Object.entries(MODEL_PRICING)) {
-            if (model.toLowerCase().includes(key.toLowerCase())) {
-                pricing = value;
-                break;
-            }
-        }
-    }
-
-    // Default pricing nếu không tìm thấy
-    if (!pricing) {
-        pricing = {
-            name: model,
-            inputPricePer1M: 1.00,
-            outputPricePer1M: 2.00,
-            contextWindow: 8192,
-            description: 'Unknown model - using default pricing',
-        };
-    }
+    const pricing = findPricing(model);
 
     const inputCost = (inputTokens / 1_000_000) * pricing.inputPricePer1M;
     const outputCost = (outputTokens / 1_000_000) * pricing.outputPricePer1M;
     const totalCost = inputCost + outputCost;
+
+    const decimalFactor = Math.pow(10, FORMATTING.COST_DECIMALS);
 
     return {
         model,
         inputTokens,
         outputTokens,
         totalTokens: inputTokens + outputTokens,
-        inputCost: Math.round(inputCost * 1_000_000) / 1_000_000, // 6 decimal places
-        outputCost: Math.round(outputCost * 1_000_000) / 1_000_000,
-        totalCost: Math.round(totalCost * 1_000_000) / 1_000_000,
-        currency: 'USD',
+        inputCost: Math.round(inputCost * decimalFactor) / decimalFactor,
+        outputCost: Math.round(outputCost * decimalFactor) / decimalFactor,
+        totalCost: Math.round(totalCost * decimalFactor) / decimalFactor,
+        currency: FORMATTING.CURRENCY,
         pricing,
     };
 }
@@ -811,7 +840,13 @@ export function compareCosts(
     outputTokens: number,
     models?: string[]
 ): CostResult[] {
-    const modelsToCompare = models || Object.keys(MODEL_PRICING);
+    // Merge loaded models with hardcoded
+    const allModels = new Set([
+        ...Object.keys(MODEL_PRICING),
+        ...(loadedPricing ? Object.keys(loadedPricing) : []),
+    ]);
+
+    const modelsToCompare = models || [...allModels];
 
     return modelsToCompare
         .map(model => calculateCost(model, inputTokens, outputTokens))
@@ -820,9 +855,15 @@ export function compareCosts(
 
 /**
  * Lấy danh sách models và pricing
+ * Merge data từ crawler và hardcoded
  */
 export function getAvailableModels(): ModelPricing[] {
-    return Object.values(MODEL_PRICING).sort((a, b) =>
+    const allPricing: Record<string, ModelPricing> = {
+        ...MODEL_PRICING,
+        ...(loadedPricing || {}),
+    };
+
+    return Object.values(allPricing).sort((a, b) =>
         a.inputPricePer1M - b.inputPricePer1M
     );
 }
@@ -834,15 +875,37 @@ export function estimateProjectCost(
     model: string,
     dailyInputTokens: number,
     dailyOutputTokens: number,
-    days: number = 30
-): {
-    daily: CostResult;
-    monthly: CostResult;
-    projected: CostResult;
-} {
+    days: number = ESTIMATION_DEFAULTS.DAYS
+): ProjectEstimation {
     const daily = calculateCost(model, dailyInputTokens, dailyOutputTokens);
-    const monthly = calculateCost(model, dailyInputTokens * 30, dailyOutputTokens * 30);
-    const projected = calculateCost(model, dailyInputTokens * days, dailyOutputTokens * days);
+    const monthly = calculateCost(
+        model,
+        dailyInputTokens * ESTIMATION_DEFAULTS.DAYS,
+        dailyOutputTokens * ESTIMATION_DEFAULTS.DAYS
+    );
+    const projected = calculateCost(
+        model,
+        dailyInputTokens * days,
+        dailyOutputTokens * days
+    );
 
     return { daily, monthly, projected };
 }
+
+/**
+ * Lấy số lượng models có sẵn
+ */
+export function getModelsCount(): number {
+    const hardcodedCount = Object.keys(MODEL_PRICING).length;
+    const loadedCount = loadedPricing ? Object.keys(loadedPricing).length : 0;
+    return Math.max(hardcodedCount, loadedCount);
+}
+
+/**
+ * Kiểm tra model có được hỗ trợ không
+ */
+export function isModelSupported(model: string): boolean {
+    const pricing = findPricing(model);
+    return pricing.description !== DEFAULT_PRICING.description;
+}
+
