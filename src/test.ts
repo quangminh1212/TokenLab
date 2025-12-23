@@ -3,7 +3,7 @@
  */
 
 import { countTokens, countTokensBatch, getSupportedModels } from './tokenCounter.js';
-import { UsageTracker, getGlobalTracker } from './usageTracker.js';
+import { UsageTracker } from './usageTracker.js';
 import { calculateCost, compareCosts, getAvailableModels, estimateProjectCost } from './costCalculator.js';
 
 // Test Token Counter
@@ -36,7 +36,7 @@ const stats = tracker.getStats();
 console.log(`Total tokens: ${stats.totalTokens}`);
 console.log(`Total requests: ${stats.requestCount}`);
 console.log(`Average per request: ${stats.averageTokensPerRequest.toFixed(0)}`);
-console.log(`Models used:`, Object.keys(stats.byModel));
+console.log('Models used:', Object.keys(stats.byModel));
 
 // Test Cost Calculator
 console.log('\n=== Testing Cost Calculator ===');

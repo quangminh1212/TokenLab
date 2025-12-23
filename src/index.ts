@@ -20,7 +20,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { countTokens, countTokensBatch, getSupportedModels, cleanupEncoders } from './tokenCounter.js';
-import { UsageTracker, getGlobalTracker } from './usageTracker.js';
+import { getGlobalTracker } from './usageTracker.js';
 import { calculateCost, compareCosts, getAvailableModels, estimateProjectCost } from './costCalculator.js';
 
 // Tool definitions
