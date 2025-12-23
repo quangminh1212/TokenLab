@@ -16,29 +16,97 @@ function estimateTokens(text: string): number {
 }
 
 // Model pricing data (subset for API)
-const MODEL_PRICING: Record<string, { name: string; inputPricePer1M: number; outputPricePer1M: number; contextWindow: number }> = {
-    'gpt-4o': { name: 'GPT-4o', inputPricePer1M: 2.50, outputPricePer1M: 10.00, contextWindow: 128000 },
-    'gpt-4o-mini': { name: 'GPT-4o Mini', inputPricePer1M: 0.15, outputPricePer1M: 0.60, contextWindow: 128000 },
-    'gpt-4-turbo': { name: 'GPT-4 Turbo', inputPricePer1M: 10.00, outputPricePer1M: 30.00, contextWindow: 128000 },
-    'gpt-4': { name: 'GPT-4', inputPricePer1M: 30.00, outputPricePer1M: 60.00, contextWindow: 8192 },
-    'gpt-3.5-turbo': { name: 'GPT-3.5 Turbo', inputPricePer1M: 0.50, outputPricePer1M: 1.50, contextWindow: 16385 },
-    'claude-3.5-sonnet': { name: 'Claude 3.5 Sonnet', inputPricePer1M: 3.00, outputPricePer1M: 15.00, contextWindow: 200000 },
-    'claude-3.5-haiku': { name: 'Claude 3.5 Haiku', inputPricePer1M: 0.80, outputPricePer1M: 4.00, contextWindow: 200000 },
-    'claude-3-opus': { name: 'Claude 3 Opus', inputPricePer1M: 15.00, outputPricePer1M: 75.00, contextWindow: 200000 },
-    'gemini-1.5-pro': { name: 'Gemini 1.5 Pro', inputPricePer1M: 1.25, outputPricePer1M: 5.00, contextWindow: 2000000 },
-    'gemini-1.5-flash': { name: 'Gemini 1.5 Flash', inputPricePer1M: 0.075, outputPricePer1M: 0.30, contextWindow: 1000000 },
-    'deepseek-chat': { name: 'DeepSeek Chat', inputPricePer1M: 0.14, outputPricePer1M: 0.28, contextWindow: 64000 },
-    'llama-3.3-70b': { name: 'Llama 3.3 70B', inputPricePer1M: 0.59, outputPricePer1M: 0.79, contextWindow: 128000 },
-    'mistral-large': { name: 'Mistral Large', inputPricePer1M: 2.00, outputPricePer1M: 6.00, contextWindow: 128000 },
-    'o1': { name: 'o1', inputPricePer1M: 15.00, outputPricePer1M: 60.00, contextWindow: 200000 },
-    'o1-mini': { name: 'o1 Mini', inputPricePer1M: 3.00, outputPricePer1M: 12.00, contextWindow: 128000 },
+const MODEL_PRICING: Record<
+    string,
+    { name: string; inputPricePer1M: number; outputPricePer1M: number; contextWindow: number }
+> = {
+    'gpt-4o': {
+        name: 'GPT-4o',
+        inputPricePer1M: 2.5,
+        outputPricePer1M: 10.0,
+        contextWindow: 128000,
+    },
+    'gpt-4o-mini': {
+        name: 'GPT-4o Mini',
+        inputPricePer1M: 0.15,
+        outputPricePer1M: 0.6,
+        contextWindow: 128000,
+    },
+    'gpt-4-turbo': {
+        name: 'GPT-4 Turbo',
+        inputPricePer1M: 10.0,
+        outputPricePer1M: 30.0,
+        contextWindow: 128000,
+    },
+    'gpt-4': { name: 'GPT-4', inputPricePer1M: 30.0, outputPricePer1M: 60.0, contextWindow: 8192 },
+    'gpt-3.5-turbo': {
+        name: 'GPT-3.5 Turbo',
+        inputPricePer1M: 0.5,
+        outputPricePer1M: 1.5,
+        contextWindow: 16385,
+    },
+    'claude-3.5-sonnet': {
+        name: 'Claude 3.5 Sonnet',
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 15.0,
+        contextWindow: 200000,
+    },
+    'claude-3.5-haiku': {
+        name: 'Claude 3.5 Haiku',
+        inputPricePer1M: 0.8,
+        outputPricePer1M: 4.0,
+        contextWindow: 200000,
+    },
+    'claude-3-opus': {
+        name: 'Claude 3 Opus',
+        inputPricePer1M: 15.0,
+        outputPricePer1M: 75.0,
+        contextWindow: 200000,
+    },
+    'gemini-1.5-pro': {
+        name: 'Gemini 1.5 Pro',
+        inputPricePer1M: 1.25,
+        outputPricePer1M: 5.0,
+        contextWindow: 2000000,
+    },
+    'gemini-1.5-flash': {
+        name: 'Gemini 1.5 Flash',
+        inputPricePer1M: 0.075,
+        outputPricePer1M: 0.3,
+        contextWindow: 1000000,
+    },
+    'deepseek-chat': {
+        name: 'DeepSeek Chat',
+        inputPricePer1M: 0.14,
+        outputPricePer1M: 0.28,
+        contextWindow: 64000,
+    },
+    'llama-3.3-70b': {
+        name: 'Llama 3.3 70B',
+        inputPricePer1M: 0.59,
+        outputPricePer1M: 0.79,
+        contextWindow: 128000,
+    },
+    'mistral-large': {
+        name: 'Mistral Large',
+        inputPricePer1M: 2.0,
+        outputPricePer1M: 6.0,
+        contextWindow: 128000,
+    },
+    o1: { name: 'o1', inputPricePer1M: 15.0, outputPricePer1M: 60.0, contextWindow: 200000 },
+    'o1-mini': {
+        name: 'o1 Mini',
+        inputPricePer1M: 3.0,
+        outputPricePer1M: 12.0,
+        contextWindow: 128000,
+    },
 };
 
 function calculateCost(model: string, inputTokens: number, outputTokens: number) {
     const pricing = MODEL_PRICING[model.toLowerCase()] || {
         name: model,
-        inputPricePer1M: 1.00,
-        outputPricePer1M: 2.00,
+        inputPricePer1M: 1.0,
+        outputPricePer1M: 2.0,
         contextWindow: 8192,
     };
 
@@ -72,7 +140,7 @@ let sessionId = `vercel_${Date.now()}`;
 
 // ============ Tool handlers ============
 const toolHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {
-    count_tokens: (args) => {
+    count_tokens: args => {
         const text = args.text as string;
         const model = (args.model as string) || 'gpt-4';
         const tokenCount = estimateTokens(text);
@@ -85,7 +153,7 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => unknown> =
         };
     },
 
-    count_tokens_batch: (args) => {
+    count_tokens_batch: args => {
         const texts = args.texts as string[];
         const model = (args.model as string) || 'gpt-4';
         const results = texts.map(text => ({
@@ -100,7 +168,7 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => unknown> =
         };
     },
 
-    record_usage: (args) => {
+    record_usage: args => {
         const model = args.model as string;
         const inputTokens = args.input_tokens as number;
         const outputTokens = args.output_tokens as number;
@@ -120,7 +188,7 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => unknown> =
         };
     },
 
-    get_usage_stats: (args) => {
+    get_usage_stats: args => {
         const limit = args.limit as number | undefined;
         const records = limit ? usageRecords.slice(-limit) : usageRecords;
 
@@ -133,23 +201,24 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => unknown> =
                 totalOutputTokens,
                 totalTokens: totalInputTokens + totalOutputTokens,
                 requestCount: usageRecords.length,
-                averageTokensPerRequest: usageRecords.length > 0
-                    ? (totalInputTokens + totalOutputTokens) / usageRecords.length
-                    : 0,
+                averageTokensPerRequest:
+                    usageRecords.length > 0
+                        ? (totalInputTokens + totalOutputTokens) / usageRecords.length
+                        : 0,
             },
             recentRecords: records,
             sessionId,
         };
     },
 
-    calculate_cost: (args) => {
+    calculate_cost: args => {
         const model = args.model as string;
         const inputTokens = args.input_tokens as number;
         const outputTokens = args.output_tokens as number;
         return calculateCost(model, inputTokens, outputTokens);
     },
 
-    compare_models: (args) => {
+    compare_models: args => {
         const inputTokens = args.input_tokens as number;
         const outputTokens = args.output_tokens as number;
         const models = (args.models as string[] | undefined) || Object.keys(MODEL_PRICING);
@@ -165,7 +234,7 @@ const toolHandlers: Record<string, (args: Record<string, unknown>) => unknown> =
             .sort((a, b) => a.inputPricePer1M - b.inputPricePer1M);
     },
 
-    estimate_project: (args) => {
+    estimate_project: args => {
         const model = args.model as string;
         const dailyInput = args.daily_input_tokens as number;
         const dailyOutput = args.daily_output_tokens as number;
@@ -230,7 +299,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // POST - Execute tool
     if (req.method === 'POST') {
         try {
-            const { tool, args = {} } = req.body as { tool: string; args?: Record<string, unknown> };
+            const { tool, args = {} } = req.body as {
+                tool: string;
+                args?: Record<string, unknown>;
+            };
 
             if (!tool) {
                 res.status(400).json({ error: 'Missing "tool" parameter' });
