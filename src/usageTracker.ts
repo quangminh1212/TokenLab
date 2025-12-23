@@ -2,31 +2,10 @@
  * Usage Tracker - Theo dõi lượng token sử dụng theo session và tổng cộng
  */
 
-export interface UsageRecord {
-    timestamp: Date;
-    model: string;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
-    requestId?: string;
-    metadata?: Record<string, unknown>;
-}
+import type { UsageRecord, UsageStats, ModelUsageStats } from './types.js';
 
-export interface UsageStats {
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    totalTokens: number;
-    requestCount: number;
-    averageTokensPerRequest: number;
-    firstRequest: Date | null;
-    lastRequest: Date | null;
-    byModel: Record<string, {
-        inputTokens: number;
-        outputTokens: number;
-        totalTokens: number;
-        requestCount: number;
-    }>;
-}
+// Re-export types
+export type { UsageRecord, UsageStats, ModelUsageStats };
 
 export class UsageTracker {
     private records: UsageRecord[] = [];
