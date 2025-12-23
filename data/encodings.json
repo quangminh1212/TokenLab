@@ -1,7 +1,11 @@
 {
-  "lastUpdated": "2025-12-23T13:16:42.167Z",
-  "count": 702,
+  "lastUpdated": "2025-12-23T16:05:28.253Z",
+  "count": 706,
   "encodings": {
+    "seed-1.6-flash": "cl100k_base",
+    "bytedance-seed/seed-1.6-flash": "cl100k_base",
+    "seed-1.6": "cl100k_base",
+    "bytedance-seed/seed-1.6": "cl100k_base",
     "minimax-m2.1": "cl100k_base",
     "minimax/minimax-m2.1": "cl100k_base",
     "glm-4.7": "cl100k_base",

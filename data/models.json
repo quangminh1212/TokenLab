@@ -1,8 +1,36 @@
 {
-  "lastUpdated": "2025-12-23T13:16:42.167Z",
+  "lastUpdated": "2025-12-23T16:05:28.253Z",
   "source": "openrouter",
-  "count": 351,
+  "count": 353,
   "models": [
+    {
+      "id": "bytedance-seed/seed-1.6-flash",
+      "name": "ByteDance Seed: Seed 1.6 Flash",
+      "provider": "bytedance-seed",
+      "description": "Seed 1.6 Flash is an ultra-fast multimodal deep thinking model by ByteDance Seed, supporting both text and visual understanding. It features a 256k context window and can generate outputs of up to 16k tokens.",
+      "contextWindow": 262144,
+      "maxOutputTokens": 16384,
+      "inputPricePer1M": 0.075,
+      "outputPricePer1M": 0.3,
+      "modality": "text+image->text",
+      "tokenizer": "Other",
+      "isModerated": false,
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
+    },
+    {
+      "id": "bytedance-seed/seed-1.6",
+      "name": "ByteDance Seed: Seed 1.6",
+      "provider": "bytedance-seed",
+      "description": "Seed 1.6 is a general-purpose model released by the ByteDance Seed team. It incorporates multimodal capabilities and adaptive deep thinking with a 256K context window.",
+      "contextWindow": 262144,
+      "maxOutputTokens": 32768,
+      "inputPricePer1M": 0.25,
+      "outputPricePer1M": 2,
+      "modality": "text+image->text",
+      "tokenizer": "Other",
+      "isModerated": false,
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
+    },
     {
       "id": "minimax/minimax-m2.1",
       "name": "MiniMax: MiniMax M2.1",
@@ -15,7 +43,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.164Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "z-ai/glm-4.7",
@@ -29,7 +57,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "google/gemini-3-flash-preview",
@@ -43,7 +71,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "mistralai/mistral-small-creative",
@@ -57,7 +85,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "allenai/olmo-3.1-32b-think:free",
@@ -71,7 +99,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "xiaomi/mimo-v2-flash:free",
@@ -85,7 +113,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -99,7 +127,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
@@ -113,7 +141,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "openai/gpt-5.2-chat",
@@ -127,7 +155,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "openai/gpt-5.2-pro",
@@ -141,7 +169,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "openai/gpt-5.2",
@@ -155,7 +183,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "mistralai/devstral-2512:free",
@@ -169,7 +197,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "mistralai/devstral-2512",
@@ -183,7 +211,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "relace/relace-search",
@@ -197,7 +225,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "z-ai/glm-4.6v",
@@ -211,7 +239,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.251Z"
     },
     {
       "id": "nex-agi/deepseek-v3.1-nex-n1:free",
@@ -225,7 +253,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "essentialai/rnj-1-instruct",
@@ -239,7 +267,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openrouter/bodybuilder",
@@ -253,7 +281,7 @@
       "modality": "text->text",
       "tokenizer": "Router",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5.1-codex-max",
@@ -267,7 +295,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "amazon/nova-2-lite-v1",
@@ -281,7 +309,7 @@
       "modality": "text+image->text",
       "tokenizer": "Nova",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/ministral-14b-2512",
@@ -295,7 +323,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/ministral-8b-2512",
@@ -309,7 +337,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/ministral-3b-2512",
@@ -323,7 +351,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-large-2512",
@@ -337,7 +365,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "arcee-ai/trinity-mini:free",
@@ -351,7 +379,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "arcee-ai/trinity-mini",
@@ -365,7 +393,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-v3.2-speciale",
@@ -379,7 +407,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-v3.2",
@@ -393,7 +421,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "prime-intellect/intellect-3",
@@ -407,7 +435,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "tngtech/tng-r1t-chimera:free",
@@ -421,7 +449,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "tngtech/tng-r1t-chimera",
@@ -435,7 +463,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-opus-4.5",
@@ -449,7 +477,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "allenai/olmo-3-32b-think:free",
@@ -463,7 +491,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "allenai/olmo-3-7b-instruct",
@@ -477,7 +505,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "allenai/olmo-3-7b-think",
@@ -491,7 +519,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-3-pro-image-preview",
@@ -505,7 +533,7 @@
       "modality": "text+image->text+image",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-4.1-fast",
@@ -519,7 +547,7 @@
       "modality": "text+image->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-3-pro-preview",
@@ -533,7 +561,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepcogito/cogito-v2.1-671b",
@@ -547,7 +575,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5.1",
@@ -561,7 +589,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5.1-chat",
@@ -575,7 +603,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5.1-codex",
@@ -589,7 +617,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5.1-codex-mini",
@@ -603,7 +631,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "kwaipilot/kat-coder-pro:free",
@@ -617,7 +645,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "moonshotai/kimi-k2-thinking",
@@ -631,7 +659,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.165Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "amazon/nova-premier-v1",
@@ -645,7 +673,7 @@
       "modality": "text+image->text",
       "tokenizer": "Nova",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "perplexity/sonar-pro-search",
@@ -659,7 +687,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/voxtral-small-24b-2507",
@@ -673,7 +701,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-oss-safeguard-20b",
@@ -687,7 +715,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nvidia/nemotron-nano-12b-v2-vl:free",
@@ -701,7 +729,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nvidia/nemotron-nano-12b-v2-vl",
@@ -715,7 +743,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "minimax/minimax-m2",
@@ -729,7 +757,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-vl-32b-instruct",
@@ -743,7 +771,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "liquid/lfm2-8b-a1b",
@@ -757,7 +785,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "liquid/lfm-2.2-6b",
@@ -771,7 +799,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "ibm-granite/granite-4.0-h-micro",
@@ -785,7 +813,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepcogito/cogito-v2-preview-llama-405b",
@@ -799,7 +827,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5-image-mini",
@@ -813,7 +841,7 @@
       "modality": "text+image->text+image",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-haiku-4.5",
@@ -827,7 +855,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-vl-8b-thinking",
@@ -841,7 +869,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-vl-8b-instruct",
@@ -855,7 +883,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5-image",
@@ -869,7 +897,7 @@
       "modality": "text+image->text+image",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o3-deep-research",
@@ -883,7 +911,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o4-mini-deep-research",
@@ -897,7 +925,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
@@ -911,7 +939,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "baidu/ernie-4.5-21b-a3b-thinking",
@@ -925,7 +953,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-flash-image",
@@ -939,7 +967,7 @@
       "modality": "text+image->text+image",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-vl-30b-a3b-thinking",
@@ -953,7 +981,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-vl-30b-a3b-instruct",
@@ -967,7 +995,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5-pro",
@@ -981,7 +1009,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "z-ai/glm-4.6",
@@ -995,7 +1023,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "z-ai/glm-4.6:exacto",
@@ -1009,7 +1037,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-sonnet-4.5",
@@ -1023,7 +1051,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-v3.2-exp",
@@ -1037,7 +1065,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "thedrummer/cydonia-24b-v4.1",
@@ -1051,7 +1079,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "relace/relace-apply-3",
@@ -1065,7 +1093,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-flash-preview-09-2025",
@@ -1079,7 +1107,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-flash-lite-preview-09-2025",
@@ -1093,7 +1121,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-vl-235b-a22b-thinking",
@@ -1107,7 +1135,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-vl-235b-a22b-instruct",
@@ -1121,7 +1149,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-max",
@@ -1135,7 +1163,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-coder-plus",
@@ -1149,7 +1177,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5-codex",
@@ -1163,7 +1191,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-v3.1-terminus:exacto",
@@ -1177,7 +1205,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-v3.1-terminus",
@@ -1191,7 +1219,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-4-fast",
@@ -1205,7 +1233,7 @@
       "modality": "text+image->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "alibaba/tongyi-deepresearch-30b-a3b:free",
@@ -1219,7 +1247,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "alibaba/tongyi-deepresearch-30b-a3b",
@@ -1233,7 +1261,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-coder-flash",
@@ -1247,7 +1275,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "opengvlab/internvl3-78b",
@@ -1261,7 +1289,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-next-80b-a3b-thinking",
@@ -1275,7 +1303,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-next-80b-a3b-instruct",
@@ -1289,7 +1317,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meituan/longcat-flash-chat",
@@ -1303,7 +1331,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-plus-2025-07-28",
@@ -1317,7 +1345,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-plus-2025-07-28:thinking",
@@ -1331,7 +1359,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nvidia/nemotron-nano-9b-v2:free",
@@ -1345,7 +1373,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nvidia/nemotron-nano-9b-v2",
@@ -1359,7 +1387,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "moonshotai/kimi-k2-0905",
@@ -1373,7 +1401,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "moonshotai/kimi-k2-0905:exacto",
@@ -1387,7 +1415,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepcogito/cogito-v2-preview-llama-70b",
@@ -1401,7 +1429,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepcogito/cogito-v2-preview-llama-109b-moe",
@@ -1415,7 +1443,7 @@
       "modality": "text+image->text",
       "tokenizer": "Llama4",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "stepfun-ai/step3",
@@ -1429,7 +1457,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-30b-a3b-thinking-2507",
@@ -1443,7 +1471,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-code-fast-1",
@@ -1457,7 +1485,7 @@
       "modality": "text->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nousresearch/hermes-4-70b",
@@ -1471,7 +1499,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nousresearch/hermes-4-405b",
@@ -1485,7 +1513,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-flash-image-preview",
@@ -1499,7 +1527,7 @@
       "modality": "text+image->text+image",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-chat-v3.1",
@@ -1513,7 +1541,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-audio-preview",
@@ -1527,7 +1555,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.166Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-medium-3.1",
@@ -1541,7 +1569,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "baidu/ernie-4.5-21b-a3b",
@@ -1555,7 +1583,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "baidu/ernie-4.5-vl-28b-a3b",
@@ -1569,7 +1597,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "z-ai/glm-4.5v",
@@ -1583,7 +1611,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "ai21/jamba-mini-1.7",
@@ -1597,7 +1625,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "ai21/jamba-large-1.7",
@@ -1611,7 +1639,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5-chat",
@@ -1625,7 +1653,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5",
@@ -1639,7 +1667,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5-mini",
@@ -1653,7 +1681,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-5-nano",
@@ -1667,7 +1695,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-oss-120b:free",
@@ -1681,7 +1709,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -1695,7 +1723,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-oss-120b:exacto",
@@ -1709,7 +1737,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-oss-20b:free",
@@ -1723,7 +1751,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-oss-20b",
@@ -1737,7 +1765,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-opus-4.1",
@@ -1751,7 +1779,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/codestral-2508",
@@ -1765,7 +1793,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-coder-30b-a3b-instruct",
@@ -1779,7 +1807,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-30b-a3b-instruct-2507",
@@ -1793,7 +1821,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "z-ai/glm-4.5",
@@ -1807,7 +1835,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "z-ai/glm-4.5-air:free",
@@ -1821,7 +1849,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "z-ai/glm-4.5-air",
@@ -1835,7 +1863,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-235b-a22b-thinking-2507",
@@ -1849,7 +1877,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "z-ai/glm-4-32b",
@@ -1863,7 +1891,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-coder:free",
@@ -1877,7 +1905,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-coder",
@@ -1891,7 +1919,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-coder:exacto",
@@ -1905,7 +1933,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "bytedance/ui-tars-1.5-7b",
@@ -1919,7 +1947,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-flash-lite",
@@ -1933,7 +1961,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-235b-a22b-2507",
@@ -1947,7 +1975,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "switchpoint/router",
@@ -1961,7 +1989,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "moonshotai/kimi-k2:free",
@@ -1975,7 +2003,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "moonshotai/kimi-k2",
@@ -1989,7 +2017,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "thudm/glm-4.1v-9b-thinking",
@@ -2003,7 +2031,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/devstral-medium",
@@ -2017,7 +2045,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/devstral-small",
@@ -2031,7 +2059,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
@@ -2045,7 +2073,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-4",
@@ -2059,7 +2087,7 @@
       "modality": "text+image->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3n-e2b-it:free",
@@ -2073,7 +2101,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "tencent/hunyuan-a13b-instruct",
@@ -2087,7 +2115,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "tngtech/deepseek-r1t2-chimera:free",
@@ -2101,7 +2129,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "tngtech/deepseek-r1t2-chimera",
@@ -2115,7 +2143,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "morph/morph-v3-large",
@@ -2129,7 +2157,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "morph/morph-v3-fast",
@@ -2143,7 +2171,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "baidu/ernie-4.5-vl-424b-a47b",
@@ -2157,7 +2185,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "baidu/ernie-4.5-300b-a47b",
@@ -2171,7 +2199,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "inception/mercury",
@@ -2185,7 +2213,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-small-3.2-24b-instruct",
@@ -2199,7 +2227,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "minimax/minimax-m1",
@@ -2213,7 +2241,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-flash",
@@ -2227,7 +2255,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-pro",
@@ -2241,7 +2269,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "moonshotai/kimi-dev-72b",
@@ -2255,7 +2283,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o3-pro",
@@ -2269,7 +2297,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-3-mini",
@@ -2283,7 +2311,7 @@
       "modality": "text->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-3",
@@ -2297,7 +2325,7 @@
       "modality": "text->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-pro-preview",
@@ -2311,7 +2339,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-r1-0528-qwen3-8b",
@@ -2325,7 +2353,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-r1-0528:free",
@@ -2339,7 +2367,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-r1-0528",
@@ -2353,7 +2381,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-opus-4",
@@ -2367,7 +2395,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-sonnet-4",
@@ -2381,7 +2409,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/devstral-small-2505",
@@ -2395,7 +2423,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3n-e4b-it:free",
@@ -2409,7 +2437,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3n-e4b-it",
@@ -2423,7 +2451,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/codex-mini",
@@ -2437,7 +2465,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nousresearch/deephermes-3-mistral-24b-preview",
@@ -2451,7 +2479,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-medium-3",
@@ -2465,7 +2493,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.5-pro-preview-05-06",
@@ -2479,7 +2507,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "arcee-ai/spotlight",
@@ -2493,7 +2521,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "arcee-ai/maestro-reasoning",
@@ -2507,7 +2535,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "arcee-ai/virtuoso-large",
@@ -2521,7 +2549,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "arcee-ai/coder-large",
@@ -2535,7 +2563,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "microsoft/phi-4-reasoning-plus",
@@ -2549,7 +2577,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "inception/mercury-coder",
@@ -2563,7 +2591,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-4b:free",
@@ -2577,7 +2605,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-prover-v2",
@@ -2591,7 +2619,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-guard-4-12b",
@@ -2605,7 +2633,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-30b-a3b",
@@ -2619,7 +2647,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-8b",
@@ -2633,7 +2661,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-14b",
@@ -2647,7 +2675,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-32b",
@@ -2661,7 +2689,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen3-235b-a22b",
@@ -2675,7 +2703,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "tngtech/deepseek-r1t-chimera:free",
@@ -2689,7 +2717,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "tngtech/deepseek-r1t-chimera",
@@ -2703,7 +2731,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o4-mini-high",
@@ -2717,7 +2745,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o3",
@@ -2731,7 +2759,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o4-mini",
@@ -2745,7 +2773,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen2.5-coder-7b-instruct",
@@ -2759,7 +2787,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4.1",
@@ -2773,7 +2801,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4.1-mini",
@@ -2787,7 +2815,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4.1-nano",
@@ -2801,7 +2829,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "eleutherai/llemma_7b",
@@ -2815,7 +2843,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "alfredpros/codellama-7b-instruct-solidity",
@@ -2829,7 +2857,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "arliai/qwq-32b-arliai-rpr-v1",
@@ -2843,7 +2871,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-3-mini-beta",
@@ -2857,7 +2885,7 @@
       "modality": "text->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "x-ai/grok-3-beta",
@@ -2871,7 +2899,7 @@
       "modality": "text->text",
       "tokenizer": "Grok",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
@@ -2885,7 +2913,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-4-maverick",
@@ -2899,7 +2927,7 @@
       "modality": "text+image->text",
       "tokenizer": "Llama4",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-4-scout",
@@ -2913,7 +2941,7 @@
       "modality": "text+image->text",
       "tokenizer": "Llama4",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen2.5-vl-32b-instruct",
@@ -2927,7 +2955,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-chat-v3-0324",
@@ -2941,7 +2969,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o1-pro",
@@ -2955,7 +2983,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-small-3.1-24b-instruct:free",
@@ -2969,7 +2997,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-small-3.1-24b-instruct",
@@ -2983,7 +3011,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "allenai/olmo-2-0325-32b-instruct",
@@ -2997,7 +3025,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3-4b-it:free",
@@ -3011,7 +3039,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3-4b-it",
@@ -3025,7 +3053,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3-12b-it:free",
@@ -3039,7 +3067,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3-12b-it",
@@ -3053,7 +3081,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "cohere/command-a",
@@ -3067,7 +3095,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-mini-search-preview",
@@ -3081,7 +3109,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-search-preview",
@@ -3095,7 +3123,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3-27b-it:free",
@@ -3109,7 +3137,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-3-27b-it",
@@ -3123,7 +3151,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "thedrummer/skyfall-36b-v2",
@@ -3137,7 +3165,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "microsoft/phi-4-multimodal-instruct",
@@ -3151,7 +3179,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "perplexity/sonar-reasoning-pro",
@@ -3165,7 +3193,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "perplexity/sonar-pro",
@@ -3179,7 +3207,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "perplexity/sonar-deep-research",
@@ -3193,7 +3221,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwq-32b",
@@ -3207,7 +3235,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.0-flash-lite-001",
@@ -3221,7 +3249,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-3.7-sonnet:thinking",
@@ -3235,7 +3263,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-3.7-sonnet",
@@ -3249,7 +3277,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-saba",
@@ -3263,7 +3291,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-guard-3-8b",
@@ -3277,7 +3305,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o3-mini-high",
@@ -3291,7 +3319,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.0-flash-001",
@@ -3305,7 +3333,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-vl-plus",
@@ -3319,7 +3347,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "aion-labs/aion-1.0",
@@ -3333,7 +3361,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "aion-labs/aion-1.0-mini",
@@ -3347,7 +3375,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "aion-labs/aion-rp-llama-3.1-8b",
@@ -3361,7 +3389,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-vl-max",
@@ -3375,7 +3403,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-turbo",
@@ -3389,7 +3417,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen2.5-vl-72b-instruct",
@@ -3403,7 +3431,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-plus",
@@ -3417,7 +3445,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-max",
@@ -3431,7 +3459,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o3-mini",
@@ -3445,7 +3473,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-small-24b-instruct-2501",
@@ -3459,7 +3487,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-r1-distill-qwen-32b",
@@ -3473,7 +3501,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-r1-distill-qwen-14b",
@@ -3487,7 +3515,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "perplexity/sonar-reasoning",
@@ -3501,7 +3529,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "perplexity/sonar",
@@ -3515,7 +3543,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-r1-distill-llama-70b",
@@ -3529,7 +3557,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-r1",
@@ -3543,7 +3571,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "minimax/minimax-01",
@@ -3557,7 +3585,7 @@
       "modality": "text+image->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "microsoft/phi-4",
@@ -3571,7 +3599,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "sao10k/l3.1-70b-hanami-x1",
@@ -3585,7 +3613,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "deepseek/deepseek-chat",
@@ -3599,7 +3627,7 @@
       "modality": "text->text",
       "tokenizer": "DeepSeek",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "sao10k/l3.3-euryale-70b",
@@ -3613,7 +3641,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/o1",
@@ -3627,7 +3655,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "cohere/command-r7b-12-2024",
@@ -3641,7 +3669,7 @@
       "modality": "text->text",
       "tokenizer": "Cohere",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemini-2.0-flash-exp:free",
@@ -3655,7 +3683,7 @@
       "modality": "text+image->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct:free",
@@ -3669,7 +3697,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
@@ -3683,7 +3711,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "amazon/nova-lite-v1",
@@ -3697,7 +3725,7 @@
       "modality": "text+image->text",
       "tokenizer": "Nova",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "amazon/nova-micro-v1",
@@ -3711,7 +3739,7 @@
       "modality": "text->text",
       "tokenizer": "Nova",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "amazon/nova-pro-v1",
@@ -3725,7 +3753,7 @@
       "modality": "text+image->text",
       "tokenizer": "Nova",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-2024-11-20",
@@ -3739,7 +3767,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-large-2411",
@@ -3753,7 +3781,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-large-2407",
@@ -3767,7 +3795,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/pixtral-large-2411",
@@ -3781,7 +3809,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-2.5-coder-32b-instruct",
@@ -3795,7 +3823,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "raifle/sorcererlm-8x22b",
@@ -3809,7 +3837,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "thedrummer/unslopnemo-12b",
@@ -3823,7 +3851,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-3.5-haiku-20241022",
@@ -3837,7 +3865,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-3.5-haiku",
@@ -3851,7 +3879,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthracite-org/magnum-v4-72b",
@@ -3865,7 +3893,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-3.5-sonnet",
@@ -3879,7 +3907,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/ministral-8b",
@@ -3893,7 +3921,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/ministral-3b",
@@ -3907,7 +3935,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-2.5-7b-instruct",
@@ -3921,7 +3949,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nvidia/llama-3.1-nemotron-70b-instruct",
@@ -3935,7 +3963,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "inflection/inflection-3-pi",
@@ -3949,7 +3977,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "inflection/inflection-3-productivity",
@@ -3963,7 +3991,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "thedrummer/rocinante-12b",
@@ -3977,7 +4005,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.2-3b-instruct:free",
@@ -3991,7 +4019,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.2-3b-instruct",
@@ -4005,7 +4033,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.2-1b-instruct",
@@ -4019,7 +4047,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.2-90b-vision-instruct",
@@ -4033,7 +4061,7 @@
       "modality": "text+image->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.2-11b-vision-instruct",
@@ -4047,7 +4075,7 @@
       "modality": "text+image->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-2.5-72b-instruct",
@@ -4061,7 +4089,7 @@
       "modality": "text->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "neversleep/llama-3.1-lumimaid-8b",
@@ -4075,7 +4103,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/pixtral-12b",
@@ -4089,7 +4117,7 @@
       "modality": "text+image->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "cohere/command-r-08-2024",
@@ -4103,7 +4131,7 @@
       "modality": "text->text",
       "tokenizer": "Cohere",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "cohere/command-r-plus-08-2024",
@@ -4117,7 +4145,7 @@
       "modality": "text->text",
       "tokenizer": "Cohere",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "sao10k/l3.1-euryale-70b",
@@ -4131,7 +4159,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-2.5-vl-7b-instruct:free",
@@ -4145,7 +4173,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "qwen/qwen-2.5-vl-7b-instruct",
@@ -4159,7 +4187,7 @@
       "modality": "text+image->text",
       "tokenizer": "Qwen",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "microsoft/phi-3.5-mini-128k-instruct",
@@ -4173,7 +4201,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nousresearch/hermes-3-llama-3.1-70b",
@@ -4187,7 +4215,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nousresearch/hermes-3-llama-3.1-405b:free",
@@ -4201,7 +4229,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nousresearch/hermes-3-llama-3.1-405b",
@@ -4215,7 +4243,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/chatgpt-4o-latest",
@@ -4229,7 +4257,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "sao10k/l3-lunaris-8b",
@@ -4243,7 +4271,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-2024-08-06",
@@ -4257,7 +4285,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.1-405b",
@@ -4271,7 +4299,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.1-8b-instruct",
@@ -4285,7 +4313,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.1-405b-instruct:free",
@@ -4299,7 +4327,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.1-405b-instruct",
@@ -4313,7 +4341,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3.1-70b-instruct",
@@ -4327,7 +4355,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-nemo",
@@ -4341,7 +4369,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-mini-2024-07-18",
@@ -4355,7 +4383,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-mini",
@@ -4369,7 +4397,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-2-27b-it",
@@ -4383,7 +4411,7 @@
       "modality": "text->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "google/gemma-2-9b-it",
@@ -4397,7 +4425,7 @@
       "modality": "text->text",
       "tokenizer": "Gemini",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "sao10k/l3-euryale-70b",
@@ -4411,7 +4439,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "nousresearch/hermes-2-pro-llama-3-8b",
@@ -4425,7 +4453,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-7b-instruct:free",
@@ -4439,7 +4467,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-7b-instruct",
@@ -4453,7 +4481,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-7b-instruct-v0.3",
@@ -4467,7 +4495,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "microsoft/phi-3-mini-128k-instruct",
@@ -4481,7 +4509,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "microsoft/phi-3-medium-128k-instruct",
@@ -4495,7 +4523,7 @@
       "modality": "text->text",
       "tokenizer": "Other",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-guard-2-8b",
@@ -4509,7 +4537,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o-2024-05-13",
@@ -4523,7 +4551,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o",
@@ -4537,7 +4565,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4o:extended",
@@ -4551,7 +4579,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3-70b-instruct",
@@ -4565,7 +4593,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "meta-llama/llama-3-8b-instruct",
@@ -4579,7 +4607,7 @@
       "modality": "text->text",
       "tokenizer": "Llama3",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mixtral-8x22b-instruct",
@@ -4593,7 +4621,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "microsoft/wizardlm-2-8x22b",
@@ -4607,7 +4635,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4-turbo",
@@ -4621,7 +4649,7 @@
       "modality": "text+image->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-3-haiku",
@@ -4635,7 +4663,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "anthropic/claude-3-opus",
@@ -4649,7 +4677,7 @@
       "modality": "text+image->text",
       "tokenizer": "Claude",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-large",
@@ -4663,7 +4691,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-3.5-turbo-0613",
@@ -4677,7 +4705,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4-turbo-preview",
@@ -4691,7 +4719,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-tiny",
@@ -4705,7 +4733,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-7b-instruct-v0.2",
@@ -4719,7 +4747,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mixtral-8x7b-instruct",
@@ -4733,7 +4761,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "neversleep/noromaid-20b",
@@ -4747,7 +4775,7 @@
       "modality": "text->text",
       "tokenizer": "Llama2",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "alpindale/goliath-120b",
@@ -4761,7 +4789,7 @@
       "modality": "text->text",
       "tokenizer": "Llama2",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openrouter/auto",
@@ -4775,7 +4803,7 @@
       "modality": "text->text",
       "tokenizer": "Router",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4-1106-preview",
@@ -4789,7 +4817,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-3.5-turbo-instruct",
@@ -4803,7 +4831,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mistralai/mistral-7b-instruct-v0.1",
@@ -4817,7 +4845,7 @@
       "modality": "text->text",
       "tokenizer": "Mistral",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-3.5-turbo-16k",
@@ -4831,7 +4859,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "mancer/weaver",
@@ -4845,7 +4873,7 @@
       "modality": "text->text",
       "tokenizer": "Llama2",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "undi95/remm-slerp-l2-13b",
@@ -4859,7 +4887,7 @@
       "modality": "text->text",
       "tokenizer": "Llama2",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "gryphe/mythomax-l2-13b",
@@ -4873,7 +4901,7 @@
       "modality": "text->text",
       "tokenizer": "Llama2",
       "isModerated": false,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4-0314",
@@ -4887,7 +4915,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-4",
@@ -4901,7 +4929,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     },
     {
       "id": "openai/gpt-3.5-turbo",
@@ -4915,7 +4943,7 @@
       "modality": "text->text",
       "tokenizer": "GPT",
       "isModerated": true,
-      "lastUpdated": "2025-12-23T13:16:42.167Z"
+      "lastUpdated": "2025-12-23T16:05:28.252Z"
     }
   ]
 }
