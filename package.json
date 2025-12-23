@@ -9,11 +9,18 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:ci": "node --experimental-vm-modules node_modules/jest/bin/jest.js --ci --coverage",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "lint": "eslint src/**/*.ts",
-    "clean": "rimraf dist",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"api/**/*.ts\" \"__tests__/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"api/**/*.ts\"",
+    "clean": "rimraf dist coverage",
     "update-models": "tsx src/crawler.ts",
     "crawl": "tsx src/crawler.ts",
-    "vercel-build": "npm run build"
+    "vercel-build": "npm run build",
+    "precommit": "npm run lint && npm run format:check && npm run test",
+    "prepare": "npm run build"
   },
   "keywords": [
     "mcp",
@@ -21,8 +28,12 @@
     "counter",
     "usage",
     "tracking",
+    "cost",
+    "calculator",
     "ai",
     "llm",
+    "openai",
+    "anthropic",
     "vercel"
   ],
   "author": "quangminh1212",
@@ -31,22 +42,27 @@
     "type": "git",
     "url": "https://github.com/quangminh1212/MCP_TokenSage.git"
   },
+  "bugs": {
+    "url": "https://github.com/quangminh1212/MCP_TokenSage/issues"
+  },
+  "homepage": "https://github.com/quangminh1212/MCP_TokenSage#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "tiktoken": "^1.0.17"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "@vercel/node": "^3.0.0",
-    "jest": "^29.7.0",
     "@types/jest": "^29.5.11",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vercel/node": "^3.0.0",
+    "eslint": "^8.55.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.2.0",
+    "rimraf": "^5.0.5",
     "ts-jest": "^29.1.1",
     "tsx": "^4.7.0",
-    "typescript": "^5.3.0",
-    "rimraf": "^5.0.5",
-    "eslint": "^8.55.0",
-    "@typescript-eslint/eslint-plugin": "^6.13.0",
-    "@typescript-eslint/parser": "^6.13.0"
+    "typescript": "^5.3.0"
   },
   "engines": {
     "node": ">=18.0.0"
