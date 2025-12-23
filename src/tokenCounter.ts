@@ -244,14 +244,52 @@ function getEncoder(encoding: ModelEncoding): Tiktoken {
     return encoder;
 }
 
+// Import loader với try-catch để tránh lỗi khi chưa có data file
+let loadedEncodings: Record<string, ModelEncoding> | null = null;
+
+async function tryLoadEncodings(): Promise<Record<string, ModelEncoding>> {
+    if (loadedEncodings !== null) {
+        return loadedEncodings;
+    }
+
+    try {
+        const { loadEncodings } = await import('./modelLoader.js');
+        loadedEncodings = loadEncodings() as Record<string, ModelEncoding>;
+        return loadedEncodings;
+    } catch {
+        loadedEncodings = {};
+        return loadedEncodings;
+    }
+}
+
+// Khởi tạo load ngay khi module được import
+tryLoadEncodings().catch(() => { });
+
 export function getEncodingForModel(model: string): ModelEncoding {
-    // Tìm encoding phù hợp nhất
+    const modelLower = model.toLowerCase();
+
+    // 1. Thử tìm trong loaded data trước (từ crawler)
+    if (loadedEncodings && Object.keys(loadedEncodings).length > 0) {
+        // Exact match
+        if (loadedEncodings[modelLower]) {
+            return loadedEncodings[modelLower];
+        }
+        // Partial match
+        for (const [key, encoding] of Object.entries(loadedEncodings)) {
+            if (modelLower.includes(key.toLowerCase()) || key.toLowerCase().includes(modelLower)) {
+                return encoding as ModelEncoding;
+            }
+        }
+    }
+
+    // 2. Fallback về hardcoded data
     for (const [key, encoding] of Object.entries(MODEL_ENCODINGS)) {
-        if (model.toLowerCase().includes(key.toLowerCase())) {
+        if (modelLower.includes(key.toLowerCase())) {
             return encoding;
         }
     }
-    // Default to cl100k_base (GPT-4/3.5)
+
+    // 3. Default to cl100k_base (GPT-4/3.5)
     return 'cl100k_base';
 }
 
