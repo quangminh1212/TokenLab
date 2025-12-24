@@ -10,6 +10,7 @@
     "dev": "tsx src/index.ts",
     "proxy": "node dist/proxy.js",
     "proxy:dev": "tsx src/proxy.ts",
+    "config": "tsx src/autoConfig.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:ci": "node --experimental-vm-modules node_modules/jest/bin/jest.js --ci --coverage",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
