@@ -25,7 +25,15 @@ import {
     getSupportedModels,
     cleanupEncoders,
 } from './tokenCounter.js';
-import { getGlobalTracker } from './usageTracker.js';
+import {
+    getGlobalTracker,
+    recordUsagePersistent,
+    getDailyStats,
+    getTotalStats,
+    getUsageHistory,
+    getStatsInRange,
+    resetPersistentData,
+} from './usageTracker.js';
 import {
     calculateCost,
     compareCosts,
@@ -213,6 +221,100 @@ const TOOLS: Tool[] = [
         inputSchema: {
             type: 'object',
             properties: {},
+        },
+    },
+    // ==================== AUTO TRACKING TOOLS ====================
+    {
+        name: 'auto_track_usage',
+        description:
+            'Tự động ghi nhận và lưu trữ usage với persistent storage. Data được lưu vào file và giữ lại giữa các sessions.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                model: {
+                    type: 'string',
+                    description: 'Tên model sử dụng (vd: gpt-4o, claude-3.5-sonnet)',
+                },
+                input_tokens: {
+                    type: 'number',
+                    description: 'Số input tokens',
+                },
+                output_tokens: {
+                    type: 'number',
+                    description: 'Số output tokens',
+                },
+                request_id: {
+                    type: 'string',
+                    description: 'ID của request (optional)',
+                },
+            },
+            required: ['model', 'input_tokens', 'output_tokens'],
+        },
+    },
+    {
+        name: 'get_daily_stats',
+        description: 'Lấy thống kê sử dụng trong ngày (hoặc ngày cụ thể)',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                date: {
+                    type: 'string',
+                    description: 'Ngày cần xem (format: YYYY-MM-DD). Mặc định: ngày hôm nay',
+                },
+            },
+        },
+    },
+    {
+        name: 'get_total_stats',
+        description: 'Lấy thống kê tổng hợp tất cả thời gian (all-time stats)',
+        inputSchema: {
+            type: 'object',
+            properties: {},
+        },
+    },
+    {
+        name: 'get_usage_history',
+        description: 'Lấy lịch sử sử dụng gần đây',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                limit: {
+                    type: 'number',
+                    description: 'Số lượng records muốn lấy (mặc định: tất cả, tối đa 100)',
+                },
+            },
+        },
+    },
+    {
+        name: 'get_stats_in_range',
+        description: 'Lấy thống kê trong khoảng thời gian cụ thể',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                start_date: {
+                    type: 'string',
+                    description: 'Ngày bắt đầu (format: YYYY-MM-DD)',
+                },
+                end_date: {
+                    type: 'string',
+                    description: 'Ngày kết thúc (format: YYYY-MM-DD)',
+                },
+            },
+            required: ['start_date', 'end_date'],
+        },
+    },
+    {
+        name: 'reset_all_stats',
+        description: 'Reset toàn bộ thống kê persistent (xóa tất cả lịch sử đã lưu)',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                confirm: {
+                    type: 'boolean',
+                    description: 'Xác nhận reset (phải là true)',
+                },
+            },
+            required: ['confirm'],
         },
     },
 ];
