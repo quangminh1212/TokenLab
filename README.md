@@ -2,14 +2,53 @@
 
 A Model Context Protocol (MCP) server for token counting, usage tracking, and cost calculation for LLM APIs.
 
+**Now with Proxy Server Mode** - Automatically track token usage by intercepting API requests from Cursor, Windsurf, or any LLM client!
+
 ## Features
 
-- **🔢 Token Counting**: Accurate token counting using [tiktoken](https://github.com/openai/tiktoken) - the official OpenAI tokenizer
+- **🚀 Proxy Server Mode (NEW!)**: Intercept API requests and auto-track token usage - no cookies needed!
+- **🔢 Token Counting**: Accurate token counting using [tiktoken](https://github.com/openai/tiktoken)
 - **📊 Usage Tracking**: Track input/output tokens per session with detailed statistics
 - **💰 Cost Calculation**: Calculate costs based on real pricing from major LLM providers
 - **📈 Model Comparison**: Compare costs across different models
 - **🎯 Project Estimation**: Estimate monthly/yearly costs for your AI projects
 - **🔄 Auto-Update**: Crawl latest model data from OpenRouter API
+- **📱 Real-time Dashboard**: View usage stats in a beautiful web dashboard
+
+## Quick Start - Proxy Mode
+
+The easiest way to track your token usage from Cursor/Windsurf:
+
+```bash
+# Start the proxy server
+npm run proxy:dev
+
+# Or production mode
+npm run proxy
+```
+
+Then configure your IDE:
+- **Proxy URL**: `http://localhost:4000`
+- **Dashboard**: `http://localhost:4001`
+
+### Configure Cursor/Windsurf
+
+Set the API base URL to the proxy:
+
+```bash
+# For OpenAI models
+OPENAI_BASE_URL=http://localhost:4000/v1
+
+# For Anthropic models  
+ANTHROPIC_BASE_URL=http://localhost:4000/v1
+```
+
+All your API requests will now be automatically tracked with:
+- ✅ Token count (input + output)
+- ✅ Cost calculation
+- ✅ Model detection
+- ✅ Latency monitoring
+- ✅ Persistent storage
 
 ## Supported Models
 
