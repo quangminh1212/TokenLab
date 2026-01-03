@@ -23,6 +23,13 @@ if %ERRORLEVEL% NEQ 0 (
 set PROXY_PORT=4000
 set DASHBOARD_PORT=4001
 
+:: Set certificate for Node.js apps (Kiro, Cursor, etc.)
+set CERT_PEM=%USERPROFILE%\.mitmproxy\mitmproxy-ca-cert.pem
+if exist "%CERT_PEM%" (
+    set NODE_EXTRA_CA_CERTS=%CERT_PEM%
+    echo [INFO] NODE_EXTRA_CA_CERTS set for Node.js apps
+)
+
 :: ======================= FIND MITMWEB PATH =======================
 echo.
 echo [INFO] Locating mitmproxy...

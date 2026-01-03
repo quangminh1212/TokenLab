@@ -143,7 +143,20 @@ echo.
 echo [%STEPS_DONE%/%TOTAL_STEPS%] Checking mitmproxy certificate...
 
 set CERT_FILE=%USERPROFILE%\.mitmproxy\mitmproxy-ca-cert.cer
+set CERT_PEM=%USERPROFILE%\.mitmproxy\mitmproxy-ca-cert.pem
 set CERT_INSTALLED=0
+
+:: Generate certificate if not exists (run mitmproxy once)
+if not exist "%CERT_FILE%" (
+    echo       📦 Generating mitmproxy certificate...
+    where mitmproxy >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        :: Run mitmproxy briefly to generate certs
+        start /B mitmproxy --mode regular -p 18080
+        timeout /t 3 /nobreak >nul
+        taskkill /F /IM mitmproxy.exe >nul 2>&1
+    )
+)
 
 :: Check if certificate file exists
 if exist "%CERT_FILE%" (
@@ -152,33 +165,29 @@ if exist "%CERT_FILE%" (
     :: Check if certificate is installed in Windows cert store
     certutil -verifystore Root mitmproxy >nul 2>&1
     if %ERRORLEVEL% EQU 0 (
-        echo       ✅ Certificate already installed in Windows
+        echo       ✅ Certificate installed in Windows
         set CERT_INSTALLED=1
     ) else (
-        echo       📦 Certificate not installed in Windows - Installing...
+        echo       📦 Installing certificate to Windows...
         
-        :: Need admin rights to install certificate
-        net session >nul 2>&1
+        :: Try to install - may need admin rights
+        certutil -addstore -f Root "%CERT_FILE%" >nul 2>&1
         if %ERRORLEVEL% EQU 0 (
-            certutil -addstore -f Root "%CERT_FILE%" >nul 2>&1
-            if %ERRORLEVEL% EQU 0 (
-                echo       ✅ Certificate installed successfully
-                set CERT_INSTALLED=1
-            ) else (
-                echo       ⚠️  Failed to install certificate automatically
-            )
+            echo       ✅ Certificate installed successfully
+            set CERT_INSTALLED=1
         ) else (
-            echo       ⚠️  Need admin rights to install certificate
-            echo       Run this script as Administrator, or install manually:
-            echo       1. Run mitmproxy once: mitmweb
-            echo       2. Open http://mitm.it and download Windows cert
-            echo       3. Install to "Trusted Root Certification Authorities"
+            echo       ⚠️  Need admin rights - run as Administrator
         )
+    )
+    
+    :: Copy PEM cert to project for Node.js apps
+    if exist "%CERT_PEM%" (
+        copy /Y "%CERT_PEM%" "%~dp0mitmproxy-ca-cert.pem" >nul 2>&1
+        echo       ✅ PEM certificate copied for Node.js apps
     )
 ) else (
     echo       ⚠️  Certificate not generated yet
-    echo       It will be created when mitmproxy runs for the first time.
-    echo       Then visit http://mitm.it to install it.
+    echo       Run mitmproxy once to generate it.
 )
 
 :: ======================= SETUP COMPLETE =======================
