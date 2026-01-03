@@ -400,6 +400,7 @@ class TokenSageAddon:
         request_model = flow.metadata.get('tokensage_model', 'unknown')
         
         # Log the request
+        request_id = f"mitm_{datetime.now().strftime('%Y%m%d%H%M%S')}_{id(flow)}"
         record = {
             "timestamp": datetime.now().isoformat(),
             "host": host,
@@ -407,40 +408,69 @@ class TokenSageAddon:
             "method": flow.request.method,
             "status_code": flow.response.status_code,
             "content_type": flow.response.headers.get("content-type", ""),
-            "request_id": f"mitm_{datetime.now().strftime('%Y%m%d%H%M%S')}_{id(flow)}",
+            "request_id": request_id,
+        }
+        
+        tokens = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "model": request_model
         }
         
         # Try to extract token usage from response
         if flow.response.content:
             try:
                 body = flow.response.content.decode('utf-8', errors='ignore')
-                tokens = self.extract_tokens(body, host)
+                extracted_tokens = self.extract_tokens(body, host)
                 
-                # Use model from request if not in response
-                if tokens["model"] == "unknown":
-                    tokens["model"] = request_model
-                
-                record.update(tokens)
-                
-                if tokens["total_tokens"] > 0:
-                    ctx.log.info(
-                        f"🔮 {host} | {tokens['model']} | "
-                        f"{tokens['input_tokens']}+{tokens['output_tokens']} = {tokens['total_tokens']} tokens"
-                    )
+                # Use extracted tokens if available
+                if extracted_tokens["total_tokens"] > 0:
+                    tokens = extracted_tokens
+                    if tokens["model"] == "unknown":
+                        tokens["model"] = request_model
+                else:
+                    # Estimate tokens from content length if no usage data
+                    # Rough estimate: 4 chars per token
+                    request_len = len(flow.request.content) if flow.request.content else 0
+                    response_len = len(body) if body else 0
                     
-                    # Send to TokenSage API
-                    send_to_tokensage({
-                        "model": tokens["model"],
-                        "input_tokens": tokens["input_tokens"],
-                        "output_tokens": tokens["output_tokens"],
-                        "host": host,
-                        "path": flow.request.path,
-                        "request_id": record["request_id"],
-                        "status_code": flow.response.status_code,
-                    })
+                    estimated_input = max(1, request_len // 4)
+                    estimated_output = max(1, response_len // 4)
+                    
+                    # Only use estimates for successful responses
+                    if flow.response.status_code == 200:
+                        tokens["input_tokens"] = estimated_input
+                        tokens["output_tokens"] = estimated_output
+                        tokens["total_tokens"] = estimated_input + estimated_output
+                        ctx.log.info(f"📊 Estimated tokens for {host}: {estimated_input}+{estimated_output}")
+                
+                # Try to get model from response body
+                if tokens["model"] == "unknown" and extracted_tokens["model"] != "unknown":
+                    tokens["model"] = extracted_tokens["model"]
                     
             except Exception as e:
                 ctx.log.error(f"Response parsing error: {e}")
+        
+        record.update(tokens)
+        
+        # Log all LLM requests
+        ctx.log.info(
+            f"🔮 [{flow.response.status_code}] {host}{flow.request.path[:50]} | "
+            f"{tokens['model']} | {tokens['input_tokens']}+{tokens['output_tokens']} tokens"
+        )
+        
+        # Send to TokenSage API (always send for LLM requests)
+        if tokens["total_tokens"] > 0 or flow.response.status_code == 200:
+            send_to_tokensage({
+                "model": tokens["model"],
+                "input_tokens": tokens["input_tokens"],
+                "output_tokens": tokens["output_tokens"],
+                "host": host,
+                "path": flow.request.path,
+                "request_id": request_id,
+                "status_code": flow.response.status_code,
+            })
         
         # Add to local log (backup)
         self.usage_log.append(record)
