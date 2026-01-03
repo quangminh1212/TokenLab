@@ -218,11 +218,11 @@ class TokenSageAddon:
         """Check if request is to an LLM API"""
         return any(p.search(host) for p in PATTERNS)
     
-    def extract_model_from_request(self, request_body: bytes, host: str, path: str = "") -> str:
-        """Extract model from request body or URL path"""
+    def extract_model_from_request(self, request_body: bytes, host: str, path: str = "", headers: dict = None) -> str:
+        """Extract model from request body, URL path, or headers"""
         model = "unknown"
         
-        # Try to extract from URL path first (Bedrock format: /model/{modelId}/invoke)
+        # Try to extract from URL path first
         if path:
             # Bedrock: /model/anthropic.claude-3-5-sonnet-20241022-v2:0/invoke
             bedrock_match = re.search(r'/model/([^/]+)/(invoke|converse)', path)
@@ -235,13 +235,55 @@ class TokenSageAddon:
             if google_match:
                 model = google_match.group(1)
                 return model
+            
+            # Antigravity/Gemini: /v1beta/models/{model}:generateContent or streamGenerateContent
+            antigravity_match = re.search(r'/v\d+(?:beta)?/models/([^/:]+)', path)
+            if antigravity_match:
+                model = antigravity_match.group(1)
+                return model
+            
+            # OpenAI compatible: path may contain model name
+            # /v1/chat/completions, /v1/completions - model is in body
+            
+            # Azure: /openai/deployments/{deployment}/chat/completions
+            azure_match = re.search(r'/deployments/([^/]+)/', path)
+            if azure_match:
+                model = azure_match.group(1)
+                return model
         
         # Try to extract from request body
-        try:
-            data = json.loads(request_body.decode('utf-8', errors='ignore'))
-            model = data.get('model', data.get('modelId', model))
-        except:
-            pass
+        if request_body:
+            try:
+                data = json.loads(request_body.decode('utf-8', errors='ignore'))
+                
+                # Check multiple possible model fields
+                model_fields = ['model', 'modelId', 'model_id', 'modelName', 'model_name', 
+                               'engine', 'deployment', 'deployment_id']
+                
+                for field in model_fields:
+                    if field in data and data[field]:
+                        model = str(data[field])
+                        break
+                
+                # Nested model in some APIs
+                if model == "unknown":
+                    if 'generationConfig' in data and 'model' in data['generationConfig']:
+                        model = data['generationConfig']['model']
+                    elif 'parameters' in data and 'model' in data['parameters']:
+                        model = data['parameters']['model']
+                    elif 'request' in data and 'model' in data['request']:
+                        model = data['request']['model']
+            except:
+                pass
+        
+        # Try to extract from headers
+        if headers and model == "unknown":
+            # Some providers send model in headers
+            model_headers = ['x-model', 'x-model-id', 'anthropic-model', 'openai-model']
+            for header in model_headers:
+                if header in headers:
+                    model = headers[header]
+                    break
         
         return model
     
@@ -336,8 +378,16 @@ class TokenSageAddon:
         
         # Store model from request for later use
         if flow.request.content:
-            model = self.extract_model_from_request(flow.request.content, flow.request.host, flow.request.path)
+            # Convert headers to dict
+            headers = dict(flow.request.headers)
+            model = self.extract_model_from_request(
+                flow.request.content, 
+                flow.request.host, 
+                flow.request.path,
+                headers
+            )
             flow.metadata['tokensage_model'] = model
+            ctx.log.info(f"📤 Request to {flow.request.host} | Model: {model}")
     
     def response(self, flow: http.HTTPFlow):
         """Called when a response is received"""
