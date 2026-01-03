@@ -13,7 +13,7 @@ import http from 'http';
 import https from 'https';
 import { URL } from 'url';
 import { recordUsagePersistent, getDailyStats, getTotalStats, getUsageHistory } from './usageTracker.js';
-import { calculateCost, MODEL_PRICING } from './costCalculator.js';
+import { calculateCost } from './costCalculator.js';
 
 // Configuration
 const PROXY_PORT = parseInt(process.env.PROXY_PORT || '4000');
@@ -75,7 +75,6 @@ function extractModelFromRequest(body: string, provider: string): string {
             return json.model || 'claude-3-sonnet-20240229';
         }
         if (provider === 'google') {
-            // Google includes model in URL, extract from path
             return json.model || 'gemini-1.5-flash';
         }
         return json.model || 'unknown';
@@ -97,7 +96,6 @@ function extractTokenUsage(body: string, provider: string, requestModel: string)
         const json = JSON.parse(body);
 
         if (provider === 'openai') {
-            // OpenAI format: { usage: { prompt_tokens, completion_tokens, total_tokens } }
             const usage = json.usage || {};
             return {
                 inputTokens: usage.prompt_tokens || 0,
@@ -108,7 +106,6 @@ function extractTokenUsage(body: string, provider: string, requestModel: string)
         }
 
         if (provider === 'anthropic') {
-            // Anthropic format: { usage: { input_tokens, output_tokens } }
             const usage = json.usage || {};
             const inputTokens = usage.input_tokens || 0;
             const outputTokens = usage.output_tokens || 0;
@@ -121,7 +118,6 @@ function extractTokenUsage(body: string, provider: string, requestModel: string)
         }
 
         if (provider === 'google') {
-            // Google format: { usageMetadata: { promptTokenCount, candidatesTokenCount, totalTokenCount } }
             const usage = json.usageMetadata || {};
             return {
                 inputTokens: usage.promptTokenCount || 0,
@@ -137,6 +133,7 @@ function extractTokenUsage(body: string, provider: string, requestModel: string)
     }
 }
 
+
 // Forward request to the target API
 function forwardRequest(
     targetHost: string,
@@ -150,7 +147,6 @@ function forwardRequest(
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
 
-        // Prepare headers for target
         const targetHeaders: Record<string, string> = {};
         for (const [key, value] of Object.entries(headers)) {
             if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'content-length') {
@@ -178,7 +174,6 @@ function forwardRequest(
                 const responseBody = Buffer.concat(chunks).toString();
                 const latencyMs = Date.now() - startTime;
 
-                // Log the request
                 console.log(`[${requestId}] ${method} ${targetPath} -> ${res.statusCode} (${latencyMs}ms)`);
 
                 resolve({
@@ -215,7 +210,6 @@ function handleStreamingRequest(
 ): void {
     const startTime = Date.now();
 
-    // Prepare headers
     const targetHeaders: Record<string, string> = {};
     for (const [key, value] of Object.entries(headers)) {
         if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'content-length') {
@@ -240,14 +234,12 @@ function handleStreamingRequest(
     let streamBuffer = '';
 
     const proxyReq = https.request(options, (proxyRes) => {
-        // Forward headers
         res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
 
         proxyRes.on('data', (chunk) => {
             res.write(chunk);
             streamBuffer += chunk.toString();
 
-            // Parse SSE data to extract token usage
             const lines = streamBuffer.split('\n');
             streamBuffer = lines.pop() || '';
 
@@ -255,12 +247,10 @@ function handleStreamingRequest(
                 if (line.startsWith('data: ') && !line.includes('[DONE]')) {
                     try {
                         const data = JSON.parse(line.substring(6));
-                        // OpenAI streaming includes usage in last chunk
                         if (data.usage) {
                             totalInputTokens = data.usage.prompt_tokens || 0;
                             totalOutputTokens = data.usage.completion_tokens || 0;
                         }
-                        // Anthropic streaming format
                         if (data.message?.usage) {
                             totalOutputTokens = data.message.usage.output_tokens || 0;
                         }
@@ -278,20 +268,12 @@ function handleStreamingRequest(
             res.end();
             const latencyMs = Date.now() - startTime;
 
-            // Record usage if we have token data
             if (totalInputTokens > 0 || totalOutputTokens > 0) {
                 const costResult = calculateCost(requestModel, totalInputTokens, totalOutputTokens);
                 const cost = costResult.totalCost;
 
-                recordUsagePersistent(
-                    requestModel,
-                    totalInputTokens,
-                    totalOutputTokens,
-                    cost,
-                    requestId
-                );
+                recordUsagePersistent(requestModel, totalInputTokens, totalOutputTokens, cost, requestId);
 
-                // Add to recent requests
                 const proxyRequest: ProxyRequest = {
                     id: requestId,
                     timestamp: new Date(),
@@ -329,12 +311,12 @@ function handleStreamingRequest(
     proxyReq.end();
 }
 
+
 // Create the proxy server
 const proxyServer = http.createServer(async (req, res) => {
     const requestId = generateRequestId();
     const startTime = Date.now();
 
-    // Collect request body
     const chunks: Buffer[] = [];
     req.on('data', (chunk) => chunks.push(chunk));
 
@@ -381,11 +363,9 @@ const proxyServer = http.createServer(async (req, res) => {
         let targetHost = req.headers['x-target-host'] as string || '';
         let targetPath = url.pathname + url.search;
 
-        // Auto-detect provider from host header or path
         const hostHeader = req.headers.host || '';
         let provider = detectProvider(targetHost || hostHeader, targetPath);
 
-        // If target not specified, try to infer from path
         if (!targetHost) {
             if (targetPath.startsWith('/v1/chat/completions') || targetPath.startsWith('/v1/completions')) {
                 targetHost = API_ENDPOINTS.openai.host;
@@ -394,7 +374,6 @@ const proxyServer = http.createServer(async (req, res) => {
                 targetHost = API_ENDPOINTS.anthropic.host;
                 provider = 'anthropic';
             } else {
-                // Default to OpenAI
                 targetHost = API_ENDPOINTS.openai.host;
                 provider = 'openai';
             }
@@ -404,47 +383,26 @@ const proxyServer = http.createServer(async (req, res) => {
             provider = 'unknown';
         }
 
-        // Extract model from request
         const requestModel = extractModelFromRequest(body, provider);
-
-        // Check if streaming request
         const isStreaming = body.includes('"stream":true') || body.includes('"stream": true');
 
         if (isStreaming) {
-            handleStreamingRequest(
-                req, res, targetHost, targetPath,
-                req.headers, body, provider, requestId, requestModel
-            );
+            handleStreamingRequest(req, res, targetHost, targetPath, req.headers, body, provider, requestId, requestModel);
             return;
         }
 
         try {
-            // Forward non-streaming request
-            const response = await forwardRequest(
-                targetHost, targetPath,
-                req.method || 'GET',
-                req.headers, body,
-                provider, requestId
-            );
-
+            const response = await forwardRequest(targetHost, targetPath, req.method || 'GET', req.headers, body, provider, requestId);
             const latencyMs = Date.now() - startTime;
 
-            // Extract and record token usage
             const tokenUsage = extractTokenUsage(response.body, provider, requestModel);
 
             if (tokenUsage.totalTokens > 0) {
                 const costResult = calculateCost(tokenUsage.model, tokenUsage.inputTokens, tokenUsage.outputTokens);
                 const cost = costResult.totalCost;
 
-                recordUsagePersistent(
-                    tokenUsage.model,
-                    tokenUsage.inputTokens,
-                    tokenUsage.outputTokens,
-                    cost,
-                    requestId
-                );
+                recordUsagePersistent(tokenUsage.model, tokenUsage.inputTokens, tokenUsage.outputTokens, cost, requestId);
 
-                // Add to recent requests
                 const proxyRequest: ProxyRequest = {
                     id: requestId,
                     timestamp: new Date(),
@@ -466,10 +424,7 @@ const proxyServer = http.createServer(async (req, res) => {
                 console.log(`[${requestId}] ${tokenUsage.model} | ${tokenUsage.inputTokens}+${tokenUsage.outputTokens} tokens | $${cost.toFixed(6)} | ${latencyMs}ms`);
             }
 
-            // Forward response headers and body
-            const responseHeaders: Record<string, string> = {
-                'Access-Control-Allow-Origin': '*',
-            };
+            const responseHeaders: Record<string, string> = { 'Access-Control-Allow-Origin': '*' };
             for (const [key, value] of Object.entries(response.headers)) {
                 if (value && !['transfer-encoding'].includes(key.toLowerCase())) {
                     responseHeaders[key] = Array.isArray(value) ? value.join(', ') : value;
@@ -487,9 +442,10 @@ const proxyServer = http.createServer(async (req, res) => {
     });
 });
 
+
 // Simple dashboard HTML
 function getDashboardHTML(): string {
-    return `<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -589,11 +545,9 @@ function getDashboardHTML(): string {
 </head>
 <body>
     <div class="container">
-        <h1>🔮 TokenSage Dashboard</h1>
-        
+        <h1>TokenSage Dashboard</h1>
         <button class="refresh-btn" onclick="loadStats()">Refresh</button>
         <span class="auto-refresh">Auto-refresh: 5s</span>
-        
         <div class="stats-grid" id="statsGrid">
             <div class="stat-card">
                 <div class="stat-label">Today's Tokens</div>
@@ -620,7 +574,6 @@ function getDashboardHTML(): string {
                 <div class="stat-value requests" id="totalRequests">-</div>
             </div>
         </div>
-        
         <div class="requests-table">
             <div class="table-header">Recent Requests</div>
             <table>
@@ -639,59 +592,47 @@ function getDashboardHTML(): string {
             </table>
         </div>
     </div>
-    
     <script>
-        const PROXY_URL = 'http://localhost:${PROXY_PORT}';
-        
+        const PROXY_URL = 'http://localhost:` + PROXY_PORT + `';
         async function loadStats() {
             try {
                 const res = await fetch(PROXY_URL + '/stats');
                 const data = await res.json();
-                
-                // Update stats
                 if (data.daily) {
                     document.getElementById('todayTokens').textContent = (data.daily.totalTokens || 0).toLocaleString();
                     document.getElementById('todayCost').textContent = '$' + (data.daily.cost || 0).toFixed(4);
                     document.getElementById('todayRequests').textContent = (data.daily.requestCount || 0).toLocaleString();
                 }
-                
                 if (data.total) {
                     document.getElementById('totalTokens').textContent = (data.total.totalTokens || 0).toLocaleString();
                     document.getElementById('totalCost').textContent = '$' + (data.total.totalCost || 0).toFixed(4);
                     document.getElementById('totalRequests').textContent = (data.total.requestCount || 0).toLocaleString();
                 }
-                
-                // Update requests table
                 const tbody = document.getElementById('requestsBody');
                 tbody.innerHTML = '';
-                
                 (data.recentRequests || []).forEach(req => {
                     const row = document.createElement('tr');
                     const time = new Date(req.timestamp).toLocaleTimeString();
                     const providerClass = 'provider-' + (req.provider || 'unknown');
-                    
-                    row.innerHTML = \`
-                        <td>\${time}</td>
-                        <td><span class="provider-badge \${providerClass}">\${req.provider || 'unknown'}</span></td>
-                        <td><span class="model-badge">\${req.model}</span></td>
-                        <td>\${(req.inputTokens || 0).toLocaleString()}</td>
-                        <td>\${(req.outputTokens || 0).toLocaleString()}</td>
-                        <td>$\${(req.cost || 0).toFixed(6)}</td>
-                        <td>\${req.latencyMs}ms</td>
-                    \`;
+                    row.innerHTML = '<td>' + time + '</td>' +
+                        '<td><span class="provider-badge ' + providerClass + '">' + (req.provider || 'unknown') + '</span></td>' +
+                        '<td><span class="model-badge">' + req.model + '</span></td>' +
+                        '<td>' + (req.inputTokens || 0).toLocaleString() + '</td>' +
+                        '<td>' + (req.outputTokens || 0).toLocaleString() + '</td>' +
+                        '<td>$' + (req.cost || 0).toFixed(6) + '</td>' +
+                        '<td>' + req.latencyMs + 'ms</td>';
                     tbody.appendChild(row);
                 });
             } catch (err) {
                 console.error('Failed to load stats:', err);
             }
         }
-        
-        // Initial load and auto-refresh
         loadStats();
         setInterval(loadStats, 5000);
     </script>
 </body>
 </html>`;
+    return html;
 }
 
 // Dashboard server
@@ -704,21 +645,21 @@ const dashboardServer = http.createServer((req, res) => {
 function startProxy(): void {
     proxyServer.listen(PROXY_PORT, () => {
         console.log('');
-        console.log('╔════════════════════════════════════════════════════════════╗');
-        console.log('║           🔮 TokenSage Proxy Server Started                ║');
-        console.log('╠════════════════════════════════════════════════════════════╣');
-        console.log(`║  Proxy URL:     http://localhost:${PROXY_PORT}                      ║`);
-        console.log(`║  Dashboard:     http://localhost:${DASHBOARD_PORT}                      ║`);
-        console.log('╠════════════════════════════════════════════════════════════╣');
-        console.log('║  Stats API:     /stats, /history                           ║');
-        console.log('╠════════════════════════════════════════════════════════════╣');
-        console.log('║  Configure your IDE to use the proxy URL:                  ║');
-        console.log('║                                                            ║');
-        console.log('║  Cursor/Windsurf:                                          ║');
-        console.log(`║    Set OPENAI_BASE_URL=http://localhost:${PROXY_PORT}/v1           ║`);
-        console.log('║                                                            ║');
-        console.log('║  Or use x-target-host header to specify target             ║');
-        console.log('╚════════════════════════════════════════════════════════════╝');
+        console.log('========================================================');
+        console.log('           TokenSage Proxy Server Started               ');
+        console.log('========================================================');
+        console.log(`  Proxy URL:     http://localhost:${PROXY_PORT}`);
+        console.log(`  Dashboard:     http://localhost:${DASHBOARD_PORT}`);
+        console.log('--------------------------------------------------------');
+        console.log('  Stats API:     /stats, /history');
+        console.log('--------------------------------------------------------');
+        console.log('  Configure your IDE to use the proxy URL:');
+        console.log('');
+        console.log('  Cursor/Windsurf:');
+        console.log(`    Set OPENAI_BASE_URL=http://localhost:${PROXY_PORT}/v1`);
+        console.log('');
+        console.log('  Or use x-target-host header to specify target');
+        console.log('========================================================');
         console.log('');
     });
 

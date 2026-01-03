@@ -29,3 +29,6 @@ coverage/
 # Cache
 .cache/
 *.tsbuildinfo
+
+# Runtime data
+data/usage_history.json

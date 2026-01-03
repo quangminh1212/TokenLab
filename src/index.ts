@@ -502,6 +502,139 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
                 };
             }
 
+            // ==================== AUTO TRACKING TOOLS ====================
+            case 'auto_track_usage': {
+                const model = args?.model as string;
+                const inputTokens = args?.input_tokens as number;
+                const outputTokens = args?.output_tokens as number;
+                const requestId = args?.request_id as string | undefined;
+
+                // Calculate cost
+                const costResult = calculateCost(model, inputTokens, outputTokens);
+                const cost = costResult.totalCost;
+
+                // Record with persistent storage
+                const result = recordUsagePersistent(model, inputTokens, outputTokens, cost, requestId);
+
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify({
+                                message: 'Usage recorded and saved to persistent storage',
+                                record: result.record,
+                                cost: costResult,
+                                dailyTotal: result.dailyTotal,
+                                allTimeTotal: result.allTimeTotal,
+                            }, null, 2),
+                        },
+                    ],
+                };
+            }
+
+            case 'get_daily_stats': {
+                const date = args?.date as string | undefined;
+                const stats = getDailyStats(date);
+
+                if (!stats) {
+                    return {
+                        content: [
+                            {
+                                type: 'text',
+                                text: JSON.stringify({
+                                    message: `No data found for ${date || 'today'}`,
+                                    date: date || new Date().toISOString().split('T')[0],
+                                }, null, 2),
+                            },
+                        ],
+                    };
+                }
+
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify(stats, null, 2),
+                        },
+                    ],
+                };
+            }
+
+            case 'get_total_stats': {
+                const stats = getTotalStats();
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify(stats, null, 2),
+                        },
+                    ],
+                };
+            }
+
+            case 'get_usage_history': {
+                const limit = args?.limit as number | undefined;
+                const history = getUsageHistory(limit);
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify({
+                                count: history.length,
+                                records: history,
+                            }, null, 2),
+                        },
+                    ],
+                };
+            }
+
+            case 'get_stats_in_range': {
+                const startDate = args?.start_date as string;
+                const endDate = args?.end_date as string;
+                const stats = getStatsInRange(startDate, endDate);
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify({
+                                range: { startDate, endDate },
+                                ...stats,
+                            }, null, 2),
+                        },
+                    ],
+                };
+            }
+
+            case 'reset_all_stats': {
+                const confirm = args?.confirm as boolean;
+                if (!confirm) {
+                    return {
+                        content: [
+                            {
+                                type: 'text',
+                                text: JSON.stringify({
+                                    error: 'Please set confirm: true to reset all persistent data',
+                                    warning: 'This will delete ALL usage history permanently!',
+                                }, null, 2),
+                            },
+                        ],
+                    };
+                }
+
+                resetPersistentData();
+                return {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify({
+                                message: 'All persistent data has been reset',
+                                timestamp: new Date().toISOString(),
+                            }, null, 2),
+                        },
+                    ],
+                };
+            }
+
             default:
                 throw new Error(`Unknown tool: ${name}`);
         }
