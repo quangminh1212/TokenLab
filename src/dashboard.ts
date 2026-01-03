@@ -5,7 +5,7 @@
 
 export function getDashboardHTML(proxyPort: number): string {
     const dollarSign = '\u0024';
-    
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -347,6 +347,7 @@ export function getDashboardHTML(proxyPort: number): string {
         .provider-openai { background: rgba(16, 163, 127, 0.1); color: #10a37f; }
         .provider-anthropic { background: rgba(204, 150, 103, 0.1); color: #cc9667; }
         .provider-google { background: rgba(66, 133, 244, 0.1); color: #4285f4; }
+        .provider-antigravity { background: rgba(26, 115, 232, 0.1); color: #1a73e8; }
         .provider-cursor { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
         .provider-windsurf { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
         .provider-kiro { background: rgba(255, 153, 0, 0.1); color: #ff9900; }
@@ -481,6 +482,9 @@ export function getDashboardHTML(proxyPort: number): string {
                 </div>
                 <button class="btn btn-secondary" onclick="loadStats()">
                     ↻ Refresh
+                </button>
+                <button class="btn btn-primary" onclick="openSettings()">
+                    ⚙️ Settings
                 </button>
             </div>
         </div>
@@ -634,7 +638,138 @@ export function getDashboardHTML(proxyPort: number): string {
         
         // Auto refresh every 5 seconds
         setInterval(loadStats, 5000);
+
+        // Settings functions
+        let currentSettings = null;
+
+        async function loadSettings() {
+            try {
+                const res = await fetch(PROXY_URL + '/settings');
+                currentSettings = await res.json();
+                updateSettingsUI();
+            } catch (err) {
+                console.error('Failed to load settings:', err);
+            }
+        }
+
+        function updateSettingsUI() {
+            if (!currentSettings) return;
+            
+            document.getElementById('globalEnabled').checked = currentSettings.enabled;
+            
+            const container = document.getElementById('appToggles');
+            container.innerHTML = '';
+            
+            for (const [key, app] of Object.entries(currentSettings.trackingApps)) {
+                const row = document.createElement('div');
+                row.className = 'app-toggle-row';
+                row.innerHTML = 
+                    '<div class=\"app-info\">' +
+                    '<span class=\"app-icon\">' + app.icon + '</span>' +
+                    '<span class=\"app-name\">' + app.name + '</span>' +
+                    '</div>' +
+                    '<label class=\"toggle\">' +
+                    '<input type=\"checkbox\" ' + (app.enabled ? 'checked' : '') + ' onchange=\"toggleApp(\\'' + key + '\\')\">' +
+                    '<span class=\"toggle-slider\"></span>' +
+                    '</label>';
+                container.appendChild(row);
+            }
+        }
+
+        async function toggleApp(appName) {
+            try {
+                await fetch(PROXY_URL + '/settings/toggle/' + appName, { method: 'POST' });
+                await loadSettings();
+            } catch (err) {
+                console.error('Failed to toggle app:', err);
+            }
+        }
+
+        async function toggleGlobal() {
+            if (!currentSettings) return;
+            currentSettings.enabled = document.getElementById('globalEnabled').checked;
+            try {
+                await fetch(PROXY_URL + '/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentSettings)
+                });
+            } catch (err) {
+                console.error('Failed to update settings:', err);
+            }
+        }
+
+        function openSettings() {
+            loadSettings();
+            document.getElementById('settingsModal').style.display = 'flex';
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').style.display = 'none';
+        }
     </script>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal" style="display: none;">
+        <div class="modal-overlay" onclick="closeSettings()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚙️ Tracking Settings</h2>
+                <button class="modal-close" onclick="closeSettings()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3>Global Settings</h3>
+                    <div class="settings-row">
+                        <span>Enable All Tracking</span>
+                        <label class="toggle">
+                            <input type="checkbox" id="globalEnabled" onchange="toggleGlobal()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>Track Apps</h3>
+                    <p class="settings-desc">Choose which AI coding assistants to track</p>
+                    <div id="appToggles" class="app-toggles"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSettings()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+        .modal-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(4px); }
+        .modal-content { position: relative; background: var(--bg-card); border-radius: var(--radius); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); width: 90%; max-width: 500px; max-height: 80vh; overflow: hidden; animation: modalSlideIn 0.2s ease; }
+        @keyframes modalSlideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+        .modal-header h2 { font-size: 1.125rem; font-weight: 600; }
+        .modal-close { width: 32px; height: 32px; border: none; background: none; font-size: 24px; cursor: pointer; color: var(--text-muted); border-radius: 6px; display: flex; align-items: center; justify-content: center; }
+        .modal-close:hover { background: var(--border-light); color: var(--text-primary); }
+        .modal-body { padding: 24px; overflow-y: auto; max-height: 60vh; }
+        .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 12px; }
+        .settings-section { margin-bottom: 24px; }
+        .settings-section:last-child { margin-bottom: 0; }
+        .settings-section h3 { font-size: 0.875rem; font-weight: 600; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+        .settings-desc { font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 16px; }
+        .settings-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-light); }
+        .settings-row:last-child { border-bottom: none; }
+        .app-toggles { display: grid; gap: 4px; }
+        .app-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: var(--radius-sm); transition: background 0.15s; }
+        .app-toggle-row:hover { background: var(--bg-primary); }
+        .app-info { display: flex; align-items: center; gap: 10px; }
+        .app-icon { font-size: 1.25rem; }
+        .app-name { font-weight: 500; font-size: 0.875rem; }
+        .toggle { position: relative; display: inline-block; width: 44px; height: 24px; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--border); transition: 0.3s; border-radius: 24px; }
+        .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: 0.3s; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        .toggle input:checked + .toggle-slider { background-color: var(--accent); }
+        .toggle input:checked + .toggle-slider:before { transform: translateX(20px); }
+    </style>
 </body>
 </html>`;
 }
