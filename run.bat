@@ -21,20 +21,62 @@ if not exist "dist\proxy.js" (
 set PROXY_PORT=4000
 set DASHBOARD_PORT=4001
 
-:: ======================= CHECK MITMPROXY =======================
-echo [INFO] Checking mitmproxy...
-where mitmweb >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [WARN] mitmproxy not found. Installing...
-    pip install mitmproxy
-    if %ERRORLEVEL% NEQ 0 (
-        echo [ERROR] Failed to install mitmproxy. 
-        echo         Please install Python first from https://python.org/
-        pause
-        exit /b 1
+:: ======================= FIND MITMWEB PATH =======================
+echo [INFO] Locating mitmproxy...
+set MITMWEB_PATH=
+
+:: Try common locations
+for %%P in (
+    "%APPDATA%\Python\Python314\Scripts\mitmweb.exe"
+    "%APPDATA%\Python\Python313\Scripts\mitmweb.exe"
+    "%APPDATA%\Python\Python312\Scripts\mitmweb.exe"
+    "%APPDATA%\Python\Python311\Scripts\mitmweb.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python314\Scripts\mitmweb.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python313\Scripts\mitmweb.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python312\Scripts\mitmweb.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\Scripts\mitmweb.exe"
+    "C:\Python314\Scripts\mitmweb.exe"
+    "C:\Python313\Scripts\mitmweb.exe"
+    "C:\Python312\Scripts\mitmweb.exe"
+) do (
+    if exist "%%~P" (
+        set "MITMWEB_PATH=%%~P"
+        goto :found_mitmweb
     )
-    echo [INFO] mitmproxy installed successfully!
 )
+
+:: Try where command
+for /f "tokens=*" %%i in ('where mitmweb 2^>nul') do (
+    set "MITMWEB_PATH=%%i"
+    goto :found_mitmweb
+)
+
+:: Try pip show to find location
+for /f "tokens=2 delims=: " %%i in ('pip show mitmproxy 2^>nul ^| findstr /i "Location"') do (
+    set "PIP_LOC=%%i"
+    if exist "!PIP_LOC!\..\Scripts\mitmweb.exe" (
+        set "MITMWEB_PATH=!PIP_LOC!\..\Scripts\mitmweb.exe"
+        goto :found_mitmweb
+    )
+)
+
+:: Not found - try to install
+echo [WARN] mitmproxy not found. Installing...
+pip install mitmproxy --quiet
+for /f "tokens=*" %%i in ('where mitmweb 2^>nul') do (
+    set "MITMWEB_PATH=%%i"
+    goto :found_mitmweb
+)
+
+:: Still not found
+echo [ERROR] Could not find mitmweb after installation.
+echo         Please add Python Scripts folder to PATH and restart.
+echo         Or run: pip install mitmproxy
+pause
+exit /b 1
+
+:found_mitmweb
+echo [INFO] Found mitmproxy: %MITMWEB_PATH%
 
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
@@ -45,15 +87,12 @@ echo ║  Tracking ALL AI requests from:                               ║
 echo ║  🌀 Antigravity   🔮 Cursor      🏄 Windsurf    🔷 Kiro       ║
 echo ║  🐙 Copilot       🤖 OpenAI      🔶 Claude      ✨ Gemini     ║
 echo ║  ☁️  AWS Bedrock   💎 Azure       ⚡ Groq        🔍 DeepSeek   ║
-echo ║  🧠 JetBrains     ⚡ Zed         🎯 Tabnine     🤗 HuggingFace║
 echo ║  And 30+ more providers...                                    ║
-echo ║                                                               ║
 echo ╠═══════════════════════════════════════════════════════════════╣
 echo ║  Endpoints:                                                   ║
 echo ║  - TokenSage Dashboard: http://localhost:%DASHBOARD_PORT%                 ║
 echo ║  - mitmweb Interface:   http://127.0.0.1:8081                 ║
 echo ║  - Proxy Server:        http://localhost:%PROXY_PORT%                  ║
-echo ║  - Settings API:        http://localhost:%PROXY_PORT%/settings          ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
@@ -72,11 +111,13 @@ echo.
 
 :: ======================= KILL OLD PROCESSES =======================
 echo [INFO] Cleaning up old processes...
-taskkill /F /IM "node.exe" /FI "WINDOWTITLE eq *proxy*" >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :4000 ^| findstr LISTENING') do (
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":4000.*LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :4001 ^| findstr LISTENING') do (
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":4001.*LISTENING"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8080.*LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
 
@@ -84,14 +125,6 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr :4001 ^| findstr LISTENING') 
 echo [INFO] Starting TokenSage proxy server...
 start /B cmd /c "node dist/proxy.js"
 timeout /t 2 /nobreak >nul
-
-:: ======================= VERIFY TOKENSAGE IS RUNNING =======================
-curl -s http://localhost:%PROXY_PORT%/health >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [WARN] TokenSage proxy may not have started properly.
-    echo        Waiting 3 more seconds...
-    timeout /t 3 /nobreak >nul
-)
 
 :: ======================= OPEN DASHBOARDS =======================
 echo [INFO] Opening dashboards...
@@ -106,15 +139,16 @@ echo ─────────────────────────
 echo.
 
 :: ======================= START MITMPROXY =======================
-:: Open mitmweb interface
 start http://127.0.0.1:8081
 
 :: Run mitmproxy with TokenSage addon
-mitmweb --mode regular -p 8080 -s "%~dp0tokensage_addon.py" --set console_eventlog_verbosity=info
+"%MITMWEB_PATH%" --mode regular -p 8080 -s "%~dp0tokensage_addon.py" --set console_eventlog_verbosity=info
 
 :: ======================= CLEANUP ON EXIT =======================
 echo.
 echo [INFO] Shutting down TokenSage...
-taskkill /F /IM "node.exe" >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":4000.*LISTENING"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
 
 pause
