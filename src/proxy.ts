@@ -12,9 +12,88 @@
 import http from 'http';
 import https from 'https';
 import { URL } from 'url';
+import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { recordUsagePersistent, getDailyStats, getTotalStats, getUsageHistory } from './usageTracker.js';
 import { calculateCost } from './costCalculator.js';
 import { getDashboardHTML } from './dashboard.js';
+
+// Settings path
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SETTINGS_FILE = path.join(__dirname, '..', 'data', 'settings.json');
+
+// Settings interface
+interface TrackingAppConfig {
+    enabled: boolean;
+    name: string;
+    icon: string;
+}
+
+interface Settings {
+    enabled: boolean;
+    autoRefresh: boolean;
+    refreshInterval: number;
+    trackingApps: Record<string, TrackingAppConfig>;
+}
+
+// Load settings
+function loadSettings(): Settings {
+    try {
+        if (fs.existsSync(SETTINGS_FILE)) {
+            return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+        }
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+    // Default settings
+    return {
+        enabled: true,
+        autoRefresh: true,
+        refreshInterval: 5000,
+        trackingApps: {
+            antigravity: { enabled: true, name: 'Antigravity (Google)', icon: '🌀' },
+            cursor: { enabled: true, name: 'Cursor', icon: '🔮' },
+            windsurf: { enabled: true, name: 'Windsurf', icon: '🏄' },
+            kiro: { enabled: true, name: 'Kiro (AWS)', icon: '🔷' },
+            copilot: { enabled: true, name: 'GitHub Copilot', icon: '🐙' },
+            openai: { enabled: true, name: 'OpenAI', icon: '🤖' },
+            anthropic: { enabled: true, name: 'Anthropic', icon: '🔶' },
+            google: { enabled: true, name: 'Google/Gemini', icon: '✨' },
+            aws: { enabled: true, name: 'AWS Bedrock', icon: '☁️' },
+            azure: { enabled: true, name: 'Azure OpenAI', icon: '💎' },
+            deepseek: { enabled: true, name: 'DeepSeek', icon: '🔍' },
+            groq: { enabled: true, name: 'Groq', icon: '⚡' },
+            mistral: { enabled: true, name: 'Mistral', icon: '💨' },
+            together: { enabled: true, name: 'Together AI', icon: '🤝' },
+            perplexity: { enabled: true, name: 'Perplexity', icon: '🔮' },
+            cohere: { enabled: true, name: 'Cohere', icon: '🎯' },
+            replicate: { enabled: true, name: 'Replicate', icon: '🔄' },
+        }
+    };
+}
+
+// Save settings
+function saveSettings(settings: Settings): void {
+    try {
+        const dir = path.dirname(SETTINGS_FILE);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+    } catch (error) {
+        console.error('Error saving settings:', error);
+    }
+}
+
+// Check if provider should be tracked
+function shouldTrackProvider(provider: string): boolean {
+    const settings = loadSettings();
+    if (!settings.enabled) return false;
+    const appConfig = settings.trackingApps[provider];
+    return appConfig ? appConfig.enabled : true; // Default to enabled for unknown providers
+}
 
 // Configuration
 const PROXY_PORT = parseInt(process.env.PROXY_PORT || '4000');
@@ -67,6 +146,7 @@ function detectProvider(host: string, path: string): string | null {
 
 // Detect provider from host only (for mitmproxy data)
 function detectProviderFromHost(host: string): string {
+    if (host.includes('antigravity.google') || host.includes('antigravity')) return 'antigravity';
     if (host.includes('openai') && !host.includes('azure')) return 'openai';
     if (host.includes('anthropic') || host.includes('claude.ai')) return 'anthropic';
     if (host.includes('google') || host.includes('generativelanguage')) return 'google';
@@ -376,11 +456,19 @@ const proxyServer = http.createServer(async (req, res) => {
                 try {
                     const data = JSON.parse(body);
                     const { model, input_tokens, output_tokens, host, path: reqPath, request_id } = data;
-                    
+
+                    // Check if provider should be tracked
+                    const provider = detectProviderFromHost(host || '');
+                    if (!shouldTrackProvider(provider)) {
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ success: true, message: `Tracking disabled for ${provider}`, skipped: true }));
+                        return;
+                    }
+
                     if (input_tokens > 0 || output_tokens > 0) {
                         const costResult = calculateCost(model || 'unknown', input_tokens || 0, output_tokens || 0);
                         const cost = costResult.totalCost;
-                        
+
                         recordUsagePersistent(
                             model || 'unknown',
                             input_tokens || 0,
@@ -393,7 +481,7 @@ const proxyServer = http.createServer(async (req, res) => {
                         const proxyRequest: ProxyRequest = {
                             id: request_id || `mitm_${Date.now()}`,
                             timestamp: new Date(),
-                            provider: detectProviderFromHost(host || ''),
+                            provider,
                             endpoint: reqPath || '/',
                             model: model || 'unknown',
                             inputTokens: input_tokens || 0,
@@ -408,13 +496,13 @@ const proxyServer = http.createServer(async (req, res) => {
                             recentRequests.pop();
                         }
 
-                        console.log(`[MITM] ${model} | ${input_tokens}+${output_tokens} tokens | ${cost.toFixed(6)}`);
-                        
+                        console.log(`[MITM] ${provider} | ${model} | ${input_tokens}+${output_tokens} tokens | ${cost.toFixed(6)}`);
+
                         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                         res.end(JSON.stringify({ success: true, cost: costResult }));
                         return;
                     }
-                    
+
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                     res.end(JSON.stringify({ success: true, message: 'No tokens to record' }));
                     return;
@@ -423,6 +511,50 @@ const proxyServer = http.createServer(async (req, res) => {
                     res.end(JSON.stringify({ error: 'Invalid JSON', message: (e as Error).message }));
                     return;
                 }
+            }
+        }
+
+        // Settings API endpoint
+        if (url.pathname === '/settings' || url.pathname === '/tokensage/settings') {
+            if (req.method === 'GET') {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify(loadSettings(), null, 2));
+                return;
+            }
+            if (req.method === 'POST') {
+                try {
+                    const newSettings = JSON.parse(body);
+                    saveSettings(newSettings);
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ success: true, settings: loadSettings() }));
+                    return;
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ error: 'Invalid JSON', message: (e as Error).message }));
+                    return;
+                }
+            }
+        }
+
+        // Toggle app tracking endpoint
+        if (url.pathname.startsWith('/settings/toggle/') || url.pathname.startsWith('/tokensage/settings/toggle/')) {
+            const appName = url.pathname.split('/').pop();
+            if (appName && req.method === 'POST') {
+                const settings = loadSettings();
+                if (settings.trackingApps[appName]) {
+                    settings.trackingApps[appName].enabled = !settings.trackingApps[appName].enabled;
+                    saveSettings(settings);
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({
+                        success: true,
+                        app: appName,
+                        enabled: settings.trackingApps[appName].enabled
+                    }));
+                    return;
+                }
+                res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify({ error: 'App not found', app: appName }));
+                return;
             }
         }
 

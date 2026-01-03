@@ -21,6 +21,10 @@ LOG_FILE = LOG_DIR / "mitmproxy_usage.json"
 
 # LLM API patterns to intercept
 LLM_PATTERNS = [
+    # Antigravity (Google DeepMind AI IDE)
+    r"antigravity\.google",
+    r".*\.antigravity\.google",
+    r"api\.antigravity\.google",
     # Cursor AI
     r"api2\.cursor\.sh",
     r"api\.cursor\.so",

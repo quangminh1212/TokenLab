@@ -1,0 +1,92 @@
+{
+    "enabled": true,
+    "autoRefresh": true,
+    "refreshInterval": 5000,
+    "trackingApps": {
+        "antigravity": {
+            "enabled": true,
+            "name": "Antigravity (Google)",
+            "icon": "🌀"
+        },
+        "cursor": {
+            "enabled": true,
+            "name": "Cursor",
+            "icon": "🔮"
+        },
+        "windsurf": {
+            "enabled": true,
+            "name": "Windsurf",
+            "icon": "🏄"
+        },
+        "kiro": {
+            "enabled": true,
+            "name": "Kiro (AWS)",
+            "icon": "🔷"
+        },
+        "copilot": {
+            "enabled": true,
+            "name": "GitHub Copilot",
+            "icon": "🐙"
+        },
+        "openai": {
+            "enabled": true,
+            "name": "OpenAI",
+            "icon": "🤖"
+        },
+        "anthropic": {
+            "enabled": true,
+            "name": "Anthropic",
+            "icon": "🔶"
+        },
+        "google": {
+            "enabled": true,
+            "name": "Google/Gemini",
+            "icon": "✨"
+        },
+        "aws": {
+            "enabled": true,
+            "name": "AWS Bedrock",
+            "icon": "☁️"
+        },
+        "azure": {
+            "enabled": true,
+            "name": "Azure OpenAI",
+            "icon": "💎"
+        },
+        "deepseek": {
+            "enabled": true,
+            "name": "DeepSeek",
+            "icon": "🔍"
+        },
+        "groq": {
+            "enabled": true,
+            "name": "Groq",
+            "icon": "⚡"
+        },
+        "mistral": {
+            "enabled": true,
+            "name": "Mistral",
+            "icon": "💨"
+        },
+        "together": {
+            "enabled": true,
+            "name": "Together AI",
+            "icon": "🤝"
+        },
+        "perplexity": {
+            "enabled": true,
+            "name": "Perplexity",
+            "icon": "🔮"
+        },
+        "cohere": {
+            "enabled": true,
+            "name": "Cohere",
+            "icon": "🎯"
+        },
+        "replicate": {
+            "enabled": true,
+            "name": "Replicate",
+            "icon": "🔄"
+        }
+    }
+}
