@@ -5,9 +5,9 @@ echo ╔════════════════════════
 echo ║     🔮 TokenSage - System-Wide Traffic Interceptor            ║
 echo ╠═══════════════════════════════════════════════════════════════╣
 echo ║  This will intercept ALL LLM API traffic including:           ║
-echo ║  - Cursor AI (api2.cursor.sh)                                 ║
-echo ║  - Google Gemini (generativelanguage.googleapis.com)          ║
-echo ║  - OpenAI, Anthropic, Mistral, and more                       ║
+echo ║  - Cursor AI, Kiro, Windsurf                                  ║
+echo ║  - OpenAI, Anthropic, Google Gemini                           ║
+echo ║  - Amazon Bedrock, Azure OpenAI, and more                     ║
 echo ║                                                               ║
 echo ║  Data will be sent to TokenSage for storage and dashboard     ║
 echo ╚═══════════════════════════════════════════════════════════════╝
@@ -31,24 +31,32 @@ curl -s http://localhost:4000/health >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [WARN] TokenSage proxy not running at localhost:4000
     echo [INFO] Starting TokenSage proxy in background...
-    start /B cmd /c "npm run proxy"
+    start /B cmd /c "cd /d %~dp0 && npm run proxy"
     timeout /t 3 /nobreak >nul
 )
 
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║  FIRST-TIME SETUP (if not done before):                       ║
+echo ║  IMPORTANT SETUP STEPS:                                       ║
 echo ║                                                               ║
-echo ║  1. After mitmproxy starts, open: http://mitm.it              ║
-echo ║  2. Download and install the Windows certificate              ║
-echo ║  3. Install to "Trusted Root Certification Authorities"       ║
+echo ║  1. Install mitmproxy CA certificate:                         ║
+echo ║     - Open http://mitm.it after mitmproxy starts              ║
+echo ║     - Download Windows certificate                            ║
+echo ║     - Install to "Trusted Root Certification Authorities"     ║
 echo ║                                                               ║
-echo ║  Configure Windows Proxy:                                     ║
-echo ║  Settings ^> Network ^> Proxy ^> Manual Setup                  ║
-echo ║  Address: 127.0.0.1   Port: 8080                              ║
+echo ║  2. Configure System Proxy (choose one):                      ║
 echo ║                                                               ║
-echo ║  OR run this command (Admin required):                        ║
-echo ║  netsh winhttp set proxy 127.0.0.1:8080                       ║
+echo ║     Option A - Windows Settings:                              ║
+echo ║     Settings ^> Network ^> Proxy ^> Manual Setup               ║
+echo ║     Address: 127.0.0.1   Port: 8080                           ║
+echo ║                                                               ║
+echo ║     Option B - Environment Variable (for specific apps):      ║
+echo ║     set HTTPS_PROXY=http://127.0.0.1:8080                     ║
+echo ║     set HTTP_PROXY=http://127.0.0.1:8080                      ║
+echo ║                                                               ║
+echo ║  NOTE: Some apps like Kiro may use their own certificates     ║
+echo ║  and bypass system proxy. Use TokenSage proxy directly for    ║
+echo ║  those apps by setting OPENAI_BASE_URL.                       ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 echo [INFO] mitmweb interface: http://127.0.0.1:8081

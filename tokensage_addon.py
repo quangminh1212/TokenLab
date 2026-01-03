@@ -29,28 +29,32 @@ LLM_PATTERNS = [
     r"server\.codeium\.com",
     r"api\.codeium\.com",
     r"windsurf\.com",
-    # Kiro (AWS)
+    # Kiro (AWS) - uses Bedrock
     r"kiro\.dev",
     r".*\.kiro\.dev",
-    r"kiro-.*\.amazonaws\.com",
+    r"kiro.*\.amazonaws\.com",
+    r".*kiro.*",
     # OpenAI
     r"api\.openai\.com",
     # Anthropic / Claude Desktop
     r"api\.anthropic\.com",
     r"claude\.ai",
+    r".*\.anthropic\.com",
     # Google/Gemini
     r"generativelanguage\.googleapis\.com",
     r"aiplatform\.googleapis\.com",
     # Azure OpenAI
     r"\.openai\.azure\.com",
     # GitHub Copilot
-    r"api\.github\.com.*copilot",
-    r"copilot-proxy\.githubusercontent\.com",
+    r"api\.github\.com",
+    r"copilot.*\.githubusercontent\.com",
     r"githubcopilot\.com",
-    # Amazon Bedrock / Q Developer
+    # Amazon Bedrock / Q Developer / Kiro backend
     r"bedrock.*\.amazonaws\.com",
-    r"q\.us-east-1\.amazonaws\.com",
+    r"bedrock-runtime.*\.amazonaws\.com",
+    r"q\..*\.amazonaws\.com",
     r"codewhisperer.*\.amazonaws\.com",
+    r".*\.bedrock\..*\.amazonaws\.com",
     # Other LLM providers
     r"api\.cohere\.ai",
     r"api\.mistral\.ai",
@@ -137,6 +141,24 @@ class TokenSageAddon:
         }
         
         try:
+            # Handle streaming responses (multiple JSON objects)
+            if response_body.startswith('data:') or '\ndata:' in response_body:
+                # SSE streaming format
+                for line in response_body.split('\n'):
+                    if line.startswith('data:') and '[DONE]' not in line:
+                        try:
+                            data = json.loads(line[5:].strip())
+                            if "usage" in data:
+                                usage = data["usage"]
+                                tokens["input_tokens"] = usage.get("prompt_tokens", usage.get("input_tokens", tokens["input_tokens"]))
+                                tokens["output_tokens"] = usage.get("completion_tokens", usage.get("output_tokens", tokens["output_tokens"]))
+                            if "model" in data:
+                                tokens["model"] = data["model"]
+                        except:
+                            pass
+                tokens["total_tokens"] = tokens["input_tokens"] + tokens["output_tokens"]
+                return tokens
+            
             data = json.loads(response_body)
             
             # OpenAI format
@@ -154,6 +176,19 @@ class TokenSageAddon:
                 tokens["output_tokens"] = usage.get("output_tokens", 0)
                 tokens["total_tokens"] = tokens["input_tokens"] + tokens["output_tokens"]
             
+            # Amazon Bedrock format
+            if "amazon-bedrock-invocationMetrics" in data:
+                metrics = data["amazon-bedrock-invocationMetrics"]
+                tokens["input_tokens"] = metrics.get("inputTokenCount", 0)
+                tokens["output_tokens"] = metrics.get("outputTokenCount", 0)
+                tokens["total_tokens"] = tokens["input_tokens"] + tokens["output_tokens"]
+            
+            # Bedrock Claude format
+            if "inputTokenCount" in data or "outputTokenCount" in data:
+                tokens["input_tokens"] = data.get("inputTokenCount", 0)
+                tokens["output_tokens"] = data.get("outputTokenCount", 0)
+                tokens["total_tokens"] = tokens["input_tokens"] + tokens["output_tokens"]
+            
             # Google/Gemini format
             if "usageMetadata" in data:
                 usage = data["usageMetadata"]
@@ -165,6 +200,8 @@ class TokenSageAddon:
             # Model extraction
             if "model" in data:
                 tokens["model"] = data["model"]
+            elif "modelId" in data:
+                tokens["model"] = data["modelId"]
             
         except json.JSONDecodeError:
             pass
