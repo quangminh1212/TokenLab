@@ -146,23 +146,59 @@ function detectProvider(host: string, path: string): string | null {
 
 // Detect provider from host only (for mitmproxy data)
 function detectProviderFromHost(host: string): string {
-    if (host.includes('antigravity.google') || host.includes('antigravity')) return 'antigravity';
-    if (host.includes('openai') && !host.includes('azure')) return 'openai';
-    if (host.includes('anthropic') || host.includes('claude.ai')) return 'anthropic';
-    if (host.includes('google') || host.includes('generativelanguage')) return 'google';
-    if (host.includes('cursor')) return 'cursor';
-    if (host.includes('codeium') || host.includes('windsurf')) return 'windsurf';
-    if (host.includes('kiro')) return 'kiro';
-    if (host.includes('copilot') || host.includes('github')) return 'copilot';
-    if (host.includes('bedrock') || host.includes('codewhisperer') || host.includes('q.us-')) return 'aws';
-    if (host.includes('azure') && host.includes('openai')) return 'azure';
-    if (host.includes('mistral')) return 'mistral';
-    if (host.includes('cohere')) return 'cohere';
-    if (host.includes('deepseek')) return 'deepseek';
-    if (host.includes('together')) return 'together';
-    if (host.includes('groq')) return 'groq';
-    if (host.includes('perplexity')) return 'perplexity';
-    if (host.includes('replicate')) return 'replicate';
+    const h = host.toLowerCase();
+
+    // AI IDEs
+    if (h.includes('antigravity.google') || h.includes('antigravity')) return 'antigravity';
+    if (h.includes('cursor')) return 'cursor';
+    if (h.includes('codeium') || h.includes('windsurf')) return 'windsurf';
+    if (h.includes('kiro')) return 'kiro';
+    if (h.includes('zed.dev')) return 'zed';
+    if (h.includes('tabnine')) return 'tabnine';
+    if (h.includes('sourcegraph') || h.includes('cody')) return 'cody';
+    if (h.includes('jetbrains') && h.includes('ai')) return 'jetbrains';
+    if (h.includes('replit')) return 'replit';
+    if (h.includes('continue.dev')) return 'continue';
+
+    // Major LLM Providers
+    if (h.includes('openai') && !h.includes('azure')) return 'openai';
+    if (h.includes('anthropic') || h.includes('claude.ai')) return 'anthropic';
+    if (h.includes('google') || h.includes('generativelanguage') || h.includes('gemini') || h.includes('aistudio')) return 'google';
+    if (h.includes('copilot') || h.includes('githubcopilot')) return 'copilot';
+    if (h.includes('bedrock') || h.includes('codewhisperer') || h.includes('q.us-')) return 'aws';
+    if (h.includes('azure') && (h.includes('openai') || h.includes('cognitive'))) return 'azure';
+
+    // Other LLM Providers
+    if (h.includes('mistral')) return 'mistral';
+    if (h.includes('cohere')) return 'cohere';
+    if (h.includes('deepseek')) return 'deepseek';
+    if (h.includes('together')) return 'together';
+    if (h.includes('groq')) return 'groq';
+    if (h.includes('perplexity')) return 'perplexity';
+    if (h.includes('replicate')) return 'replicate';
+    if (h.includes('fireworks')) return 'fireworks';
+    if (h.includes('anyscale')) return 'anyscale';
+    if (h.includes('huggingface')) return 'huggingface';
+    if (h.includes('cerebras')) return 'cerebras';
+    if (h.includes('sambanova')) return 'sambanova';
+    if (h.includes('ai21')) return 'ai21';
+    if (h.includes('aleph-alpha')) return 'aleph-alpha';
+    if (h.includes('nlpcloud')) return 'nlpcloud';
+    if (h.includes('lepton')) return 'lepton';
+    if (h.includes('modal')) return 'modal';
+    if (h.includes('runpod')) return 'runpod';
+    if (h.includes('baseten')) return 'baseten';
+    if (h.includes('banana')) return 'banana';
+    if (h.includes('octoai')) return 'octoai';
+    if (h.includes('lambdalabs')) return 'lambdalabs';
+    if (h.includes('moonshot')) return 'moonshot';
+    if (h.includes('baichuan')) return 'baichuan';
+    if (h.includes('zhipuai')) return 'zhipuai';
+    if (h.includes('minimax')) return 'minimax';
+    if (h.includes('x.ai') || h.includes('xai')) return 'xai';
+    if (h.includes('ollama') || h.includes('localhost:11434') || h.includes('127.0.0.1:11434')) return 'ollama';
+    if (h.includes('lmstudio') || h.includes('localhost:1234') || h.includes('127.0.0.1:1234')) return 'lmstudio';
+
     return 'unknown';
 }
 

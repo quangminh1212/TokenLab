@@ -19,8 +19,9 @@ TOKENSAGE_URL = "http://localhost:4000/ingest"
 LOG_DIR = Path(__file__).parent / "data"
 LOG_FILE = LOG_DIR / "mitmproxy_usage.json"
 
-# LLM API patterns to intercept
+# LLM API patterns to intercept - COMPREHENSIVE LIST
 LLM_PATTERNS = [
+    # ==================== AI IDEs ====================
     # Antigravity (Google DeepMind AI IDE)
     r"antigravity\.google",
     r".*\.antigravity\.google",
@@ -29,44 +30,134 @@ LLM_PATTERNS = [
     r"api2\.cursor\.sh",
     r"api\.cursor\.so",
     r"cursor\.sh",
+    r".*\.cursor\.sh",
+    r".*cursor.*\.com",
     # Windsurf/Codeium
     r"server\.codeium\.com",
     r"api\.codeium\.com",
     r"windsurf\.com",
+    r".*\.codeium\.com",
+    r".*\.windsurf\.com",
     # Kiro (AWS) - uses Bedrock
     r"kiro\.dev",
     r".*\.kiro\.dev",
     r"kiro.*\.amazonaws\.com",
     r".*kiro.*",
+    # Zed AI
+    r".*\.zed\.dev",
+    r"api\.zed\.dev",
+    # Tabnine
+    r".*\.tabnine\.com",
+    r"api\.tabnine\.com",
+    # Sourcegraph Cody
+    r".*\.sourcegraph\.com",
+    r"cody\.sourcegraph\.com",
+    # JetBrains AI
+    r".*\.jetbrains\.com",
+    r"ai\.jetbrains\.com",
+    # Replit AI
+    r".*\.replit\.com",
+    r"api\.replit\.com",
+    # Continue.dev
+    r".*\.continue\.dev",
+    
+    # ==================== Major LLM Providers ====================
     # OpenAI
     r"api\.openai\.com",
-    # Anthropic / Claude Desktop
+    r".*\.openai\.com",
+    # Anthropic / Claude
     r"api\.anthropic\.com",
     r"claude\.ai",
     r".*\.anthropic\.com",
+    r".*\.claude\.ai",
     # Google/Gemini
     r"generativelanguage\.googleapis\.com",
     r"aiplatform\.googleapis\.com",
+    r".*\.googleapis\.com.*gemini",
+    r".*\.googleapis\.com.*bard",
+    r"aistudio\.google\.com",
     # Azure OpenAI
-    r"\.openai\.azure\.com",
+    r".*\.openai\.azure\.com",
+    r".*\.cognitiveservices\.azure\.com",
     # GitHub Copilot
     r"api\.github\.com",
     r"copilot.*\.githubusercontent\.com",
     r"githubcopilot\.com",
-    # Amazon Bedrock / Q Developer / Kiro backend
+    r".*\.githubcopilot\.com",
+    r"api\.githubcopilot\.com",
+    # Amazon Bedrock / Q Developer
     r"bedrock.*\.amazonaws\.com",
     r"bedrock-runtime.*\.amazonaws\.com",
     r"q\..*\.amazonaws\.com",
     r"codewhisperer.*\.amazonaws\.com",
     r".*\.bedrock\..*\.amazonaws\.com",
-    # Other LLM providers
+    r".*bedrock-runtime.*",
+    
+    # ==================== Other LLM Providers ====================
     r"api\.cohere\.ai",
+    r"api\.cohere\.com",
     r"api\.mistral\.ai",
+    r".*\.mistral\.ai",
     r"api\.deepseek\.com",
+    r".*\.deepseek\.com",
     r"api\.together\.xyz",
+    r"api\.together\.ai",
+    r".*\.together\.ai",
     r"api\.groq\.com",
+    r".*\.groq\.com",
     r"api\.perplexity\.ai",
+    r".*\.perplexity\.ai",
     r"api\.replicate\.com",
+    r".*\.replicate\.com",
+    r"api\.fireworks\.ai",
+    r".*\.fireworks\.ai",
+    r"api\.anyscale\.com",
+    r".*\.anyscale\.com",
+    r"api\.huggingface\.co",
+    r".*\.huggingface\.co",
+    r"inference\.huggingface\.co",
+    r"api-inference\.huggingface\.co",
+    r"api\.cerebras\.ai",
+    r".*\.cerebras\.ai",
+    r"api\.sambanova\.ai",
+    r".*\.sambanova\.ai",
+    r"api\.ai21\.com",
+    r".*\.ai21\.com",
+    r"api\.aleph-alpha\.com",
+    r".*\.aleph-alpha\.com",
+    r"api\.nlpcloud\.io",
+    r".*\.nlpcloud\.io",
+    r"api\.lepton\.ai",
+    r".*\.lepton\.ai",
+    r"api\.modal\.com",
+    r".*\.modal\.com",
+    r"api\.runpod\.ai",
+    r".*\.runpod\.ai",
+    r"api\.baseten\.co",
+    r".*\.baseten\.co",
+    r"api\.banana\.dev",
+    r".*\.banana\.dev",
+    r"api\.octoai\.cloud",
+    r".*\.octoai\.cloud",
+    r"api\.lambdalabs\.com",
+    r".*\.lambdalabs\.com",
+    r"api\.moonshot\.cn",
+    r".*\.moonshot\.cn",
+    r"api\.baichuan-ai\.com",
+    r".*\.baichuan-ai\.com",
+    r"api\.zhipuai\.cn",
+    r".*\.zhipuai\.cn",
+    r"api\.minimax\.chat",
+    r".*\.minimax\.chat",
+    r"api\.xai\.com",
+    r".*\.x\.ai",
+    r"api\.x\.ai",
+    # Ollama (local)
+    r"localhost:11434",
+    r"127\.0\.0\.1:11434",
+    # LM Studio (local)
+    r"localhost:1234",
+    r"127\.0\.0\.1:1234",
 ]
 
 # Compiled patterns
