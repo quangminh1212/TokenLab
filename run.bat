@@ -4,7 +4,7 @@ setlocal EnableDelayedExpansion
 
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║              🔮 TokenSage - AI Usage Tracker                  ║
+echo ║         🔮 TokenSage - Full AI Traffic Interceptor            ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 
@@ -21,73 +21,8 @@ if not exist "dist\proxy.js" (
 set PROXY_PORT=4000
 set DASHBOARD_PORT=4001
 
-echo.
-echo ───────────────────────────────────────────────────────────────
-echo   Select Mode:
-echo ───────────────────────────────────────────────────────────────
-echo.
-echo   [1] Basic Mode (Proxy Server Only)
-echo       - Direct proxy for apps that support custom API URLs
-echo       - Dashboard: http://localhost:%DASHBOARD_PORT%
-echo.
-echo   [2] Full Mode (Proxy + mitmproxy Interceptor)
-echo       - Intercept ALL AI traffic system-wide
-echo       - Track: Antigravity, Cursor, Kiro, Windsurf, Copilot...
-echo       - Requires mitmproxy certificate installation
-echo.
-echo   [3] Dashboard Only (View existing data)
-echo       - Just open the dashboard in browser
-echo.
-echo ───────────────────────────────────────────────────────────────
-echo.
-
-set /p MODE="Enter choice [1/2/3] (default=1): "
-if "%MODE%"=="" set MODE=1
-
-if "%MODE%"=="3" (
-    echo [INFO] Opening dashboard...
-    start http://localhost:%DASHBOARD_PORT%
-    exit /b 0
-)
-
-if "%MODE%"=="2" (
-    goto :FULL_MODE
-)
-
-:BASIC_MODE
-echo.
-echo [INFO] Starting TokenSage in Basic Mode...
-echo.
-echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║  Basic Mode - Proxy Server                                    ║
-echo ╠═══════════════════════════════════════════════════════════════╣
-echo ║  Dashboard:   http://localhost:%DASHBOARD_PORT%                            ║
-echo ║  Proxy:       http://localhost:%PROXY_PORT%                             ║
-echo ║  Stats API:   http://localhost:%PROXY_PORT%/stats                       ║
-echo ║  Settings:    http://localhost:%PROXY_PORT%/settings                    ║
-echo ╠═══════════════════════════════════════════════════════════════╣
-echo ║  Configure your IDE:                                          ║
-echo ║  - Cursor/Windsurf: Settings ^> Models ^> Override Base URL   ║
-echo ║  - Enter: http://localhost:%PROXY_PORT%/v1                              ║
-echo ║  - Or set: OPENAI_BASE_URL=http://localhost:%PROXY_PORT%/v1             ║
-echo ╚═══════════════════════════════════════════════════════════════╝
-echo.
-echo   Press Ctrl+C to stop the server
-echo.
-
-:: Open dashboard in browser after 2 seconds
-start /b cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:%DASHBOARD_PORT%"
-
-:: Start proxy server
-node dist/proxy.js
-goto :END
-
-:FULL_MODE
-echo.
-echo [INFO] Starting TokenSage in Full Mode (with mitmproxy)...
-echo.
-
-:: Check if mitmproxy is installed
+:: ======================= CHECK MITMPROXY =======================
+echo [INFO] Checking mitmproxy...
 where mitmweb >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [WARN] mitmproxy not found. Installing...
@@ -98,6 +33,7 @@ if %ERRORLEVEL% NEQ 0 (
         pause
         exit /b 1
     )
+    echo [INFO] mitmproxy installed successfully!
 )
 
 echo.
@@ -109,6 +45,7 @@ echo ║  Tracking ALL AI requests from:                               ║
 echo ║  🌀 Antigravity   🔮 Cursor      🏄 Windsurf    🔷 Kiro       ║
 echo ║  🐙 Copilot       🤖 OpenAI      🔶 Claude      ✨ Gemini     ║
 echo ║  ☁️  AWS Bedrock   💎 Azure       ⚡ Groq        🔍 DeepSeek   ║
+echo ║  🧠 JetBrains     ⚡ Zed         🎯 Tabnine     🤗 HuggingFace║
 echo ║  And 30+ more providers...                                    ║
 echo ║                                                               ║
 echo ╠═══════════════════════════════════════════════════════════════╣
@@ -116,10 +53,11 @@ echo ║  Endpoints:                                                   ║
 echo ║  - TokenSage Dashboard: http://localhost:%DASHBOARD_PORT%                 ║
 echo ║  - mitmweb Interface:   http://127.0.0.1:8081                 ║
 echo ║  - Proxy Server:        http://localhost:%PROXY_PORT%                  ║
+echo ║  - Settings API:        http://localhost:%PROXY_PORT%/settings          ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║  IMPORTANT SETUP (First time only):                           ║
+echo ║  FIRST TIME SETUP (one-time only):                            ║
 echo ║                                                               ║
 echo ║  1. Install mitmproxy CA certificate:                         ║
 echo ║     - Open http://mitm.it after mitmproxy starts              ║
@@ -131,22 +69,52 @@ echo ║     Settings ^> Network ^> Proxy ^> Manual Setup               ║
 echo ║     Address: 127.0.0.1   Port: 8080                           ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
-echo [INFO] Press Ctrl+C to stop all services
-echo.
 
-:: Start TokenSage proxy in background
+:: ======================= KILL OLD PROCESSES =======================
+echo [INFO] Cleaning up old processes...
+taskkill /F /IM "node.exe" /FI "WINDOWTITLE eq *proxy*" >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :4000 ^| findstr LISTENING') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :4001 ^| findstr LISTENING') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
+:: ======================= START TOKENSAGE PROXY =======================
 echo [INFO] Starting TokenSage proxy server...
 start /B cmd /c "node dist/proxy.js"
 timeout /t 2 /nobreak >nul
 
-:: Open dashboards
+:: ======================= VERIFY TOKENSAGE IS RUNNING =======================
+curl -s http://localhost:%PROXY_PORT%/health >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo [WARN] TokenSage proxy may not have started properly.
+    echo        Waiting 3 more seconds...
+    timeout /t 3 /nobreak >nul
+)
+
+:: ======================= OPEN DASHBOARDS =======================
+echo [INFO] Opening dashboards...
 start http://localhost:%DASHBOARD_PORT%
 timeout /t 1 /nobreak >nul
+
+echo.
+echo ───────────────────────────────────────────────────────────────
+echo [INFO] Starting mitmproxy interceptor...
+echo [INFO] Press Ctrl+C to stop all services
+echo ───────────────────────────────────────────────────────────────
+echo.
+
+:: ======================= START MITMPROXY =======================
+:: Open mitmweb interface
 start http://127.0.0.1:8081
 
 :: Run mitmproxy with TokenSage addon
-echo [INFO] Starting mitmproxy interceptor...
 mitmweb --mode regular -p 8080 -s "%~dp0tokensage_addon.py" --set console_eventlog_verbosity=info
 
-:END
+:: ======================= CLEANUP ON EXIT =======================
+echo.
+echo [INFO] Shutting down TokenSage...
+taskkill /F /IM "node.exe" >nul 2>&1
+
 pause
