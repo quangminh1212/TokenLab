@@ -35,7 +35,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 :: Install dependencies
 echo.
-echo [3/4] Installing dependencies...
+echo [3/5] Installing dependencies...
 cd /d "%~dp0"
 call npm install
 if %ERRORLEVEL% NEQ 0 (
@@ -45,9 +45,15 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo       ✅ Dependencies installed
 
+:: Fix vulnerabilities
+echo.
+echo [4/5] Fixing vulnerabilities...
+call npm audit fix >nul 2>&1
+echo       ✅ Vulnerabilities checked
+
 :: Build project
 echo.
-echo [4/4] Building project...
+echo [5/5] Building project...
 call npm run build
 if %ERRORLEVEL% NEQ 0 (
     echo       ❌ Build failed!
