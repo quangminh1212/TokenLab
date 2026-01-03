@@ -29,6 +29,9 @@ coverage/
 # Cache
 .cache/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 
 # Runtime data
 data/usage_history.json
+data/mitmproxy_usage.json
