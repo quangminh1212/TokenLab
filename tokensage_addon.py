@@ -123,13 +123,32 @@ class TokenSageAddon:
         """Check if request is to an LLM API"""
         return any(p.search(host) for p in PATTERNS)
     
-    def extract_model_from_request(self, request_body: bytes, host: str) -> str:
-        """Extract model from request body"""
+    def extract_model_from_request(self, request_body: bytes, host: str, path: str = "") -> str:
+        """Extract model from request body or URL path"""
+        model = "unknown"
+        
+        # Try to extract from URL path first (Bedrock format: /model/{modelId}/invoke)
+        if path:
+            # Bedrock: /model/anthropic.claude-3-5-sonnet-20241022-v2:0/invoke
+            bedrock_match = re.search(r'/model/([^/]+)/(invoke|converse)', path)
+            if bedrock_match:
+                model = bedrock_match.group(1)
+                return model
+            
+            # Google: /v1/models/{model}:generateContent
+            google_match = re.search(r'/models/([^/:]+)', path)
+            if google_match:
+                model = google_match.group(1)
+                return model
+        
+        # Try to extract from request body
         try:
             data = json.loads(request_body.decode('utf-8', errors='ignore'))
-            return data.get('model', 'unknown')
+            model = data.get('model', data.get('modelId', model))
         except:
-            return 'unknown'
+            pass
+        
+        return model
     
     def extract_tokens(self, response_body: str, host: str) -> dict:
         """Extract token usage from response body"""
@@ -154,6 +173,11 @@ class TokenSageAddon:
                                 tokens["output_tokens"] = usage.get("completion_tokens", usage.get("output_tokens", tokens["output_tokens"]))
                             if "model" in data:
                                 tokens["model"] = data["model"]
+                            # Bedrock streaming metrics
+                            if "amazon-bedrock-invocationMetrics" in data:
+                                metrics = data["amazon-bedrock-invocationMetrics"]
+                                tokens["input_tokens"] = metrics.get("inputTokenCount", tokens["input_tokens"])
+                                tokens["output_tokens"] = metrics.get("outputTokenCount", tokens["output_tokens"])
                         except:
                             pass
                 tokens["total_tokens"] = tokens["input_tokens"] + tokens["output_tokens"]
@@ -217,7 +241,7 @@ class TokenSageAddon:
         
         # Store model from request for later use
         if flow.request.content:
-            model = self.extract_model_from_request(flow.request.content, flow.request.host)
+            model = self.extract_model_from_request(flow.request.content, flow.request.host, flow.request.path)
             flow.metadata['tokensage_model'] = model
     
     def response(self, flow: http.HTTPFlow):

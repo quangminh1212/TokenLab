@@ -27,7 +27,7 @@ curl -s -X POST http://localhost:4000/ingest -H "Content-Type: application/json"
 echo.
 
 echo [3/5] Sending Kiro/Bedrock request...
-curl -s -X POST http://localhost:4000/ingest -H "Content-Type: application/json" -d "{\"model\":\"anthropic.claude-3-5-sonnet-20241022-v2:0\",\"input_tokens\":3500,\"output_tokens\":1800,\"host\":\"bedrock-runtime.us-east-1.amazonaws.com\",\"path\":\"/model/invoke\",\"request_id\":\"test_kiro_1\",\"status_code\":200,\"latency_ms\":3456}"
+curl -s -X POST http://localhost:4000/ingest -H "Content-Type: application/json" -d "{\"model\":\"anthropic.claude-3-5-sonnet-20241022-v2:0\",\"input_tokens\":3500,\"output_tokens\":1800,\"host\":\"bedrock-runtime.us-east-1.amazonaws.com\",\"path\":\"/model/anthropic.claude-3-5-sonnet-20241022-v2:0/invoke\",\"request_id\":\"test_kiro_1\",\"status_code\":200,\"latency_ms\":3456}"
 echo.
 
 echo [4/5] Sending Cursor request...
