@@ -2,12 +2,18 @@
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
-echo.
-echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║              🔮 TokenSage - Auto Setup                        ║
-echo ║         AI Usage Tracker for All Coding Assistants            ║
-echo ╚═══════════════════════════════════════════════════════════════╝
-echo.
+:: Check for silent mode
+set SILENT=0
+if "%1"=="--silent" set SILENT=1
+
+if %SILENT%==0 (
+    echo.
+    echo ╔═══════════════════════════════════════════════════════════════╗
+    echo ║              🔮 TokenSage - Auto Setup                        ║
+    echo ║         AI Usage Tracker for All Coding Assistants            ║
+    echo ╚═══════════════════════════════════════════════════════════════╝
+    echo.
+)
 
 cd /d "%~dp0"
 
@@ -201,21 +207,28 @@ echo ║  mitmweb:      http://127.0.0.1:8081                          ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 
-:: Show certificate warning if not installed
-if "%CERT_INSTALLED%"=="0" (
-    echo ╔═══════════════════════════════════════════════════════════════╗
-    echo ║  ⚠️  FIRST RUN: Certificate Setup Required                    ║
-    echo ║                                                               ║
-    echo ║  When you run TokenSage for the first time:                   ║
-    echo ║  1. Open http://mitm.it in your browser                       ║
-    echo ║  2. Click "Windows" to download certificate                   ║
-    echo ║  3. Install to "Trusted Root Certification Authorities"       ║
-    echo ║  4. Enable System Proxy: 127.0.0.1:8080                       ║
-    echo ╚═══════════════════════════════════════════════════════════════╝
-    echo.
+:: Show certificate warning if not installed (only in interactive mode)
+if %SILENT%==0 (
+    if "%CERT_INSTALLED%"=="0" (
+        echo ╔═══════════════════════════════════════════════════════════════╗
+        echo ║  ⚠️  FIRST RUN: Certificate Setup Required                    ║
+        echo ║                                                               ║
+        echo ║  When you run TokenSage for the first time:                   ║
+        echo ║  1. Open http://mitm.it in your browser                       ║
+        echo ║  2. Click "Windows" to download certificate                   ║
+        echo ║  3. Install to "Trusted Root Certification Authorities"       ║
+        echo ║  4. Enable System Proxy: 127.0.0.1:8080                       ║
+        echo ╚═══════════════════════════════════════════════════════════════╝
+        echo.
+    )
 )
 
-:: ======================= ASK TO RUN =======================
+:: ======================= ASK TO RUN (only in interactive mode) =======================
+if %SILENT%==1 (
+    :: Silent mode - just exit successfully
+    exit /b 0
+)
+
 set /p RUN_NOW="Start TokenSage now? [Y/n]: "
 if /i "%RUN_NOW%"=="" set RUN_NOW=Y
 if /i "%RUN_NOW%"=="Y" (
@@ -227,3 +240,4 @@ if /i "%RUN_NOW%"=="Y" (
     echo.
     pause
 )
+
