@@ -152,7 +152,7 @@ function forwardRequest(
     method: string,
     headers: http.IncomingHttpHeaders,
     body: string,
-    provider: string,
+    _provider: string,
     requestId: string
 ): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
     return new Promise((resolve, reject) => {
@@ -247,7 +247,7 @@ function handleStreamingRequest(
     const proxyReq = https.request(options, (proxyRes) => {
         res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
 
-        proxyRes.on('data', (chunk) => {
+        proxyRes.on('data', (chunk: Buffer) => {
             res.write(chunk);
             streamBuffer += chunk.toString();
 
@@ -303,7 +303,7 @@ function handleStreamingRequest(
                     recentRequests.pop();
                 }
 
-                console.log(`[${requestId}] STREAM: ${requestModel} | ${totalInputTokens}+${totalOutputTokens} tokens | $${cost.toFixed(6)} | ${latencyMs}ms`);
+                console.log(`[${requestId}] STREAM: ${requestModel} | ${totalInputTokens}+${totalOutputTokens} tokens | ${cost.toFixed(6)} | ${latencyMs}ms`);
             }
         });
     });
@@ -397,7 +397,7 @@ const proxyServer = http.createServer(async (req, res) => {
                             recentRequests.pop();
                         }
 
-                        console.log(`[MITM] ${model} | ${input_tokens}+${output_tokens} tokens | $${cost.toFixed(6)}`);
+                        console.log(`[MITM] ${model} | ${input_tokens}+${output_tokens} tokens | ${cost.toFixed(6)}`);
                         
                         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                         res.end(JSON.stringify({ success: true, cost: costResult }));
@@ -428,7 +428,7 @@ const proxyServer = http.createServer(async (req, res) => {
 
         // Determine target host from request headers or path
         let targetHost = req.headers['x-target-host'] as string || '';
-        let targetPath = url.pathname + url.search;
+        const targetPath = url.pathname + url.search;
 
         const hostHeader = req.headers.host || '';
         let provider = detectProvider(targetHost || hostHeader, targetPath);
@@ -488,7 +488,7 @@ const proxyServer = http.createServer(async (req, res) => {
                     recentRequests.pop();
                 }
 
-                console.log(`[${requestId}] ${tokenUsage.model} | ${tokenUsage.inputTokens}+${tokenUsage.outputTokens} tokens | $${cost.toFixed(6)} | ${latencyMs}ms`);
+                console.log(`[${requestId}] ${tokenUsage.model} | ${tokenUsage.inputTokens}+${tokenUsage.outputTokens} tokens | ${cost.toFixed(6)} | ${latencyMs}ms`);
             }
 
             const responseHeaders: Record<string, string> = { 'Access-Control-Allow-Origin': '*' };
@@ -512,6 +512,7 @@ const proxyServer = http.createServer(async (req, res) => {
 
 // Simple dashboard HTML
 function getDashboardHTML(): string {
+    const dollarSign = '\u0024';
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -662,19 +663,20 @@ function getDashboardHTML(): string {
         </div>
     </div>
     <script>
-        const PROXY_URL = 'http://localhost:` + PROXY_PORT + `';
+        const PROXY_URL = 'http://localhost:${PROXY_PORT}';
+        const DOLLAR = '${dollarSign}';
         async function loadStats() {
             try {
                 const res = await fetch(PROXY_URL + '/stats');
                 const data = await res.json();
                 if (data.daily) {
                     document.getElementById('todayTokens').textContent = (data.daily.totalTokens || 0).toLocaleString();
-                    document.getElementById('todayCost').textContent = '$' + (data.daily.cost || 0).toFixed(4);
+                    document.getElementById('todayCost').textContent = DOLLAR + (data.daily.cost || 0).toFixed(4);
                     document.getElementById('todayRequests').textContent = (data.daily.requestCount || 0).toLocaleString();
                 }
                 if (data.total) {
                     document.getElementById('totalTokens').textContent = (data.total.totalTokens || 0).toLocaleString();
-                    document.getElementById('totalCost').textContent = '$' + (data.total.totalCost || 0).toFixed(4);
+                    document.getElementById('totalCost').textContent = DOLLAR + (data.total.totalCost || 0).toFixed(4);
                     document.getElementById('totalRequests').textContent = (data.total.requestCount || 0).toLocaleString();
                 }
                 const tbody = document.getElementById('requestsBody');
@@ -688,7 +690,7 @@ function getDashboardHTML(): string {
                         '<td><span class="model-badge">' + req.model + '</span></td>' +
                         '<td>' + (req.inputTokens || 0).toLocaleString() + '</td>' +
                         '<td>' + (req.outputTokens || 0).toLocaleString() + '</td>' +
-                        '<td>$' + (req.cost || 0).toFixed(6) + '</td>' +
+                        '<td>' + DOLLAR + (req.cost || 0).toFixed(6) + '</td>' +
                         '<td>' + req.latencyMs + 'ms</td>';
                     tbody.appendChild(row);
                 });
@@ -705,7 +707,7 @@ function getDashboardHTML(): string {
 }
 
 // Dashboard server
-const dashboardServer = http.createServer((req, res) => {
+const dashboardServer = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(getDashboardHTML());
 });
