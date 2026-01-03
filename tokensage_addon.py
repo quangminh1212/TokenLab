@@ -25,19 +25,40 @@ LLM_PATTERNS = [
     r"api2\.cursor\.sh",
     r"api\.cursor\.so",
     r"cursor\.sh",
+    # Windsurf/Codeium
+    r"server\.codeium\.com",
+    r"api\.codeium\.com",
+    r"windsurf\.com",
+    # Kiro (AWS)
+    r"kiro\.dev",
+    r".*\.kiro\.dev",
+    r"kiro-.*\.amazonaws\.com",
     # OpenAI
     r"api\.openai\.com",
-    # Anthropic
+    # Anthropic / Claude Desktop
     r"api\.anthropic\.com",
+    r"claude\.ai",
     # Google/Gemini
     r"generativelanguage\.googleapis\.com",
     r"aiplatform\.googleapis\.com",
     # Azure OpenAI
     r"\.openai\.azure\.com",
+    # GitHub Copilot
+    r"api\.github\.com.*copilot",
+    r"copilot-proxy\.githubusercontent\.com",
+    r"githubcopilot\.com",
+    # Amazon Bedrock / Q Developer
+    r"bedrock.*\.amazonaws\.com",
+    r"q\.us-east-1\.amazonaws\.com",
+    r"codewhisperer.*\.amazonaws\.com",
     # Other LLM providers
     r"api\.cohere\.ai",
     r"api\.mistral\.ai",
     r"api\.deepseek\.com",
+    r"api\.together\.xyz",
+    r"api\.groq\.com",
+    r"api\.perplexity\.ai",
+    r"api\.replicate\.com",
 ]
 
 # Compiled patterns

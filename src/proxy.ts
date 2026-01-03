@@ -66,12 +66,22 @@ function detectProvider(host: string, path: string): string | null {
 
 // Detect provider from host only (for mitmproxy data)
 function detectProviderFromHost(host: string): string {
-    if (host.includes('openai')) return 'openai';
-    if (host.includes('anthropic')) return 'anthropic';
+    if (host.includes('openai') && !host.includes('azure')) return 'openai';
+    if (host.includes('anthropic') || host.includes('claude.ai')) return 'anthropic';
     if (host.includes('google') || host.includes('generativelanguage')) return 'google';
     if (host.includes('cursor')) return 'cursor';
+    if (host.includes('codeium') || host.includes('windsurf')) return 'windsurf';
+    if (host.includes('kiro')) return 'kiro';
+    if (host.includes('copilot') || host.includes('github')) return 'copilot';
+    if (host.includes('bedrock') || host.includes('codewhisperer') || host.includes('q.us-')) return 'aws';
+    if (host.includes('azure') && host.includes('openai')) return 'azure';
     if (host.includes('mistral')) return 'mistral';
     if (host.includes('cohere')) return 'cohere';
+    if (host.includes('deepseek')) return 'deepseek';
+    if (host.includes('together')) return 'together';
+    if (host.includes('groq')) return 'groq';
+    if (host.includes('perplexity')) return 'perplexity';
+    if (host.includes('replicate')) return 'replicate';
     return 'unknown';
 }
 
@@ -598,6 +608,15 @@ function getDashboardHTML(): string {
         .provider-anthropic { background: rgba(255,159,67,0.2); color: var(--accent-orange); }
         .provider-google { background: rgba(0,255,136,0.2); color: var(--accent-green); }
         .provider-cursor { background: rgba(168,85,247,0.2); color: var(--accent-purple); }
+        .provider-windsurf { background: rgba(59,130,246,0.2); color: #3b82f6; }
+        .provider-kiro { background: rgba(255,153,0,0.2); color: #ff9900; }
+        .provider-copilot { background: rgba(110,84,148,0.2); color: #6e5494; }
+        .provider-aws { background: rgba(255,153,0,0.2); color: #ff9900; }
+        .provider-azure { background: rgba(0,120,212,0.2); color: #0078d4; }
+        .provider-deepseek { background: rgba(79,70,229,0.2); color: #4f46e5; }
+        .provider-groq { background: rgba(244,63,94,0.2); color: #f43f5e; }
+        .provider-together { background: rgba(16,185,129,0.2); color: #10b981; }
+        .provider-perplexity { background: rgba(99,102,241,0.2); color: #6366f1; }
         .provider-unknown { background: rgba(161,161,170,0.2); color: var(--text-secondary); }
         .refresh-btn {
             background: linear-gradient(135deg, var(--accent), var(--accent-purple));
