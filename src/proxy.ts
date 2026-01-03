@@ -64,6 +64,17 @@ function detectProvider(host: string, path: string): string | null {
     return null;
 }
 
+// Detect provider from host only (for mitmproxy data)
+function detectProviderFromHost(host: string): string {
+    if (host.includes('openai')) return 'openai';
+    if (host.includes('anthropic')) return 'anthropic';
+    if (host.includes('google') || host.includes('generativelanguage')) return 'google';
+    if (host.includes('cursor')) return 'cursor';
+    if (host.includes('mistral')) return 'mistral';
+    if (host.includes('cohere')) return 'cohere';
+    return 'unknown';
+}
+
 // Extract model from request body
 function extractModelFromRequest(body: string, provider: string): string {
     try {
@@ -348,6 +359,62 @@ const proxyServer = http.createServer(async (req, res) => {
             return;
         }
 
+        // API endpoint to receive data from mitmproxy
+        if (url.pathname === '/ingest' || url.pathname === '/tokensage/ingest') {
+            if (req.method === 'POST') {
+                try {
+                    const data = JSON.parse(body);
+                    const { model, input_tokens, output_tokens, host, path: reqPath, request_id } = data;
+                    
+                    if (input_tokens > 0 || output_tokens > 0) {
+                        const costResult = calculateCost(model || 'unknown', input_tokens || 0, output_tokens || 0);
+                        const cost = costResult.totalCost;
+                        
+                        recordUsagePersistent(
+                            model || 'unknown',
+                            input_tokens || 0,
+                            output_tokens || 0,
+                            cost,
+                            request_id || `mitm_${Date.now()}`
+                        );
+
+                        // Add to recent requests for dashboard
+                        const proxyRequest: ProxyRequest = {
+                            id: request_id || `mitm_${Date.now()}`,
+                            timestamp: new Date(),
+                            provider: detectProviderFromHost(host || ''),
+                            endpoint: reqPath || '/',
+                            model: model || 'unknown',
+                            inputTokens: input_tokens || 0,
+                            outputTokens: output_tokens || 0,
+                            totalTokens: (input_tokens || 0) + (output_tokens || 0),
+                            cost,
+                            latencyMs: data.latency_ms || 0,
+                            status: data.status_code || 200,
+                        };
+                        recentRequests.unshift(proxyRequest);
+                        if (recentRequests.length > MAX_RECENT_REQUESTS) {
+                            recentRequests.pop();
+                        }
+
+                        console.log(`[MITM] ${model} | ${input_tokens}+${output_tokens} tokens | $${cost.toFixed(6)}`);
+                        
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ success: true, cost: costResult }));
+                        return;
+                    }
+                    
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ success: true, message: 'No tokens to record' }));
+                    return;
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ error: 'Invalid JSON', message: (e as Error).message }));
+                    return;
+                }
+            }
+        }
+
         // Handle CORS preflight
         if (req.method === 'OPTIONS') {
             res.writeHead(200, {
@@ -529,6 +596,8 @@ function getDashboardHTML(): string {
         .provider-openai { background: rgba(0,217,255,0.2); color: var(--accent); }
         .provider-anthropic { background: rgba(255,159,67,0.2); color: var(--accent-orange); }
         .provider-google { background: rgba(0,255,136,0.2); color: var(--accent-green); }
+        .provider-cursor { background: rgba(168,85,247,0.2); color: var(--accent-purple); }
+        .provider-unknown { background: rgba(161,161,170,0.2); color: var(--text-secondary); }
         .refresh-btn {
             background: linear-gradient(135deg, var(--accent), var(--accent-purple));
             border: none;
