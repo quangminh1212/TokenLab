@@ -41,6 +41,14 @@ import {
     estimateProjectCost,
 } from './costCalculator.js';
 
+// Helper function to create JSON text response
+function jsonResponse(data: unknown, isError = false) {
+    return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+        ...(isError && { isError: true }),
+    };
+}
+
 // Tool definitions
 const TOOLS: Tool[] = [
     {
@@ -348,31 +356,13 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
                 const text = args?.text as string;
                 const model = (args?.model as string) || 'gpt-4';
                 const includeTokens = (args?.include_tokens as boolean) || false;
-
-                const result = countTokens(text, model, includeTokens);
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(result, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(countTokens(text, model, includeTokens));
             }
 
             case 'count_tokens_batch': {
                 const texts = args?.texts as string[];
                 const model = (args?.model as string) || 'gpt-4';
-
-                const result = countTokensBatch(texts, model);
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(result, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(countTokensBatch(texts, model));
             }
 
             case 'record_usage': {
@@ -383,75 +373,32 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
 
                 const record = tracker.recordUsage(model, inputTokens, outputTokens, requestId);
                 const cost = calculateCost(model, inputTokens, outputTokens);
-
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify({ record, cost }, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse({ record, cost });
             }
 
             case 'get_usage_stats': {
                 const limit = args?.limit as number | undefined;
-
                 const stats = tracker.getStats();
                 const records = tracker.getRecords(limit);
-
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify({ stats, recentRecords: records }, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse({ stats, recentRecords: records });
             }
 
             case 'calculate_cost': {
                 const model = args?.model as string;
                 const inputTokens = args?.input_tokens as number;
                 const outputTokens = args?.output_tokens as number;
-
-                const result = calculateCost(model, inputTokens, outputTokens);
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(result, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(calculateCost(model, inputTokens, outputTokens));
             }
 
             case 'compare_models': {
                 const inputTokens = args?.input_tokens as number;
                 const outputTokens = args?.output_tokens as number;
                 const models = args?.models as string[] | undefined;
-
-                const results = compareCosts(inputTokens, outputTokens, models);
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(results, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(compareCosts(inputTokens, outputTokens, models));
             }
 
             case 'get_pricing': {
-                const models = getAvailableModels();
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(models, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(getAvailableModels());
             }
 
             case 'estimate_project': {
@@ -459,47 +406,19 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
                 const dailyInput = args?.daily_input_tokens as number;
                 const dailyOutput = args?.daily_output_tokens as number;
                 const days = (args?.days as number) || 30;
-
-                const result = estimateProjectCost(model, dailyInput, dailyOutput, days);
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(result, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(estimateProjectCost(model, dailyInput, dailyOutput, days));
             }
 
             case 'get_supported_models': {
-                const models = getSupportedModels();
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify({ models }, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse({ models: getSupportedModels() });
             }
 
             case 'reset_usage': {
                 tracker.reset();
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(
-                                {
-                                    message: 'Usage statistics reset successfully',
-                                    sessionId: tracker.getSessionId(),
-                                },
-                                null,
-                                2
-                            ),
-                        },
-                    ],
-                };
+                return jsonResponse({
+                    message: 'Usage statistics reset successfully',
+                    sessionId: tracker.getSessionId(),
+                });
             }
 
             // ==================== AUTO TRACKING TOOLS ====================
@@ -509,27 +428,16 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
                 const outputTokens = args?.output_tokens as number;
                 const requestId = args?.request_id as string | undefined;
 
-                // Calculate cost
                 const costResult = calculateCost(model, inputTokens, outputTokens);
-                const cost = costResult.totalCost;
+                const result = recordUsagePersistent(model, inputTokens, outputTokens, costResult.totalCost, requestId);
 
-                // Record with persistent storage
-                const result = recordUsagePersistent(model, inputTokens, outputTokens, cost, requestId);
-
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify({
-                                message: 'Usage recorded and saved to persistent storage',
-                                record: result.record,
-                                cost: costResult,
-                                dailyTotal: result.dailyTotal,
-                                allTimeTotal: result.allTimeTotal,
-                            }, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse({
+                    message: 'Usage recorded and saved to persistent storage',
+                    record: result.record,
+                    cost: costResult,
+                    dailyTotal: result.dailyTotal,
+                    allTimeTotal: result.allTimeTotal,
+                });
             }
 
             case 'get_daily_stats': {
@@ -537,102 +445,45 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
                 const stats = getDailyStats(date);
 
                 if (!stats) {
-                    return {
-                        content: [
-                            {
-                                type: 'text',
-                                text: JSON.stringify({
-                                    message: `No data found for ${date || 'today'}`,
-                                    date: date || new Date().toISOString().split('T')[0],
-                                }, null, 2),
-                            },
-                        ],
-                    };
+                    return jsonResponse({
+                        message: `No data found for ${date || 'today'}`,
+                        date: date || new Date().toISOString().split('T')[0],
+                    });
                 }
-
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(stats, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(stats);
             }
 
             case 'get_total_stats': {
-                const stats = getTotalStats();
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify(stats, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse(getTotalStats());
             }
 
             case 'get_usage_history': {
                 const limit = args?.limit as number | undefined;
                 const history = getUsageHistory(limit);
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify({
-                                count: history.length,
-                                records: history,
-                            }, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse({ count: history.length, records: history });
             }
 
             case 'get_stats_in_range': {
                 const startDate = args?.start_date as string;
                 const endDate = args?.end_date as string;
                 const stats = getStatsInRange(startDate, endDate);
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify({
-                                range: { startDate, endDate },
-                                ...stats,
-                            }, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse({ range: { startDate, endDate }, ...stats });
             }
 
             case 'reset_all_stats': {
                 const confirm = args?.confirm as boolean;
                 if (!confirm) {
-                    return {
-                        content: [
-                            {
-                                type: 'text',
-                                text: JSON.stringify({
-                                    error: 'Please set confirm: true to reset all persistent data',
-                                    warning: 'This will delete ALL usage history permanently!',
-                                }, null, 2),
-                            },
-                        ],
-                    };
+                    return jsonResponse({
+                        error: 'Please set confirm: true to reset all persistent data',
+                        warning: 'This will delete ALL usage history permanently!',
+                    });
                 }
 
                 resetPersistentData();
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: JSON.stringify({
-                                message: 'All persistent data has been reset',
-                                timestamp: new Date().toISOString(),
-                            }, null, 2),
-                        },
-                    ],
-                };
+                return jsonResponse({
+                    message: 'All persistent data has been reset',
+                    timestamp: new Date().toISOString(),
+                });
             }
 
             default:
@@ -640,15 +491,7 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
         }
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        return {
-            content: [
-                {
-                    type: 'text',
-                    text: JSON.stringify({ error: errorMessage }, null, 2),
-                },
-            ],
-            isError: true,
-        };
+        return jsonResponse({ error: errorMessage }, true);
     }
 });
 
