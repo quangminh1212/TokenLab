@@ -15,10 +15,12 @@ import { URL } from 'url';
 import { recordUsagePersistent, getDailyStats, getTotalStats, getUsageHistory } from './usageTracker.js';
 import { calculateCost } from './costCalculator.js';
 import { getDashboardHTML } from './dashboard.js';
+import { PROXY, PROVIDER_PATTERNS } from './config.js';
+import type { ProviderName } from './types.js';
 
 // Configuration
-const PROXY_PORT = parseInt(process.env.PROXY_PORT || '4000');
-const DASHBOARD_PORT = parseInt(process.env.DASHBOARD_PORT || '4001');
+const PROXY_PORT = parseInt(process.env.PROXY_PORT || String(PROXY.DEFAULT_PORT));
+const DASHBOARD_PORT = parseInt(process.env.DASHBOARD_PORT || String(PROXY.DEFAULT_DASHBOARD_PORT));
 
 // Supported LLM API endpoints
 const API_ENDPOINTS: Record<string, { host: string; basePath: string }> = {
@@ -42,47 +44,54 @@ interface ProxyRequest {
     status: number;
 }
 
-// In-memory request log (recent 100 requests)
+// In-memory request log (recent requests)
 const recentRequests: ProxyRequest[] = [];
-const MAX_RECENT_REQUESTS = 100;
 
 // Generate unique request ID
 function generateRequestId(): string {
     return `req_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 }
 
-// Detect provider from request
-function detectProvider(host: string, path: string): string | null {
-    if (host.includes('openai') || path.startsWith('/v1/chat/completions') || path.startsWith('/v1/completions')) {
+// Detect provider from host patterns
+function detectProviderFromHost(host: string): ProviderName {
+    const hostLower = host.toLowerCase();
+    
+    // Special case: azure openai
+    if (hostLower.includes('azure') && hostLower.includes('openai')) {
+        return 'azure';
+    }
+    // Special case: exclude azure from openai
+    if (hostLower.includes('openai') && !hostLower.includes('azure')) {
         return 'openai';
     }
-    if (host.includes('anthropic') || path.startsWith('/v1/messages')) {
-        return 'anthropic';
+    
+    for (const [provider, patterns] of Object.entries(PROVIDER_PATTERNS)) {
+        if (provider === 'openai') continue; // Already handled above
+        if (patterns.some(pattern => hostLower.includes(pattern))) {
+            return provider as ProviderName;
+        }
     }
-    if (host.includes('google') || host.includes('generativelanguage') || path.includes('generateContent')) {
-        return 'google';
-    }
-    return null;
+    return 'unknown';
 }
 
-// Detect provider from host only (for mitmproxy data)
-function detectProviderFromHost(host: string): string {
-    if (host.includes('openai') && !host.includes('azure')) return 'openai';
-    if (host.includes('anthropic') || host.includes('claude.ai')) return 'anthropic';
-    if (host.includes('google') || host.includes('generativelanguage')) return 'google';
-    if (host.includes('cursor')) return 'cursor';
-    if (host.includes('codeium') || host.includes('windsurf')) return 'windsurf';
-    if (host.includes('kiro')) return 'kiro';
-    if (host.includes('copilot') || host.includes('github')) return 'copilot';
-    if (host.includes('bedrock') || host.includes('codewhisperer') || host.includes('q.us-')) return 'aws';
-    if (host.includes('azure') && host.includes('openai')) return 'azure';
-    if (host.includes('mistral')) return 'mistral';
-    if (host.includes('cohere')) return 'cohere';
-    if (host.includes('deepseek')) return 'deepseek';
-    if (host.includes('together')) return 'together';
-    if (host.includes('groq')) return 'groq';
-    if (host.includes('perplexity')) return 'perplexity';
-    if (host.includes('replicate')) return 'replicate';
+// Detect provider from request
+function detectProvider(host: string, path: string): ProviderName {
+    // First try host-based detection
+    const hostProvider = detectProviderFromHost(host);
+    if (hostProvider !== 'unknown') {
+        return hostProvider;
+    }
+    
+    // Fallback to path-based detection
+    if (path.startsWith('/v1/chat/completions') || path.startsWith('/v1/completions')) {
+        return 'openai';
+    }
+    if (path.startsWith('/v1/messages')) {
+        return 'anthropic';
+    }
+    if (path.includes('generateContent')) {
+        return 'google';
+    }
     return 'unknown';
 }
 
@@ -310,7 +319,7 @@ function handleStreamingRequest(
                     status: proxyRes.statusCode || 200,
                 };
                 recentRequests.unshift(proxyRequest);
-                if (recentRequests.length > MAX_RECENT_REQUESTS) {
+                if (recentRequests.length > PROXY.MAX_RECENT_REQUESTS) {
                     recentRequests.pop();
                 }
 
@@ -404,7 +413,7 @@ const proxyServer = http.createServer(async (req, res) => {
                             status: data.status_code || 200,
                         };
                         recentRequests.unshift(proxyRequest);
-                        if (recentRequests.length > MAX_RECENT_REQUESTS) {
+                        if (recentRequests.length > PROXY.MAX_RECENT_REQUESTS) {
                             recentRequests.pop();
                         }
 
@@ -495,7 +504,7 @@ const proxyServer = http.createServer(async (req, res) => {
                     status: response.statusCode,
                 };
                 recentRequests.unshift(proxyRequest);
-                if (recentRequests.length > MAX_RECENT_REQUESTS) {
+                if (recentRequests.length > PROXY.MAX_RECENT_REQUESTS) {
                     recentRequests.pop();
                 }
 
