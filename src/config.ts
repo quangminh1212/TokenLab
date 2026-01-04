@@ -3,11 +3,12 @@
  * Tập trung các constants và configuration của dự án
  */
 
-// ==================== Paths ====================
-export const DATA_DIR = 'data';
-export const MODELS_FILE = 'models.json';
-export const PRICING_FILE = 'pricing.json';
-export const ENCODINGS_FILE = 'encodings.json';
+// Re-export paths from centralized location
+export { DATA_DIR, MODELS_FILE, PRICING_FILE, ENCODINGS_FILE, USAGE_FILE } from './paths.js';
+
+// Re-export types from centralized location
+export type { ModelEncoding } from './types.js';
+import type { ModelEncoding } from './types.js';
 
 // ==================== Cache ====================
 /** Cache timeout in milliseconds (5 minutes) */
@@ -19,7 +20,6 @@ export const API_ENDPOINTS = {
 } as const;
 
 // ==================== Token Encodings ====================
-export type ModelEncoding = 'cl100k_base' | 'p50k_base' | 'r50k_base' | 'o200k_base';
 
 /** Default encoding for unknown models */
 export const DEFAULT_ENCODING: ModelEncoding = 'cl100k_base';

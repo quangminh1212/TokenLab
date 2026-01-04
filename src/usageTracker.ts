@@ -4,15 +4,8 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
 import type { UsageRecord, UsageStats, ModelUsageStats } from './types.js';
-
-// Đường dẫn lưu trữ persistent data
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const USAGE_FILE = path.join(DATA_DIR, 'usage_history.json');
+import { DATA_DIR, USAGE_FILE } from './paths.js';
 
 // Interface cho persistent data
 interface PersistentData {

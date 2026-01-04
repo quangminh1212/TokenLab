@@ -5,65 +5,8 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Đường dẫn lưu data
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const MODELS_FILE = path.join(DATA_DIR, 'models.json');
-const PRICING_FILE = path.join(DATA_DIR, 'pricing.json');
-const ENCODINGS_FILE = path.join(DATA_DIR, 'encodings.json');
-
-// Interfaces
-interface OpenRouterModel {
-    id: string;
-    name: string;
-    description?: string;
-    context_length: number;
-    pricing: {
-        prompt: string;
-        completion: string;
-        request?: string;
-        image?: string;
-    };
-    top_provider?: {
-        context_length?: number;
-        max_completion_tokens?: number;
-        is_moderated?: boolean;
-    };
-    per_request_limits?: unknown;
-    architecture?: {
-        modality?: string;
-        tokenizer?: string;
-        instruct_type?: string;
-    };
-}
-
-interface ModelInfo {
-    id: string;
-    name: string;
-    provider: string;
-    description: string;
-    contextWindow: number;
-    maxOutputTokens?: number;
-    inputPricePer1M: number;
-    outputPricePer1M: number;
-    modality?: string;
-    tokenizer?: string;
-    isModerated?: boolean;
-    lastUpdated: string;
-}
-
-interface CrawlResult {
-    success: boolean;
-    source: string;
-    modelsCount: number;
-    timestamp: string;
-    models: ModelInfo[];
-}
+import { DATA_DIR, MODELS_FILE, PRICING_FILE, ENCODINGS_FILE } from './paths.js';
+import type { OpenRouterModel, ModelInfo, CrawlResult } from './types.js';
 
 // Encoding mapping cho token counting
 const TOKENIZER_TO_ENCODING: Record<string, string> = {

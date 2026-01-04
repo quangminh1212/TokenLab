@@ -5,43 +5,11 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
+import { MODELS_FILE, PRICING_FILE, ENCODINGS_FILE } from './paths.js';
+import type { ModelPricing, ModelInfo, ModelEncoding } from './types.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Đường dẫn data files
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const MODELS_FILE = path.join(DATA_DIR, 'models.json');
-const PRICING_FILE = path.join(DATA_DIR, 'pricing.json');
-const ENCODINGS_FILE = path.join(DATA_DIR, 'encodings.json');
-
-// Interfaces
-export interface ModelPricing {
-    name: string;
-    inputPricePer1M: number;
-    outputPricePer1M: number;
-    contextWindow: number;
-    description: string;
-}
-
-export interface ModelInfo {
-    id: string;
-    name: string;
-    provider: string;
-    description: string;
-    contextWindow: number;
-    maxOutputTokens?: number;
-    inputPricePer1M: number;
-    outputPricePer1M: number;
-    modality?: string;
-    tokenizer?: string;
-    isModerated?: boolean;
-    lastUpdated: string;
-}
-
-export type ModelEncoding = 'cl100k_base' | 'p50k_base' | 'r50k_base' | 'o200k_base';
+// Re-export types for backward compatibility
+export type { ModelPricing, ModelInfo, ModelEncoding };
 
 // Cache loaded data
 let cachedModels: ModelInfo[] | null = null;
