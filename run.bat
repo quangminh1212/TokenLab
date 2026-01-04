@@ -4,7 +4,8 @@ setlocal EnableDelayedExpansion
 
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║              🔮 TokenSage - Starting Services                 ║
+echo ║        🔮 TokenSage - Safe Mode (No System Proxy)             ║
+echo ║        Only tracks apps configured to use this proxy          ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 
@@ -17,9 +18,10 @@ if not exist "dist\proxy.js" (
     if %ERRORLEVEL% NEQ 0 exit /b 1
 )
 
-:: Enable Windows System Proxy
-echo [INFO] Enabling Windows System Proxy...
-powershell -ExecutionPolicy Bypass -File "%~dp0proxy.ps1" on
+:: IMPORTANT: Do NOT enable Windows System Proxy
+:: This keeps other apps working normally
+echo [INFO] Safe Mode: Windows System Proxy will NOT be changed
+echo [INFO] Only apps configured to use localhost:4000 will be tracked
 echo.
 
 :: Set environment
@@ -34,12 +36,17 @@ echo   Proxy:      http://localhost:%PROXY_PORT%
 echo   Stats API:  http://localhost:%PROXY_PORT%/stats
 echo ───────────────────────────────────────────────────────────────
 echo.
-echo   Configure your IDE:
-echo   • Cursor/Windsurf: Settings ^> Models ^> Override OpenAI Base URL
-echo   • Enter: http://localhost:%PROXY_PORT%/v1
+echo   ⚠️  SAFE MODE - Other apps will NOT be affected!
 echo.
-echo   Or set environment variable:
-echo   • set OPENAI_BASE_URL=http://localhost:%PROXY_PORT%/v1
+echo   Configure ONLY your AI IDE:
+echo   • Cursor: Settings ^> Models ^> Override OpenAI Base URL
+echo     Enter: http://localhost:%PROXY_PORT%/v1
+echo.
+echo   • Windsurf: Settings ^> API Configuration ^> Base URL
+echo     Enter: http://localhost:%PROXY_PORT%/v1
+echo.
+echo   • Or start IDE with env var:
+echo     set OPENAI_BASE_URL=http://localhost:%PROXY_PORT%/v1
 echo ───────────────────────────────────────────────────────────────
 echo.
 echo   Press Ctrl+C to stop the server

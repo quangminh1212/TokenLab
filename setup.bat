@@ -72,6 +72,13 @@ echo ║                                                               ║
 echo ║  Dashboard:  http://localhost:4001                            ║
 echo ║  Proxy:      http://localhost:4000                            ║
 echo ║                                                               ║
+echo ║  ⚠️  SAFE MODE: Windows System Proxy will NOT be changed       ║
+echo ║  Only apps you configure manually will be tracked.            ║
+echo ║                                                               ║
+echo ║  Configure your AI IDE:                                       ║
+echo ║  • Cursor: Settings ^> Models ^> Override OpenAI Base URL      ║
+echo ║    Enter: http://localhost:4000/v1                            ║
+echo ║                                                               ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 pause
