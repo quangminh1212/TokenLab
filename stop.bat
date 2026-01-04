@@ -11,7 +11,7 @@ cd /d "%~dp0"
 
 :: Disable Windows System Proxy
 echo [INFO] Disabling Windows System Proxy...
-powershell -ExecutionPolicy Bypass -File "%~dp0toggle-proxy.ps1" off
+powershell -ExecutionPolicy Bypass -File "%~dp0proxy.ps1" off
 
 :: Kill mitmproxy processes
 echo.

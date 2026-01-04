@@ -53,7 +53,7 @@ echo ║  ✅ Mitmproxy Web: http://127.0.0.1:8081                      ║
 echo ║  ✅ TokenSage Dashboard: http://localhost:4001                ║
 echo ║                                                               ║
 echo ║  All AI traffic will now be intercepted!                      ║
-echo ║  Press Ctrl+C to stop, then run stop-interceptor.bat          ║
+echo ║  Press Ctrl+C to stop, then run stop.bat                      ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 
@@ -63,7 +63,7 @@ start http://127.0.0.1:8081
 start http://localhost:4001
 
 :: Run mitmproxy with TokenSage addon
-"!MITMWEB!" --mode regular -p 8080 -s "%~dp0tokensage_addon.py" --web-port 8081 --set console_eventlog_verbosity=info
+"!MITMWEB!" --mode regular -p 8080 -s "%~dp0addon.py" --web-port 8081 --set console_eventlog_verbosity=info
 
 :: When mitmproxy exits, disable proxy
 echo.

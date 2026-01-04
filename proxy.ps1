@@ -1,5 +1,5 @@
 # Toggle Windows System Proxy for mitmproxy
-# Run as: .\toggle-proxy.ps1 on|off|status
+# Run as: .\proxy.ps1 on|off|status
 
 param(
     [Parameter(Position = 0)]
@@ -61,4 +61,4 @@ else {
 }
 
 Write-Host ""
-Write-Host "Usage: .\toggle-proxy.ps1 [on|off|status]" -ForegroundColor DarkGray
+Write-Host "Usage: .\proxy.ps1 [on|off|status]" -ForegroundColor DarkGray

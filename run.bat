@@ -19,7 +19,7 @@ if not exist "dist\proxy.js" (
 
 :: Enable Windows System Proxy
 echo [INFO] Enabling Windows System Proxy...
-powershell -ExecutionPolicy Bypass -File "%~dp0toggle-proxy.ps1" on
+powershell -ExecutionPolicy Bypass -File "%~dp0proxy.ps1" on
 echo.
 
 :: Set environment
