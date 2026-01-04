@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import type { UsageRecord, UsageStats, ModelUsageStats } from './types.js';
 import { DATA_DIR, USAGE_FILE } from './paths.js';
+import { USAGE_TRACKER } from './config.js';
 
 // Interface cho persistent data
 interface PersistentData {
@@ -294,10 +295,10 @@ export function recordUsagePersistent(
     data.dailyStats[today].requestCount += 1;
     data.dailyStats[today].models[model] = (data.dailyStats[today].models[model] || 0) + inputTokens + outputTokens;
 
-    // Thêm vào recent records (giữ tối đa 100 records)
+    // Thêm vào recent records (giữ tối đa MAX_RECENT_RECORDS records)
     data.recentRecords.push(record);
-    if (data.recentRecords.length > 100) {
-        data.recentRecords = data.recentRecords.slice(-100);
+    if (data.recentRecords.length > USAGE_TRACKER.MAX_RECENT_RECORDS) {
+        data.recentRecords = data.recentRecords.slice(-USAGE_TRACKER.MAX_RECENT_RECORDS);
     }
 
     // Lưu xuống file
