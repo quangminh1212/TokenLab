@@ -16,6 +16,7 @@ import { recordUsagePersistent, getDailyStats, getTotalStats, getUsageHistory } 
 import { calculateCost } from './costCalculator.js';
 import { getDashboardHTML } from './dashboard.js';
 import { PROXY, PROVIDER_PATTERNS } from './config.js';
+import { estimateTokens } from './tokenCounter.js';
 import type { ProviderName } from './types.js';
 
 // Configuration
@@ -122,44 +123,105 @@ interface TokenUsage {
     model: string;
 }
 
-function extractTokenUsage(body: string, provider: string, requestModel: string): TokenUsage {
+function extractTokenUsage(body: string, provider: string, requestModel: string, requestBody?: string): TokenUsage {
     try {
         const json = JSON.parse(body);
 
-        if (provider === 'openai') {
+        // OpenAI format
+        if (provider === 'openai' || json.usage?.prompt_tokens !== undefined) {
             const usage = json.usage || {};
-            return {
-                inputTokens: usage.prompt_tokens || 0,
-                outputTokens: usage.completion_tokens || 0,
-                totalTokens: usage.total_tokens || 0,
-                model: json.model || requestModel,
-            };
+            if (usage.prompt_tokens || usage.completion_tokens) {
+                return {
+                    inputTokens: usage.prompt_tokens || 0,
+                    outputTokens: usage.completion_tokens || 0,
+                    totalTokens: usage.total_tokens || 0,
+                    model: json.model || requestModel,
+                };
+            }
         }
 
-        if (provider === 'anthropic') {
+        // Anthropic format
+        if (provider === 'anthropic' || json.usage?.input_tokens !== undefined) {
             const usage = json.usage || {};
-            const inputTokens = usage.input_tokens || 0;
-            const outputTokens = usage.output_tokens || 0;
-            return {
-                inputTokens,
-                outputTokens,
-                totalTokens: inputTokens + outputTokens,
-                model: json.model || requestModel,
-            };
+            if (usage.input_tokens || usage.output_tokens) {
+                const inputTokens = usage.input_tokens || 0;
+                const outputTokens = usage.output_tokens || 0;
+                return {
+                    inputTokens,
+                    outputTokens,
+                    totalTokens: inputTokens + outputTokens,
+                    model: json.model || requestModel,
+                };
+            }
         }
 
-        if (provider === 'google') {
+        // Google format
+        if (provider === 'google' || json.usageMetadata) {
             const usage = json.usageMetadata || {};
+            if (usage.promptTokenCount || usage.candidatesTokenCount) {
+                return {
+                    inputTokens: usage.promptTokenCount || 0,
+                    outputTokens: usage.candidatesTokenCount || 0,
+                    totalTokens: usage.totalTokenCount || 0,
+                    model: requestModel,
+                };
+            }
+        }
+
+        // Fallback: Estimate tokens from content if no usage info
+        let estimatedInput = 0;
+        let estimatedOutput = 0;
+
+        // Estimate input from request body
+        if (requestBody) {
+            try {
+                const reqJson = JSON.parse(requestBody);
+                if (reqJson.messages) {
+                    const inputText = reqJson.messages.map((m: { content?: string }) => m.content || '').join(' ');
+                    estimatedInput = estimateTokens(inputText);
+                } else if (reqJson.prompt) {
+                    estimatedInput = estimateTokens(reqJson.prompt);
+                }
+            } catch {
+                estimatedInput = estimateTokens(requestBody);
+            }
+        }
+
+        // Estimate output from response
+        if (json.choices?.[0]?.message?.content) {
+            estimatedOutput = estimateTokens(json.choices[0].message.content);
+        } else if (json.choices?.[0]?.text) {
+            estimatedOutput = estimateTokens(json.choices[0].text);
+        } else if (json.content?.[0]?.text) {
+            estimatedOutput = estimateTokens(json.content[0].text);
+        } else if (json.candidates?.[0]?.content?.parts?.[0]?.text) {
+            estimatedOutput = estimateTokens(json.candidates[0].content.parts[0].text);
+        }
+
+        if (estimatedInput > 0 || estimatedOutput > 0) {
             return {
-                inputTokens: usage.promptTokenCount || 0,
-                outputTokens: usage.candidatesTokenCount || 0,
-                totalTokens: usage.totalTokenCount || 0,
-                model: requestModel,
+                inputTokens: estimatedInput,
+                outputTokens: estimatedOutput,
+                totalTokens: estimatedInput + estimatedOutput,
+                model: json.model || requestModel,
             };
         }
 
         return { inputTokens: 0, outputTokens: 0, totalTokens: 0, model: requestModel };
     } catch {
+        // If response is not JSON, try to estimate from raw text
+        if (requestBody) {
+            const estimatedInput = estimateTokens(requestBody);
+            const estimatedOutput = estimateTokens(body);
+            if (estimatedInput > 0 || estimatedOutput > 0) {
+                return {
+                    inputTokens: estimatedInput,
+                    outputTokens: estimatedOutput,
+                    totalTokens: estimatedInput + estimatedOutput,
+                    model: requestModel,
+                };
+            }
+        }
         return { inputTokens: 0, outputTokens: 0, totalTokens: 0, model: requestModel };
     }
 }
@@ -263,6 +325,21 @@ function handleStreamingRequest(
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     let streamBuffer = '';
+    let fullResponseContent = ''; // Collect full response for estimation
+
+    // Estimate input tokens from request
+    let estimatedInputTokens = 0;
+    try {
+        const reqJson = JSON.parse(body);
+        if (reqJson.messages) {
+            const inputText = reqJson.messages.map((m: { content?: string }) => m.content || '').join(' ');
+            estimatedInputTokens = estimateTokens(inputText);
+        } else if (reqJson.prompt) {
+            estimatedInputTokens = estimateTokens(reqJson.prompt);
+        }
+    } catch {
+        estimatedInputTokens = estimateTokens(body);
+    }
 
     const proxyReq = https.request(options, (proxyRes) => {
         res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
@@ -278,15 +355,24 @@ function handleStreamingRequest(
                 if (line.startsWith('data: ') && !line.includes('[DONE]')) {
                     try {
                         const data = JSON.parse(line.substring(6));
+                        // Collect content for estimation
+                        if (data.choices?.[0]?.delta?.content) {
+                            fullResponseContent += data.choices[0].delta.content;
+                        }
+                        if (data.delta?.text) {
+                            fullResponseContent += data.delta.text;
+                        }
+                        if (data.content_block?.text) {
+                            fullResponseContent += data.content_block.text;
+                        }
+                        // Check for usage info
                         if (data.usage) {
-                            totalInputTokens = data.usage.prompt_tokens || 0;
-                            totalOutputTokens = data.usage.completion_tokens || 0;
+                            totalInputTokens = data.usage.prompt_tokens || data.usage.input_tokens || 0;
+                            totalOutputTokens = data.usage.completion_tokens || data.usage.output_tokens || 0;
                         }
                         if (data.message?.usage) {
+                            totalInputTokens = data.message.usage.input_tokens || 0;
                             totalOutputTokens = data.message.usage.output_tokens || 0;
-                        }
-                        if (data.usage?.input_tokens) {
-                            totalInputTokens = data.usage.input_tokens;
                         }
                     } catch {
                         // Ignore parse errors in stream
@@ -299,11 +385,21 @@ function handleStreamingRequest(
             res.end();
             const latencyMs = Date.now() - startTime;
 
-            if (totalInputTokens > 0 || totalOutputTokens > 0) {
-                const costResult = calculateCost(requestModel, totalInputTokens, totalOutputTokens);
+            // Use API-provided tokens if available, otherwise estimate
+            let finalInputTokens = totalInputTokens;
+            let finalOutputTokens = totalOutputTokens;
+
+            if (finalInputTokens === 0 && finalOutputTokens === 0) {
+                // Estimate from collected content
+                finalInputTokens = estimatedInputTokens;
+                finalOutputTokens = fullResponseContent ? estimateTokens(fullResponseContent) : 0;
+            }
+
+            if (finalInputTokens > 0 || finalOutputTokens > 0) {
+                const costResult = calculateCost(requestModel, finalInputTokens, finalOutputTokens);
                 const cost = costResult.totalCost;
 
-                recordUsagePersistent(requestModel, totalInputTokens, totalOutputTokens, cost, requestId);
+                recordUsagePersistent(requestModel, finalInputTokens, finalOutputTokens, cost, requestId);
 
                 const proxyRequest: ProxyRequest = {
                     id: requestId,
@@ -311,9 +407,9 @@ function handleStreamingRequest(
                     provider,
                     endpoint: targetPath,
                     model: requestModel,
-                    inputTokens: totalInputTokens,
-                    outputTokens: totalOutputTokens,
-                    totalTokens: totalInputTokens + totalOutputTokens,
+                    inputTokens: finalInputTokens,
+                    outputTokens: finalOutputTokens,
+                    totalTokens: finalInputTokens + finalOutputTokens,
                     cost,
                     latencyMs,
                     status: proxyRes.statusCode || 200,
@@ -323,7 +419,8 @@ function handleStreamingRequest(
                     recentRequests.pop();
                 }
 
-                console.log(`[${requestId}] STREAM: ${requestModel} | ${totalInputTokens}+${totalOutputTokens} tokens | ${cost.toFixed(6)} | ${latencyMs}ms`);
+                const estimated = (totalInputTokens === 0 && totalOutputTokens === 0) ? ' (estimated)' : '';
+                console.log(`[${requestId}] STREAM: ${requestModel} | ${finalInputTokens}+${finalOutputTokens} tokens${estimated} | $${cost.toFixed(6)} | ${latencyMs}ms`);
             }
         });
     });
@@ -482,7 +579,7 @@ const proxyServer = http.createServer(async (req, res) => {
             const response = await forwardRequest(targetHost, targetPath, req.method || 'GET', req.headers, body, provider, requestId);
             const latencyMs = Date.now() - startTime;
 
-            const tokenUsage = extractTokenUsage(response.body, provider, requestModel);
+            const tokenUsage = extractTokenUsage(response.body, provider, requestModel, body);
 
             if (tokenUsage.totalTokens > 0) {
                 const costResult = calculateCost(tokenUsage.model, tokenUsage.inputTokens, tokenUsage.outputTokens);
@@ -508,7 +605,7 @@ const proxyServer = http.createServer(async (req, res) => {
                     recentRequests.pop();
                 }
 
-                console.log(`[${requestId}] ${tokenUsage.model} | ${tokenUsage.inputTokens}+${tokenUsage.outputTokens} tokens | ${cost.toFixed(6)} | ${latencyMs}ms`);
+                console.log(`[${requestId}] ${tokenUsage.model} | ${tokenUsage.inputTokens}+${tokenUsage.outputTokens} tokens | $${cost.toFixed(6)} | ${latencyMs}ms`);
             }
 
             const responseHeaders: Record<string, string> = { 'Access-Control-Allow-Origin': '*' };
