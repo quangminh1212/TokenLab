@@ -130,7 +130,24 @@ class TokenSageAddon:
         req_data = self.pending_requests.pop(flow.id)
         
         try:
-            response_body = json.loads(flow.response.content) if flow.response.content else {}
+            # Skip if no content or content is binary/non-JSON
+            if not flow.response.content:
+                return
+            
+            # Try to decode as UTF-8 first
+            try:
+                content_str = flow.response.content.decode('utf-8')
+            except UnicodeDecodeError:
+                # Skip binary responses
+                ctx.log.debug(f"[TokenSage] Skipping binary response from {req_data['host']}")
+                return
+            
+            # Skip if not JSON
+            content_type = flow.response.headers.get("content-type", "")
+            if "json" not in content_type.lower() and not content_str.strip().startswith("{"):
+                return
+            
+            response_body = json.loads(content_str)
             input_tokens, output_tokens = extract_usage_from_response(response_body)
             
             # Get model from response if available
@@ -151,6 +168,9 @@ class TokenSageAddon:
                 ctx.log.info(f"[TokenSage] ✓ {model} | {input_tokens}+{output_tokens} tokens")
             else:
                 ctx.log.info(f"[TokenSage] Response has no usage info: {req_data['host']}")
+        except json.JSONDecodeError:
+            # Not a JSON response, skip silently
+            pass
         except Exception as e:
             ctx.log.warn(f"[TokenSage] Process response error: {e}")
 
