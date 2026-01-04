@@ -3,6 +3,7 @@
  */
 
 import { get_encoding, Tiktoken } from 'tiktoken';
+import { TOKEN_ESTIMATION } from './config.js';
 
 export type ModelEncoding = 'cl100k_base' | 'p50k_base' | 'r50k_base' | 'o200k_base';
 
@@ -265,29 +266,38 @@ async function tryLoadEncodings(): Promise<Record<string, ModelEncoding>> {
 // Khởi tạo load ngay khi module được import
 tryLoadEncodings().catch(() => {});
 
-export function getEncodingForModel(model: string): ModelEncoding {
-    const modelLower = model.toLowerCase();
+/**
+ * Helper: Find by partial match in a record
+ */
+function findByPartialMatch<T>(
+    data: Record<string, T>,
+    searchId: string
+): T | undefined {
+    const id = searchId.toLowerCase();
+    
+    // Exact match first
+    if (data[id]) return data[id];
+    
+    // Partial match
+    for (const [key, value] of Object.entries(data)) {
+        if (id.includes(key.toLowerCase()) || key.toLowerCase().includes(id)) {
+            return value;
+        }
+    }
+    
+    return undefined;
+}
 
+export function getEncodingForModel(model: string): ModelEncoding {
     // 1. Thử tìm trong loaded data trước (từ crawler)
     if (loadedEncodings && Object.keys(loadedEncodings).length > 0) {
-        // Exact match
-        if (loadedEncodings[modelLower]) {
-            return loadedEncodings[modelLower];
-        }
-        // Partial match
-        for (const [key, encoding] of Object.entries(loadedEncodings)) {
-            if (modelLower.includes(key.toLowerCase()) || key.toLowerCase().includes(modelLower)) {
-                return encoding as ModelEncoding;
-            }
-        }
+        const found = findByPartialMatch(loadedEncodings, model);
+        if (found) return found as ModelEncoding;
     }
 
     // 2. Fallback về hardcoded data
-    for (const [key, encoding] of Object.entries(MODEL_ENCODINGS)) {
-        if (modelLower.includes(key.toLowerCase())) {
-            return encoding;
-        }
-    }
+    const hardcoded = findByPartialMatch(MODEL_ENCODINGS, model);
+    if (hardcoded) return hardcoded;
 
     // 3. Default to cl100k_base (GPT-4/3.5)
     return 'cl100k_base';
@@ -314,7 +324,9 @@ export function countTokens(
     const tokens = encoder.encode(text);
 
     return {
-        text: text.length > 100 ? text.substring(0, 100) + '...' : text,
+        text: text.length > TOKEN_ESTIMATION.TEXT_PREVIEW_LENGTH 
+            ? text.substring(0, TOKEN_ESTIMATION.TEXT_PREVIEW_LENGTH) + '...' 
+            : text,
         tokenCount: tokens.length,
         model,
         encoding,
@@ -341,7 +353,7 @@ export function countTokensBatch(
 export function estimateTokens(text: string): number {
     // Trung bình 1 token ~ 4 characters cho tiếng Anh
     // Tiếng Việt và các ngôn ngữ khác có thể khác
-    return Math.ceil(text.length / 4);
+    return Math.ceil(text.length / TOKEN_ESTIMATION.CHARS_PER_TOKEN);
 }
 
 /**

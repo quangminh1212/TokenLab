@@ -31,6 +31,28 @@ async function tryLoadPricing(): Promise<Record<string, ModelPricing>> {
 // Initialize on module load
 tryLoadPricing().catch(() => {});
 
+/**
+ * Helper: Find by partial match in a record
+ */
+function findByPartialMatch<T>(
+    data: Record<string, T>,
+    searchId: string
+): T | undefined {
+    const id = searchId.toLowerCase();
+    
+    // Exact match first
+    if (data[id]) return data[id];
+    
+    // Partial match
+    for (const [key, value] of Object.entries(data)) {
+        if (id.includes(key.toLowerCase()) || key.toLowerCase().includes(id)) {
+            return value;
+        }
+    }
+    
+    return undefined;
+}
+
 // Fallback Pricing data (Updated December 2024)
 // Prices are in USD per 1 Million tokens
 export const MODEL_PRICING: Record<string, ModelPricing> = {
@@ -768,39 +790,18 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
  * Ưu tiên: 1. Loader data, 2. Hardcoded data, 3. Default
  */
 function findPricing(model: string): ModelPricing {
-    const modelLower = model.toLowerCase();
-
     // 1. Thử tìm trong loaded data (từ crawler)
     if (loadedPricing && Object.keys(loadedPricing).length > 0) {
-        // Exact match
-        if (loadedPricing[modelLower]) {
-            return loadedPricing[modelLower];
-        }
-        // Partial match
-        for (const [key, value] of Object.entries(loadedPricing)) {
-            if (modelLower.includes(key.toLowerCase()) || key.toLowerCase().includes(modelLower)) {
-                return value;
-            }
-        }
+        const found = findByPartialMatch(loadedPricing, model);
+        if (found) return found;
     }
 
     // 2. Fallback về hardcoded data
-    if (MODEL_PRICING[modelLower]) {
-        return MODEL_PRICING[modelLower];
-    }
-
-    // Partial match in hardcoded
-    for (const [key, value] of Object.entries(MODEL_PRICING)) {
-        if (modelLower.includes(key.toLowerCase())) {
-            return value;
-        }
-    }
+    const hardcoded = findByPartialMatch(MODEL_PRICING, model);
+    if (hardcoded) return hardcoded;
 
     // 3. Default pricing
-    return {
-        name: model,
-        ...DEFAULT_PRICING,
-    };
+    return { name: model, ...DEFAULT_PRICING };
 }
 
 /**
