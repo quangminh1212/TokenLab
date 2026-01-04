@@ -1,67 +1,60 @@
 @echo off
 chcp 65001 >nul
+setlocal EnableDelayedExpansion
+
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║     🔮 TokenSage - System-Wide Traffic Interceptor            ║
-echo ╠═══════════════════════════════════════════════════════════════╣
-echo ║  This will intercept ALL LLM API traffic including:           ║
-echo ║  - Cursor AI, Kiro, Windsurf                                  ║
-echo ║  - OpenAI, Anthropic, Google Gemini                           ║
-echo ║  - Amazon Bedrock, Azure OpenAI, and more                     ║
-echo ║                                                               ║
-echo ║  Data will be sent to TokenSage for storage and dashboard     ║
+echo ║     🔮 TokenSage - Full Interceptor Mode                      ║
+echo ║     Intercepts ALL AI traffic system-wide                     ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 
-:: Check if mitmproxy is installed
+cd /d "%~dp0"
+
+:: Check if mitmweb exists
 where mitmweb >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo [INFO] mitmproxy not found. Installing...
-    pip install mitmproxy
-    if %ERRORLEVEL% NEQ 0 (
-        echo [ERROR] Failed to install mitmproxy. Please install Python first.
-        pause
-        exit /b 1
+    echo [INFO] Looking for mitmweb in Python user scripts...
+    set "MITMWEB=%APPDATA%\Python\Python314\Scripts\mitmweb.exe"
+    if not exist "!MITMWEB!" (
+        set "MITMWEB=%APPDATA%\Python\Python312\Scripts\mitmweb.exe"
     )
+    if not exist "!MITMWEB!" (
+        echo [ERROR] mitmweb not found. Installing...
+        pip install mitmproxy
+        set "MITMWEB=mitmweb"
+    )
+) else (
+    set "MITMWEB=mitmweb"
 )
 
 :: Check if TokenSage proxy is running
 echo [INFO] Checking TokenSage proxy...
 curl -s http://localhost:4000/health >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo [WARN] TokenSage proxy not running at localhost:4000
     echo [INFO] Starting TokenSage proxy in background...
     start /B cmd /c "cd /d %~dp0 && npm run proxy"
     timeout /t 3 /nobreak >nul
 )
 
+:: Enable Windows System Proxy
+echo.
+echo [INFO] Enabling Windows System Proxy...
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:8080" /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyOverride /t REG_SZ /d "localhost;127.*;10.*;192.168.*;*.local" /f >nul
+echo [OK] Windows Proxy ENABLED: 127.0.0.1:8080
+echo [OK] Bypass: localhost, 127.*, 10.*, 192.168.*, *.local
+
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║  IMPORTANT SETUP STEPS:                                       ║
+echo ║  ✅ System Proxy: 127.0.0.1:8080                              ║
+echo ║  ✅ Mitmproxy Web: http://127.0.0.1:8081                      ║
+echo ║  ✅ TokenSage Dashboard: http://localhost:4001                ║
 echo ║                                                               ║
-echo ║  1. Install mitmproxy CA certificate:                         ║
-echo ║     - Open http://mitm.it after mitmproxy starts              ║
-echo ║     - Download Windows certificate                            ║
-echo ║     - Install to "Trusted Root Certification Authorities"     ║
-echo ║                                                               ║
-echo ║  2. Configure System Proxy (choose one):                      ║
-echo ║                                                               ║
-echo ║     Option A - Windows Settings:                              ║
-echo ║     Settings ^> Network ^> Proxy ^> Manual Setup               ║
-echo ║     Address: 127.0.0.1   Port: 8080                           ║
-echo ║                                                               ║
-echo ║     Option B - Environment Variable (for specific apps):      ║
-echo ║     set HTTPS_PROXY=http://127.0.0.1:8080                     ║
-echo ║     set HTTP_PROXY=http://127.0.0.1:8080                      ║
-echo ║                                                               ║
-echo ║  NOTE: Some apps like Kiro may use their own certificates     ║
-echo ║  and bypass system proxy. Use TokenSage proxy directly for    ║
-echo ║  those apps by setting OPENAI_BASE_URL.                       ║
+echo ║  All AI traffic will now be intercepted!                      ║
+echo ║  Press Ctrl+C to stop, then run stop-interceptor.bat          ║
 echo ╚═══════════════════════════════════════════════════════════════╝
-echo.
-echo [INFO] mitmweb interface: http://127.0.0.1:8081
-echo [INFO] TokenSage dashboard: http://localhost:4001
-echo [INFO] Press Ctrl+C to stop
 echo.
 
 :: Open dashboards
@@ -70,6 +63,12 @@ start http://127.0.0.1:8081
 start http://localhost:4001
 
 :: Run mitmproxy with TokenSage addon
-mitmweb --mode regular -p 8080 -s "%~dp0tokensage_addon.py" --set console_eventlog_verbosity=info
+"!MITMWEB!" --mode regular -p 8080 -s "%~dp0tokensage_addon.py" --web-port 8081 --set console_eventlog_verbosity=info
+
+:: When mitmproxy exits, disable proxy
+echo.
+echo [INFO] Mitmproxy stopped. Disabling Windows Proxy...
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f >nul
+echo [OK] Windows Proxy DISABLED
 
 pause

@@ -17,6 +17,11 @@ if not exist "dist\proxy.js" (
     if %ERRORLEVEL% NEQ 0 exit /b 1
 )
 
+:: Enable Windows System Proxy
+echo [INFO] Enabling Windows System Proxy...
+powershell -ExecutionPolicy Bypass -File "%~dp0toggle-proxy.ps1" on
+echo.
+
 :: Set environment
 set PROXY_PORT=4000
 set DASHBOARD_PORT=4001
