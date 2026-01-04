@@ -412,6 +412,80 @@ export function getDashboardHTML(proxyPort: number): string {
             font-size: 0.875rem;
         }
         
+        /* Log Panel */
+        .log-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            margin-top: 24px;
+        }
+        
+        .log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-primary);
+        }
+        
+        .log-title {
+            font-size: 1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .log-content {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.8125rem;
+            padding: 16px;
+            height: 200px;
+            overflow-y: auto;
+            line-height: 1.8;
+        }
+        
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        
+        .log-time {
+            color: #6b7280;
+            margin-right: 8px;
+        }
+        
+        .log-model {
+            color: #818cf8;
+            font-weight: 500;
+        }
+        
+        .log-tokens {
+            color: #34d399;
+        }
+        
+        .log-cost {
+            color: #fbbf24;
+        }
+        
+        .log-provider {
+            color: #f472b6;
+        }
+        
+        .log-empty {
+            color: #6b7280;
+            text-align: center;
+            padding: 40px;
+        }
+        
         /* Footer */
         .footer {
             max-width: 1400px;
@@ -567,6 +641,16 @@ export function getDashboardHTML(proxyPort: number): string {
                 </table>
             </div>
         </section>
+        
+        <section class="log-section fade-in">
+            <div class="log-header">
+                <h3 class="log-title">📋 Live Log</h3>
+                <button class="btn btn-secondary" onclick="clearLogs()" style="padding: 4px 12px; font-size: 0.75rem;">Clear</button>
+            </div>
+            <div class="log-content" id="logContent">
+                <div class="log-empty">Waiting for requests...</div>
+            </div>
+        </section>
     </main>
     
     <footer class="footer">
@@ -576,11 +660,57 @@ export function getDashboardHTML(proxyPort: number): string {
     <script>
         const PROXY_URL = 'http://localhost:${proxyPort}';
         const DOLLAR = '${dollarSign}';
+        let lastRequestCount = 0;
+        let logs = [];
+        const MAX_LOGS = 50;
         
         function formatNumber(num) {
             if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
             if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
             return num.toLocaleString();
+        }
+        
+        function formatTime(date) {
+            return new Date(date).toLocaleTimeString('vi-VN', { hour12: false });
+        }
+        
+        function addLog(req) {
+            const logEntry = {
+                time: formatTime(req.timestamp),
+                provider: req.provider || 'unknown',
+                model: req.model || 'unknown',
+                input: req.inputTokens || 0,
+                output: req.outputTokens || 0,
+                cost: req.cost || 0,
+                latency: req.latencyMs || 0
+            };
+            logs.unshift(logEntry);
+            if (logs.length > MAX_LOGS) logs.pop();
+            renderLogs();
+        }
+        
+        function renderLogs() {
+            const logContent = document.getElementById('logContent');
+            if (logs.length === 0) {
+                logContent.innerHTML = '<div class="log-empty">Waiting for requests...</div>';
+                return;
+            }
+            
+            logContent.innerHTML = logs.map(log => 
+                '<div class="log-entry">' +
+                '<span class="log-time">[' + log.time + ']</span>' +
+                '<span class="log-provider">' + log.provider + '</span> → ' +
+                '<span class="log-model">' + log.model + '</span> | ' +
+                '<span class="log-tokens">' + log.input + '+' + log.output + ' tokens</span> | ' +
+                '<span class="log-cost">' + DOLLAR + log.cost.toFixed(6) + '</span> | ' +
+                log.latency + 'ms' +
+                '</div>'
+            ).join('');
+        }
+        
+        function clearLogs() {
+            logs = [];
+            renderLogs();
         }
         
         async function loadStats() {
@@ -598,6 +728,18 @@ export function getDashboardHTML(proxyPort: number): string {
                     document.getElementById('totalTokens').textContent = formatNumber(data.total.totalTokens || 0);
                     document.getElementById('totalCost').textContent = DOLLAR + (data.total.totalCost || 0).toFixed(4);
                     document.getElementById('totalRequests').textContent = formatNumber(data.total.requestCount || 0);
+                }
+                
+                // Add new requests to log
+                if (data.recentRequests && data.recentRequests.length > 0) {
+                    const newRequests = data.recentRequests.slice(0, data.recentRequests.length - lastRequestCount);
+                    if (lastRequestCount > 0 && newRequests.length > 0) {
+                        newRequests.reverse().forEach(req => addLog(req));
+                    } else if (lastRequestCount === 0) {
+                        // First load - add all
+                        data.recentRequests.slice().reverse().forEach(req => addLog(req));
+                    }
+                    lastRequestCount = data.recentRequests.length;
                 }
                 
                 const tbody = document.getElementById('requestsBody');
