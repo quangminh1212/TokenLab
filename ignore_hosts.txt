@@ -1,0 +1,67 @@
+# TokenSage - Hosts to IGNORE (not intercept)
+# These hosts will bypass the proxy to prevent network issues
+# Format: regex patterns, one per line
+
+# Windows/Microsoft services
+.*\.microsoft\.com
+.*\.windows\.com
+.*\.windowsupdate\.com
+.*\.office\.com
+.*\.live\.com
+.*\.bing\.com
+.*\.msftconnecttest\.com
+.*\.msedge\.net
+
+# Cloudflare
+.*\.cloudflare\.com
+.*\.cloudflareinsights\.com
+.*cloudflareclient\.com
+
+# Social/Chat apps
+.*\.telegram\.org
+.*\.t\.me
+.*\.zalo\.me
+.*\.zalo\.vn
+.*\.facebook\.com
+.*\.fbcdn\.net
+.*\.messenger\.com
+.*\.instagram\.com
+.*\.whatsapp\.com
+.*\.discord\.com
+.*\.discordapp\.com
+.*\.slack\.com
+
+# Video/Media
+.*\.youtube\.com
+.*\.googlevideo\.com
+.*\.ytimg\.com
+.*\.spotify\.com
+.*\.netflix\.com
+.*\.twitch\.tv
+
+# Gaming
+.*\.steam.*
+.*\.epicgames\.com
+.*\.riotgames\.com
+
+# Code repos (not AI APIs)
+.*\.github\.com
+.*\.githubusercontent\.com
+.*\.gitlab\.com
+.*\.bitbucket\.org
+
+# Browsers
+.*\.brave\.com
+.*\.mozilla\.org
+.*\.firefox\.com
+
+# General Google (except AI APIs)
+.*\.google\.com
+.*\.gstatic\.com
+.*\.googleusercontent\.com
+
+# Other common services
+.*\.apple\.com
+.*\.icloud\.com
+.*\.amazon\.com(?!.*bedrock)
+.*\.amazonaws\.com(?!.*bedrock)

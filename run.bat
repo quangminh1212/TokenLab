@@ -17,6 +17,23 @@ echo ║              Track ALL AI requests automatically              ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 
+:: ═══════════════════════════════════════════════════════════════════
+:: Disable conflicting services that cause network issues
+:: ═══════════════════════════════════════════════════════════════════
+echo [INFO] Checking for conflicting services...
+
+:: Stop Cloudflare WARP (causes QUIC conflicts)
+tasklist /fi "imagename eq Cloudflare WARP.exe" 2>nul | find /i "Cloudflare WARP.exe" >nul
+if %ERRORLEVEL%==0 (
+    echo [INFO] Stopping Cloudflare WARP...
+    taskkill /f /im "Cloudflare WARP.exe" >nul 2>&1
+    net stop CloudflareWARP >nul 2>&1
+)
+
+:: Stop other VPN/proxy services that may conflict
+net stop "WireGuard" >nul 2>&1
+net stop "OpenVPNService" >nul 2>&1
+
 cd /d "%~dp0"
 
 :: Check Node.js
@@ -89,8 +106,9 @@ if "%USE_MITM%"=="1" (
     :: Open dashboard
     start "" "http://localhost:4001"
     
-    :: Start mitmproxy in LOCAL mode (transparent proxy with WinDivert)
-    "%MITMDUMP%" --mode local -s addon.py --set block_global=false
+    :: Start mitmproxy in LOCAL mode with FILTERED traffic
+    :: ONLY intercept AI API hosts - ignore everything else to prevent network issues
+    "%MITMDUMP%" --mode "local:!443@127.0.0.1" -s addon.py --set block_global=false --allow-hosts "api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|bedrock.*\.amazonaws\.com|api\.deepseek\.com|api\.mistral\.ai|api\.groq\.com|api\.together\.xyz|api\.perplexity\.ai|api\.cohere\.ai|api\.replicate\.com|api-inference\.huggingface\.co|api\.fireworks\.ai|kiro\.dev|35\.174\.34\."
     
     :: Cleanup when stopped
     echo.
