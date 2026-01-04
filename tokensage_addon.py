@@ -15,6 +15,10 @@ from threading import Thread
 # TokenSage API endpoint
 TOKENSAGE_URL = "http://localhost:4000/ingest"
 
+# Debug mode - log ALL requests to help discover AI IDE endpoints
+DEBUG_MODE = True
+DEBUG_LOG_FILE = Path(__file__).parent / "data" / "all_requests.log"
+
 # Local backup log
 LOG_DIR = Path(__file__).parent / "data"
 LOG_FILE = LOG_DIR / "mitmproxy_usage.json"
@@ -193,6 +197,20 @@ class TokenSageAddon:
         self.load_existing_log()
         ctx.log.info("🔮 TokenSage Addon initialized")
         ctx.log.info(f"📡 Sending data to: {TOKENSAGE_URL}")
+        if DEBUG_MODE:
+            ctx.log.info("🐛 DEBUG MODE: Logging ALL requests to all_requests.log")
+    
+    def debug_log(self, host: str, path: str, method: str):
+        """Log all requests for debugging purposes"""
+        if not DEBUG_MODE:
+            return
+        try:
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(DEBUG_LOG_FILE, 'a', encoding='utf-8') as f:
+                timestamp = datetime.now().isoformat()
+                f.write(f"{timestamp} | {method} | {host}{path}\n")
+        except:
+            pass
     
     def load_existing_log(self):
         """Load existing usage log from file"""
@@ -373,6 +391,9 @@ class TokenSageAddon:
     
     def request(self, flow: http.HTTPFlow):
         """Called when a request is made - store model info"""
+        # Debug: log ALL requests to help discover AI IDE endpoints
+        self.debug_log(flow.request.host, flow.request.path, flow.request.method)
+        
         if not self.is_llm_request(flow.request.host):
             return
         

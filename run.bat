@@ -149,7 +149,7 @@ echo ═════════════════════════
 echo.
 
 :: ======================= START MITMPROXY =======================
-"%MITMWEB_PATH%" --mode regular -p %MITM_PORT% -s "%~dp0tokensage_addon.py" --set console_eventlog_verbosity=info
+"%MITMWEB_PATH%" --mode regular -p %MITM_PORT% -s "%~dp0tokensage_addon.py" --set console_eventlog_verbosity=info --no-web-open-browser
 
 :: ======================= CLEANUP =======================
 echo.
