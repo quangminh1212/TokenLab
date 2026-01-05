@@ -16,9 +16,10 @@ type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
 class Logger {
     private static instance: Logger;
-    private logStream: fs.WriteStream | null = null;
+    private logFile: string;
 
     private constructor() {
+        this.logFile = LOG_FILE;
         this.initLogFile();
     }
 
@@ -32,22 +33,22 @@ class Logger {
     private initLogFile(): void {
         try {
             // Check if log file is too large, rotate if needed
-            if (fs.existsSync(LOG_FILE)) {
-                const stats = fs.statSync(LOG_FILE);
+            if (fs.existsSync(this.logFile)) {
+                const stats = fs.statSync(this.logFile);
                 if (stats.size > MAX_LOG_SIZE) {
-                    const backupFile = LOG_FILE.replace('.txt', `_${Date.now()}.txt`);
-                    fs.renameSync(LOG_FILE, backupFile);
+                    const backupFile = this.logFile.replace('.txt', `_${Date.now()}.txt`);
+                    fs.renameSync(this.logFile, backupFile);
                 }
             }
 
             // Ensure data directory exists
-            const dataDir = path.dirname(LOG_FILE);
+            const dataDir = path.dirname(this.logFile);
             if (!fs.existsSync(dataDir)) {
                 fs.mkdirSync(dataDir, { recursive: true });
             }
 
-            this.logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
-            this.writeToFile('INFO', '========== TokenSage Started ==========');
+            // Write startup message
+            fs.appendFileSync(this.logFile, '========== TokenSage Started ==========\n');
         } catch (err) {
             console.error('Failed to init log file:', err);
         }
@@ -67,17 +68,19 @@ class Logger {
         return logLine;
     }
 
-    private writeToFile(level: LogLevel, message: string): void {
-        if (this.logStream) {
-            this.logStream.write(message + '\n');
+    private writeToFile(message: string): void {
+        try {
+            fs.appendFileSync(this.logFile, message + '\n');
+        } catch {
+            // Silent fail
         }
     }
 
     log(level: LogLevel, component: string, message: string, data?: unknown): void {
         const formatted = this.formatMessage(level, component, message, data);
         
-        // Write to file
-        this.writeToFile(level, formatted);
+        // Write to file immediately (sync)
+        this.writeToFile(formatted);
         
         // Also write to console with colors
         const colors: Record<LogLevel, string> = {
@@ -107,10 +110,7 @@ class Logger {
     }
 
     close(): void {
-        if (this.logStream) {
-            this.writeToFile('INFO', '========== TokenSage Stopped ==========\n');
-            this.logStream.end();
-        }
+        this.writeToFile('========== TokenSage Stopped ==========\n');
     }
 }
 
