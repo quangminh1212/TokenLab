@@ -5,8 +5,16 @@ echo Tokscale - Auto Setup, Build and Run
 echo ========================================
 echo.
 
+:: Clear stale proxy CA cert env var (e.g. from 9router) that causes Bun warnings
+if defined NODE_EXTRA_CA_CERTS (
+    if not exist "%NODE_EXTRA_CA_CERTS%" set "NODE_EXTRA_CA_CERTS="
+)
+if defined SSL_CERT_FILE (
+    if not exist "%SSL_CERT_FILE%" set "SSL_CERT_FILE="
+)
+
 :: Setup Bun
-echo [1/5] Checking Bun...
+echo [1/4] Checking Bun...
 set BUN_PATH=
 where bun >nul 2>&1
 if !errorlevel! neq 0 (
@@ -32,7 +40,7 @@ if !errorlevel! neq 0 (
 echo.
 
 :: Setup Rust/Cargo
-echo [2/5] Checking Rust/Cargo...
+echo [2/4] Checking Rust/Cargo...
 set CARGO_PATH=
 where cargo >nul 2>&1
 if !errorlevel! neq 0 (
@@ -98,7 +106,7 @@ if defined MSVC_VER if defined WINSDK_VER (
 echo.
 
 :: Install npm dependencies
-echo [3/5] Installing npm dependencies...
+echo [3/4] Installing npm dependencies...
 if defined BUN_PATH (
     call "!BUN_PATH!" install
 ) else (
@@ -112,42 +120,39 @@ if !errorlevel! neq 0 (
 echo [OK] Npm dependencies installed
 echo.
 
-:: Build Rust core
-echo [4/5] Building Rust core (tokscale-cli)...
-if defined CARGO_PATH (
-    call "!CARGO_PATH!" build --release -p tokscale-cli
+:: Build Rust core (skip if already built)
+echo [4/4] Building Rust core (tokscale-cli)...
+set "RUST_SKIP=0"
+if exist "target\debug\tokscale.exe" set "RUST_SKIP=1"
+if exist "target\release\tokscale.exe" set "RUST_SKIP=1"
+if "!RUST_SKIP!"=="1" (
+    echo [SKIP] Rust binary already built, skipping...
 ) else (
-    call cargo build --release -p tokscale-cli
+    if defined CARGO_PATH (
+        call "!CARGO_PATH!" build -p tokscale-cli
+    ) else (
+        call cargo build -p tokscale-cli
+    )
+    if !errorlevel! neq 0 (
+        echo [ERROR] Rust build failed
+        pause
+        exit /b 1
+    )
 )
-if !errorlevel! neq 0 (
-    echo [ERROR] Rust build failed
-    pause
-    exit /b 1
-)
-echo [OK] Rust core build successful
-echo.
-
-:: Build npm packages
-echo [5/5] Building npm packages...
-if defined BUN_PATH (
-    call "!BUN_PATH!" run build
-) else (
-    call bun run build
-)
-if !errorlevel! neq 0 (
-    echo [ERROR] Npm packages build failed
-    pause
-    exit /b 1
-)
-echo [OK] Npm packages build successful
+echo [OK] Rust core ready
 echo.
 
 echo ========================================
 echo Starting frontend dev server...
 echo ========================================
-echo Frontend will run at http://localhost:3000
+echo Frontend will run at http://localhost:3737
 echo Press Ctrl+C to stop server
 echo.
+
+:: Kill any existing node/next processes and clean lock file
+taskkill /f /im node.exe >nul 2>&1
+if exist "packages\frontend\.next\dev\lock" del /f /q "packages\frontend\.next\dev\lock" >nul 2>&1
+
 if defined BUN_PATH (
     call "!BUN_PATH!" run dev:frontend
 ) else (
