@@ -47,7 +47,7 @@ const DescriptionSectionWrapper = styled.div`
   align-items: center;
   gap: 48px;
   padding: 100px 32px 120px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 1) 0%, rgba(1, 10, 21, 1) 50%);
+  background: linear-gradient(180deg, var(--color-canvas-default) 0%, var(--color-canvas-subtle) 50%);
 
   @media (max-width: 768px) {
     padding: 40px 20px 60px;
@@ -62,7 +62,7 @@ const DescriptionText = styled.p`
   line-height: 1.2em;
   letter-spacing: -0.03em;
   text-align: center;
-  color: #b6c0d4;
+  color: var(--color-fg-muted);
 
   @media (max-width: 768px) {
     font-size: 28px;
@@ -88,7 +88,7 @@ const ClientLogosFadeLeft = styled.div`
   top: 0;
   width: 324px;
   height: 100%;
-  background: linear-gradient(90deg, rgba(1, 10, 21, 1) 0%, rgba(1, 10, 21, 0) 100%);
+  background: linear-gradient(90deg, var(--color-canvas-subtle) 0%, rgba(0, 0, 0, 0) 100%);
   z-index: 1;
   pointer-events: none;
 
@@ -103,7 +103,7 @@ const ClientLogosFadeRight = styled.div`
   top: 0;
   width: 325px;
   height: 100%;
-  background: linear-gradient(270deg, rgba(1, 10, 21, 1) 0%, rgba(1, 10, 21, 0) 100%);
+  background: linear-gradient(270deg, var(--color-canvas-subtle) 0%, rgba(0, 0, 0, 0) 100%);
   z-index: 1;
   pointer-events: none;
 
@@ -118,7 +118,7 @@ const GitHubBtn = styled.a`
   align-items: center;
   gap: 4px;
   padding: 9px 28px;
-  background: #ffffff;
+  background: var(--color-fg-default);
   border-radius: 32px;
   text-decoration: none;
   transition: opacity 0.15s;
@@ -133,5 +133,5 @@ const GitHubBtnText = styled.span`
   font-weight: 700;
   font-size: 23px;
   line-height: 1.2em;
-  color: #000000;
+  color: var(--color-canvas-default);
 `;

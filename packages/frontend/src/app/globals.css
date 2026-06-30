@@ -1,46 +1,91 @@
 :root {
-  --color-bg-darkest: #111113;
-  --color-bg-default: #10121C;
-  --color-bg-elevated: #1A212A;
-  --color-bg-button: #202932;
-  --color-bg-subtle: #1E2733;
-  --color-bg-active: #0073FF;
+  --color-bg-darkest: #f8fafc;
+  --color-bg-default: #ffffff;
+  --color-bg-elevated: #f1f5f9;
+  --color-bg-button: #e2e8f0;
+  --color-bg-subtle: #f1f5f9;
+  --color-bg-active: #00A19A;
 
-  --color-text-primary: #FFFFFF;
-  --color-text-muted: #4B6486;
+  --color-text-primary: #0f172a;
+  --color-text-muted: #64748b;
 
-  --color-primary: #53d1f3;
-  --color-primary-hover: #3bc4e8;
-  --color-primary-active: #2ab8dc;
+  --color-primary: #00A19A;
+  --color-primary-hover: #008b85;
+  --color-primary-active: #007a75;
 
-  --color-accent-blue: #85CAFF;
-  --color-accent-link: #169AFF;
+  --color-accent-blue: #00A19A;
+  --color-accent-link: #00A19A;
 
-  --color-graph-empty: #1A212A;
-  --color-graph-canvas: #10121C;
+  --color-graph-empty: #f1f5f9;
+  --color-graph-canvas: #ffffff;
 
-  --color-canvas-default: #10121C;
-  --color-canvas-subtle: #1A212A;
-  --color-canvas-inset: #111113;
-  --color-fg-default: #FFFFFF;
-  --color-fg-muted: #7691b7;
-  --color-fg-subtle: #4B6486;
-  --color-border-default: #1E2733;
-  --color-border-muted: #1E2733;
-  --color-border-subtle: rgba(255, 255, 255, 0.1);
-  --color-accent-fg: #85CAFF;
-  --color-accent-emphasis: #169AFF;
-  --color-card-bg: #1A212A;
-  --color-card-border: #1E2733;
-  --color-btn-bg: #202932;
-  --color-btn-border: #1E2733;
-  --color-btn-hover-bg: #2C2C2F;
-  --color-btn-active-bg: #2C2C2F;
-  --color-btn-selected-bg: #111113;
-  --color-badge-bg: rgba(133, 202, 255, 0.15);
-  --color-badge-text: #85CAFF;
-  --background: #000;
-  --foreground: #FFFFFF;
+  --color-canvas-default: #ffffff;
+  --color-canvas-subtle: #f1f5f9;
+  --color-canvas-inset: #f8fafc;
+  --color-fg-default: #0f172a;
+  --color-fg-muted: #64748b;
+  --color-fg-subtle: #94a3b8;
+  --color-border-default: #e2e8f0;
+  --color-border-muted: #e2e8f0;
+  --color-border-subtle: rgba(0, 0, 0, 0.08);
+  --color-accent-fg: #00A19A;
+  --color-accent-emphasis: #00A19A;
+  --color-card-bg: #ffffff;
+  --color-card-border: #e2e8f0;
+  --color-btn-bg: #f1f5f9;
+  --color-btn-border: #e2e8f0;
+  --color-btn-hover-bg: #e2e8f0;
+  --color-btn-active-bg: #cbd5e1;
+  --color-btn-selected-bg: #f0fdfa;
+  --color-badge-bg: rgba(0, 161, 154, 0.1);
+  --color-badge-text: #00A19A;
+  --background: #ffffff;
+  --foreground: #0f172a;
+}
+
+.dark {
+  --color-bg-darkest: #0f172a;
+  --color-bg-default: #1e293b;
+  --color-bg-elevated: #334155;
+  --color-bg-button: #475569;
+  --color-bg-subtle: #334155;
+  --color-bg-active: #00A19A;
+
+  --color-text-primary: #f1f5f9;
+  --color-text-muted: #94a3b8;
+
+  --color-primary: #00A19A;
+  --color-primary-hover: #00bdb3;
+  --color-primary-active: #00d4c8;
+
+  --color-accent-blue: #00A19A;
+  --color-accent-link: #00A19A;
+
+  --color-graph-empty: #334155;
+  --color-graph-canvas: #1e293b;
+
+  --color-canvas-default: #1e293b;
+  --color-canvas-subtle: #334155;
+  --color-canvas-inset: #0f172a;
+  --color-fg-default: #f1f5f9;
+  --color-fg-muted: #94a3b8;
+  --color-fg-subtle: #64748b;
+  --color-border-default: #475569;
+  --color-border-muted: #475569;
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-accent-fg: #00A19A;
+  --color-accent-emphasis: #00A19A;
+  --color-card-bg: #334155;
+  --color-card-border: #475569;
+  --color-btn-bg: #475569;
+  --color-btn-border: #475569;
+  --color-btn-hover-bg: #64748b;
+  --color-btn-active-bg: #64748b;
+  --color-btn-selected-bg: #0f172a;
+  --color-badge-bg: rgba(0, 161, 154, 0.15);
+  --color-badge-text: #00d4c8;
+  --background: #1e293b;
+  --foreground: #f1f5f9;
 }
 
 * {

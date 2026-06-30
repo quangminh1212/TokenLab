@@ -83,8 +83,8 @@ const TopBar = styled.div`
   background-size: 24px 24px;
   background-repeat: repeat;
   
-  border-top: 1px solid #0073FF;
-  border-bottom: 1px solid #0073FF;
+  border-top: 1px solid var(--color-primary);
+  border-bottom: 1px solid var(--color-primary);
 `;
 
 const MiddleContentOuter = styled.div`
@@ -98,9 +98,9 @@ const MiddleContentInner = styled.div`
   position: relative;
   overflow: visible;
   width: 100%;
-  background: #01070f;
-  border-left: 1px solid #0073ff;
-  border-right: 1px solid #0073ff;
+  background: var(--color-canvas-inset);
+  border-left: 1px solid var(--color-primary);
+  border-right: 1px solid var(--color-primary);
   padding: 148px 32px 40px;
   display: flex;
   flex-direction: column;
@@ -145,7 +145,7 @@ const GlowEllipse = styled.div`
   height: 200px;
   left: 500px;
   top: 242px;
-  background: rgba(21, 131, 199, 0.26);
+  background: rgba(0, 161, 154, 0.15);
   border-radius: 50%;
   filter: blur(170.5px);
   pointer-events: none;
@@ -172,7 +172,7 @@ const HeadingText = styled.p`
   line-height: 1.1em;
   letter-spacing: -0.02em;
   text-align: center;
-  color: #92e7ff;
+  color: var(--color-primary);
 
   @media (max-width: 768px) {
     font-size: 28px;
@@ -190,12 +190,12 @@ const FollowLink = styled.a`
   line-height: 1.2em;
   letter-spacing: -0.03em;
   text-align: center;
-  color: #b6c0d4;
+  color: var(--color-fg-muted);
   text-decoration: none;
   transition: color 0.15s;
 
   &:hover {
-    color: #ffffff;
+    color: var(--color-fg-default);
   }
 
   @media (max-width: 768px) {
@@ -213,13 +213,13 @@ const BottomGradientWrapper = styled.div`
   padding: 0 1px 1px;
   background: linear-gradient(
     180deg,
-    rgba(0, 115, 255, 1) 0%,
-    rgba(10, 25, 45, 1) 100%
+    var(--color-primary) 0%,
+    var(--color-canvas-inset) 100%
   );
 `;
 
 const BottomInner = styled.div`
-  background: #010a15;
+  background: var(--color-canvas-inset);
   width: 100%;
 `;
 
@@ -229,7 +229,7 @@ const BlueBanner = styled.div`
   align-items: center;
   justify-content: center;
   padding: 20px 32px;
-  background: #0073ff;
+  background: var(--color-primary);
 `;
 
 const RepoNameText = styled.span`

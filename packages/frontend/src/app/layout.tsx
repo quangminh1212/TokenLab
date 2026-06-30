@@ -61,9 +61,9 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${figtree.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" className={`${figtree.variable} ${jetbrainsMono.variable} dark`}>
       <body className={figtree.className}>
-        <NextTopLoader color="#3B82F6" showSpinner={false} />
+        <NextTopLoader color="#00A19A" showSpinner={false} />
         <Providers>
           {children}
         </Providers>

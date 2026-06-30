@@ -197,9 +197,9 @@ const GlobeSeparatorBar = styled.div`
   background-image: url("/assets/landing/separator-pattern-slash@blue.svg");
   background-size: 24px 24px;
   background-repeat: repeat;
-  border-top: 1px solid #0073FF;
-  border-left: 1px solid #0073FF;
-  border-right: 1px solid #0073FF;
+  border-top: 1px solid var(--color-primary);
+  border-left: 1px solid var(--color-primary);
+  border-right: 1px solid var(--color-primary);
   border-bottom: none;
 `;
 
@@ -209,7 +209,7 @@ const GlobeSectionWrapper = styled.div`
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: #010a15;
+  background: var(--color-canvas-inset);
   overflow: hidden;
 `;
 
@@ -223,7 +223,7 @@ const GlobeImageWrapper = styled.div`
 const GlobeBackground = styled.div`
   position: absolute;
   inset: 0;
-  background-color: #010101;
+  background-color: var(--color-canvas-default);
   background-image: url("/assets/landing/worldwide-section-bg.svg");
   background-size: cover;
   background-position: center;
@@ -240,7 +240,7 @@ const GlobeFadeTop = styled.div`
   left: 0;
   right: 0;
   height: 70px;
-  background: linear-gradient(180deg, rgba(1, 1, 1, 1) 0%, rgba(1, 1, 1, 0) 100%);
+  background: linear-gradient(180deg, var(--color-canvas-default) 0%, rgba(0, 0, 0, 0) 100%);
   pointer-events: none;
   z-index: 1;
 `;
@@ -251,7 +251,7 @@ const GlobeFadeBottom = styled.div`
   left: 0;
   right: 0;
   height: 70px;
-  background: linear-gradient(0deg, rgba(1, 1, 1, 1) 0%, rgba(1, 1, 1, 0) 100%);
+  background: linear-gradient(0deg, var(--color-canvas-default) 0%, rgba(0, 0, 0, 0) 100%);
   pointer-events: none;
   z-index: 1;
 `;
@@ -271,9 +271,9 @@ const GlobeBlueHeader = styled.div`
   align-items: center;
   justify-content: center;
   padding: 20px 32px;
-  background: #0073ff;
-  border-left: 1px solid #0073FF;
-  border-right: 1px solid #0073FF;
+  background: var(--color-primary);
+  border-left: 1px solid var(--color-primary);
+  border-right: 1px solid var(--color-primary);
 `;
 
 const GlobeHeaderText = styled.span`
@@ -291,7 +291,7 @@ const GlobeTwoCol = styled.div`
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  background: #01070f;
+  background: var(--color-canvas-inset);
 
   @media (max-width: 768px) {
     flex-direction: column;
@@ -304,11 +304,11 @@ const GlobeLeftCol = styled.div`
   flex-direction: column;
   gap: 16px;
   padding: 32px 32px 56px;
-  border-right: 1px solid #10233e;
+  border-right: 1px solid var(--color-border-default);
 
   @media (max-width: 768px) {
     border-right: none;
-    border-bottom: 1px solid #10233e;
+    border-bottom: 1px solid var(--color-border-default);
   }
 `;
 
@@ -318,7 +318,7 @@ const GlobeLeftTitle = styled.h2`
   font-size: 40px;
   line-height: 1.2em;
   letter-spacing: -0.03em;
-  color: #ffffff;
+  color: var(--color-fg-default);
 
   @media (max-width: 768px) {
     font-size: 32px;
@@ -335,7 +335,7 @@ const LeaderboardBtn = styled(Link)`
   align-items: center;
   gap: 4px;
   padding: 9px 28px;
-  background: #ffffff;
+  background: var(--color-fg-default);
   border-radius: 32px;
   text-decoration: none;
   width: fit-content;
@@ -351,7 +351,7 @@ const LeaderboardBtnText = styled.span`
   font-weight: 700;
   font-size: 23px;
   line-height: 1.2em;
-  color: #000000;
+  color: var(--color-fg-default);
 `;
 
 const GlobeRightCol = styled.div`
@@ -361,7 +361,7 @@ const GlobeRightCol = styled.div`
   align-items: stretch;
   justify-content: flex-start;
   padding: 0 16px;
-  background: #020f1e;
+  background: var(--color-canvas-inset);
   overflow: hidden;
   @media (max-width: 768px) {
     padding: 0 16px;
@@ -389,14 +389,14 @@ const WidgetTitle = styled.span`
   font-family: var(--font-figtree), "Figtree", sans-serif;
   font-weight: 700;
   font-size: 17px;
-  color: #5c7ba4;
+  color: var(--color-fg-muted);
   text-transform: uppercase;
 `;
 
 const TabSwitcher = styled.div`
   display: flex;
   gap: 2px;
-  background: #0a1929;
+  background: var(--color-canvas-subtle);
   border-radius: 8px;
   padding: 2px;
 `;
@@ -410,8 +410,8 @@ const Tab = styled.button<{ $active: boolean }>`
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
-  color: ${(p) => (p.$active ? "#ffffff" : "#6b7a90")};
-  background: ${(p) => (p.$active ? "#0073FF" : "transparent")};
+  color: ${(p) => (p.$active ? "#ffffff" : "var(--color-fg-muted)")};
+  background: ${(p) => (p.$active ? "var(--color-primary)" : "transparent")};
 
   &:hover {
     color: #ffffff;
@@ -434,7 +434,7 @@ const UserRow = styled(Link)`
   transition: background 0.15s;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--color-btn-hover-bg);
   }
 `;
 
@@ -449,45 +449,45 @@ const RankBadge = styled.span`
   font-family: var(--font-figtree), "Figtree", sans-serif;
   font-size: 12px;
   font-weight: 700;
-  color: #6b7a90;
+  color: var(--color-fg-muted);
   background: linear-gradient(
     135deg,
-    #01070f 0%,
-    color-mix(in srgb, #0073ff 15%, #01070f) 50%,
-    color-mix(in srgb, #0073ff 25%, #01070f) 100%
+    var(--color-canvas-inset) 0%,
+    color-mix(in srgb, var(--color-primary) 15%, var(--color-canvas-inset)) 50%,
+    color-mix(in srgb, var(--color-primary) 25%, var(--color-canvas-inset)) 100%
   );
-  border: 1px solid #10233e;
+  border: 1px solid var(--color-border-default);
 
   &[data-rank="1"] {
     color: #eab308;
-    border-color: color-mix(in srgb, #eab308 30%, #10233e);
+    border-color: color-mix(in srgb, #eab308 30%, var(--color-border-default));
     background: linear-gradient(
       135deg,
-      #01070f 0%,
-      color-mix(in srgb, #eab308 10%, #01070f) 50%,
-      color-mix(in srgb, #eab308 20%, #01070f) 100%
+      var(--color-canvas-inset) 0%,
+      color-mix(in srgb, #eab308 10%, var(--color-canvas-inset)) 50%,
+      color-mix(in srgb, #eab308 20%, var(--color-canvas-inset)) 100%
     );
   }
 
   &[data-rank="2"] {
     color: #9ca3af;
-    border-color: color-mix(in srgb, #9ca3af 30%, #10233e);
+    border-color: color-mix(in srgb, #9ca3af 30%, var(--color-border-default));
     background: linear-gradient(
       135deg,
-      #01070f 0%,
-      color-mix(in srgb, #9ca3af 10%, #01070f) 50%,
-      color-mix(in srgb, #9ca3af 20%, #01070f) 100%
+      var(--color-canvas-inset) 0%,
+      color-mix(in srgb, #9ca3af 10%, var(--color-canvas-inset)) 50%,
+      color-mix(in srgb, #9ca3af 20%, var(--color-canvas-inset)) 100%
     );
   }
 
   &[data-rank="3"] {
     color: #d97706;
-    border-color: color-mix(in srgb, #d97706 30%, #10233e);
+    border-color: color-mix(in srgb, #d97706 30%, var(--color-border-default));
     background: linear-gradient(
       135deg,
-      #01070f 0%,
-      color-mix(in srgb, #d97706 10%, #01070f) 50%,
-      color-mix(in srgb, #d97706 20%, #01070f) 100%
+      var(--color-canvas-inset) 0%,
+      color-mix(in srgb, #d97706 10%, var(--color-canvas-inset)) 50%,
+      color-mix(in srgb, #d97706 20%, var(--color-canvas-inset)) 100%
     );
   }
 `;
@@ -508,7 +508,7 @@ const UserName = styled.span`
   font-family: var(--font-figtree), "Figtree", sans-serif;
   font-weight: 600;
   font-size: 14px;
-  color: #ffffff;
+  color: var(--color-fg-default);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -518,7 +518,7 @@ const UserHandle = styled.span`
   font-family: var(--font-figtree), "Figtree", sans-serif;
   font-weight: 400;
   font-size: 12px;
-  color: #6b7a90;
+  color: var(--color-fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -528,7 +528,7 @@ const UserValue = styled.span`
   font-family: var(--font-figtree), "Figtree", sans-serif;
   font-weight: 700;
   font-size: 15px;
-  color: #0073FF;
+  color: var(--color-primary);
   flex-shrink: 0;
   margin-left: auto;
 `;

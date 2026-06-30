@@ -41,7 +41,7 @@ export function LandingPage({
 
 const PageWrapper = styled.div`
   min-height: 100vh;
-  background: #000000;
+  background: var(--background);
   display: flex;
   flex-direction: column;
   align-items: center;

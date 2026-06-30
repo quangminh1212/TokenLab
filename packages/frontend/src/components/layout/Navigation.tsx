@@ -31,8 +31,9 @@ const NavContainer = styled.nav`
   left: 50%;
   transform: translateX(-50%);
   height: 40px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-card-bg);
   backdrop-filter: blur(10px);
+  border: 1px solid var(--color-border-default);
   border-radius: 32px;
   padding: 4px;
   display: flex;
@@ -55,8 +56,8 @@ const NavContainer = styled.nav`
     align-items: stretch;
     border-radius: 20px;
     overflow: hidden;
-    border: 1px solid #10233E;
-    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--color-border-default);
+    background: var(--color-card-bg);
   }
 `;
 
@@ -97,17 +98,17 @@ const NavItemBase = styled.a<{ $isActive: boolean }>`
   ${({ $isActive }) =>
     $isActive
       ? css`
-    background: rgba(235, 242, 245, 0.96);
-    border: 1px solid rgba(235, 242, 245, 0.96);
-    color: #000000;
+    background: var(--color-primary);
+    border: 1px solid var(--color-primary);
+    color: #ffffff;
   `
       : css`
     background: transparent;
     border: 1px solid transparent;
-    color: #D9D9D9;
+    color: var(--color-fg-muted);
     
     &:hover {
-      color: #ffffff;
+      color: var(--color-fg-default);
     }
   `}
 `;
@@ -136,17 +137,17 @@ const NavItemLink = styled(Link)<{ $isActive: boolean }>`
   ${({ $isActive }) =>
     $isActive
       ? css`
-    background: rgba(235, 242, 245, 0.96);
-    border: 1px solid rgba(235, 242, 245, 0.96);
-    color: #000000;
+    background: var(--color-primary);
+    border: 1px solid var(--color-primary);
+    color: #ffffff;
   `
       : css`
     background: transparent;
     border: 1px solid transparent;
-    color: #D9D9D9;
+    color: var(--color-fg-muted);
     
     &:hover {
-      color: #ffffff;
+      color: var(--color-fg-default);
     }
   `}
 `;
@@ -156,7 +157,7 @@ const LoadingSkeleton = styled.div`
   height: 32px;
   border-radius: 1000px;
   animation: ${pulse} 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--color-btn-hover-bg);
   flex-shrink: 0;
 `;
 
@@ -178,7 +179,7 @@ const SignInButton = styled.a`
   padding: 6px 10px 6px 6px;
   gap: 8px;
   height: 32px;
-  background: #0073FF;
+  background: var(--color-primary);
   border-radius: 1000px;
   text-decoration: none;
   cursor: pointer;
@@ -234,8 +235,8 @@ const ProfileButton = styled.button`
   align-items: center;
   width: 32px;
   height: 32px;
-  background: #0073FF;
-  border: 1px solid #0073FF;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
   border-radius: 1000px;
   padding: 0;
   cursor: pointer;
@@ -257,8 +258,8 @@ const MenuOverlay = styled.div`
   top: calc(100% + 8px);
   right: 0;
   width: 220px;
-  background: #1A212A;
-  border: 1px solid #1E2733;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border-default);
   border-radius: 12px;
   overflow: hidden;
   z-index: 100;
@@ -359,7 +360,7 @@ const HamburgerButton = styled.button`
   justify-content: center;
   background: transparent;
   border: none;
-  color: #D9D9D9;
+  color: var(--color-fg-muted);
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
@@ -367,7 +368,7 @@ const HamburgerButton = styled.button`
   transition: color 0.15s ease;
 
   &:hover {
-    color: #ffffff;
+    color: var(--color-fg-default);
   }
 
   @media (max-width: ${MOBILE_BREAKPOINT}) {
@@ -392,7 +393,7 @@ const MobileDropdown = styled.div`
   flex-direction: column;
   gap: 4px;
   padding: 8px 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--color-border-subtle);
   width: 100%;
 `;
 
@@ -410,16 +411,16 @@ const DropdownNavLink = styled(Link)<{ $isActive: boolean }>`
   ${({ $isActive }) =>
     $isActive
       ? css`
-    background: rgba(0, 115, 255, 0.1);
-    color: #ffffff;
+    background: var(--color-badge-bg);
+    color: var(--color-fg-default);
   `
       : css`
     background: transparent;
-    color: #D9D9D9;
+    color: var(--color-fg-muted);
 
     &:hover {
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.06);
+      color: var(--color-fg-default);
+      background: var(--color-btn-hover-bg);
     }
   `}
 `;
@@ -438,23 +439,23 @@ const DropdownNavLinkExternal = styled.a<{ $isActive: boolean }>`
   ${({ $isActive }) =>
     $isActive
       ? css`
-    background: rgba(0, 115, 255, 0.1);
-    color: #ffffff;
+    background: var(--color-badge-bg);
+    color: var(--color-fg-default);
   `
       : css`
     background: transparent;
-    color: #D9D9D9;
+    color: var(--color-fg-muted);
 
     &:hover {
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.06);
+      color: var(--color-fg-default);
+      background: var(--color-btn-hover-bg);
     }
   `}
 `;
 
 const DropdownDivider = styled.div`
   height: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-border-subtle);
   margin: 4px 8px;
 `;
 
@@ -466,7 +467,7 @@ const DropdownSignInButton = styled.a`
   gap: 8px;
   width: 100%;
   height: 40px;
-  background: #0073FF;
+  background: var(--color-primary);
   border-radius: 12px;
   text-decoration: none;
   cursor: pointer;
@@ -501,7 +502,7 @@ const DropdownDisplayName = styled.p`
   font-family: var(--font-figtree), 'Figtree', sans-serif;
   font-weight: 600;
   font-size: 14px;
-  color: #ffffff;
+  color: var(--color-fg-default);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -509,7 +510,7 @@ const DropdownDisplayName = styled.p`
 
 const DropdownUsername = styled.p`
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--color-fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -519,7 +520,7 @@ const DropdownUserAction = styled(Link)`
   font-family: var(--font-figtree), 'Figtree', sans-serif;
   font-weight: 500;
   font-size: 14px;
-  color: #D9D9D9;
+  color: var(--color-fg-muted);
   text-decoration: none;
   padding: 10px 16px;
   border-radius: 12px;
@@ -529,12 +530,12 @@ const DropdownUserAction = styled(Link)`
   transition: all 0.15s ease;
 
   &:hover {
-    color: #ffffff;
-    background: rgba(255, 255, 255, 0.06);
-  }
+    color: var(--color-fg-default);
+    background: var(--color-btn-hover-bg);
+ }
 
   svg {
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--color-fg-subtle);
     flex-shrink: 0;
   }
 `;

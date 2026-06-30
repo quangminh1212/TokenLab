@@ -31,7 +31,7 @@ const FooterInner = styled.div`
   align-items: center;
   gap: 20px;
   padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--color-border-subtle);
 `;
 
 const FooterCopyright = styled.p`
@@ -41,5 +41,5 @@ const FooterCopyright = styled.p`
   line-height: 1.5em;
   letter-spacing: -0.0195em;
   text-transform: uppercase;
-  color: #99a1af;
+  color: var(--color-fg-muted);
 `;

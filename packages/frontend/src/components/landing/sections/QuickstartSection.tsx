@@ -129,9 +129,9 @@ const SeparatorBar = styled.div`
   background-image: url("/assets/landing/separator-pattern-slash@gray.svg");
   background-size: 24px 24px;
   background-repeat: repeat;
-  border-left: 1px solid #10233E;
-  border-right: 1px solid #10233E;
-  border-bottom: 1px solid #10233E;
+  border-left: 1px solid var(--color-border-default);
+  border-right: 1px solid var(--color-border-default);
+  border-bottom: 1px solid var(--color-border-default);
 `;
 
 /* ── Quickstart Label ── */
@@ -141,9 +141,9 @@ const QuickstartLabel = styled.div`
   align-items: center;
   justify-content: center;
   padding: 20px 32px;
-  background: #0073ff;
-  border-left: 1px solid #10233e;
-  border-right: 1px solid #10233e;
+  background: var(--color-primary);
+  border-left: 1px solid var(--color-border-default);
+  border-right: 1px solid var(--color-border-default);
 `;
 
 const QuickstartText = styled.span`
@@ -167,7 +167,7 @@ const QuickstartCardsRow = styled.div`
   width: 100%;
   display: flex;
   flex-direction: row;
-  background: #01070f;
+  background: var(--color-canvas-default);
   overflow: hidden;
 
   @media (max-width: 900px) {
@@ -188,8 +188,8 @@ const QuickstartCard = styled.div<{ $position: "left" | "right" }>`
     $position === "left" ? "320px" : "320px"};
   ${({ $position }) =>
     $position === "left" && css`
-      border-right: 1px solid #10233e;
-    `}
+      border-right: 1px solid var(--color-border-default);
+    `}}
 
   @media (max-width: 1000px) {
     padding-left: 20px;
@@ -201,7 +201,7 @@ const QuickstartCard = styled.div<{ $position: "left" | "right" }>`
     ${({ $position }) =>
       $position === "left" && css`
       border-right: none;
-      border-bottom: 1px solid #10233e;
+      border-bottom: 1px solid var(--color-border-default);
     `}
 
     padding-left: 32px;
@@ -242,7 +242,7 @@ const CardTitle = styled.h3`
   font-size: 20px;
   line-height: 1em;
   text-transform: uppercase;
-  color: #ffffff;
+  color: var(--color-fg-default);
   z-index: 1;
 `;
 
@@ -253,8 +253,8 @@ const CommandBox = styled.div`
   align-self: stretch;
   gap: 6px;
   padding: 8px;
-  background: #010a15;
-  border: 1px solid #10233e;
+  background: var(--color-canvas-inset);
+  border: 1px solid var(--color-border-default);
   border-radius: 12px;
 `;
 
@@ -266,7 +266,7 @@ const CommandInputArea = styled.div`
   flex: 1;
   gap: 10px;
   padding: 0 12px;
-  background: #111b2c;
+  background: var(--color-canvas-subtle);
   border-radius: 8px;
   height: 36px;
   overflow: hidden;
@@ -279,7 +279,7 @@ const CommandText = styled.span`
   line-height: 0.94em;
   letter-spacing: -0.05em;
   text-align: center;
-  color: #9ad7ed;
+  color: var(--color-primary);
   white-space: nowrap;
 
   @media (max-width: 480px) {
@@ -304,7 +304,7 @@ const GradientAccent = styled.div<{ $delay?: boolean }>`
   background: linear-gradient(
     270deg,
     rgba(26, 27, 28, 0) 0%,
-    rgba(1, 127, 255, 0.14) 50%,
+    rgba(0, 161, 154, 0.14) 50%,
     rgba(26, 27, 28, 0) 100%
   );
   animation: ${cursorSweep} 6s ease-in-out infinite;
@@ -318,7 +318,7 @@ const CopyBtn = styled.button`
   align-items: center;
   width: 86px;
   height: 36px;
-  background: #0073ff;
+  background: var(--color-primary);
   border-radius: 8px;
   border: none;
   cursor: pointer;
