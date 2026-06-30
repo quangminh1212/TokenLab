@@ -1,6 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::process::Command;
+use std::time::Duration;
 
 use super::{UsageMetric, UsageOutput};
 
@@ -213,9 +217,396 @@ fn build_model_metrics(model_credits: &HashMap<String, f64>) -> Vec<UsageMetric>
         .collect()
 }
 
+// --- Local process discovery (Cockpit-style bridge) ---
+// Discover running Windsurf language server, connect via TCP,
+// and call GetUserStatus locally instead of cloud API.
+
+struct WindsurfConnection {
+    port: u16,
+    csrf_token: String,
+}
+
+fn is_windsurf_process(command: &str) -> bool {
+    let lower = command.to_lowercase();
+    (lower.contains("language_server") && lower.contains("windsurf"))
+        || lower.contains("--app_data_dir windsurf")
+        || lower.contains("\\windsurf\\")
+        || lower.contains("/windsurf/")
+}
+
+fn extract_csrf_token(command: &str) -> Option<String> {
+    for part in command.split_whitespace() {
+        if let Some(value) = part.strip_prefix("--csrf_token=") {
+            if value.len() >= 16 {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_declared_port(command: &str) -> Option<u16> {
+    for part in command.split_whitespace() {
+        if let Some(value) = part.strip_prefix("--extension_server_port=") {
+            if let Ok(port) = value.parse::<u16>() {
+                return Some(port);
+            }
+        }
+    }
+    None
+}
+
+fn discover_windsurf_processes() -> Vec<(u32, Option<u16>, String)> {
+    let output = if cfg!(target_os = "windows") {
+        Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+            ])
+            .output()
+    } else {
+        Command::new("ps")
+            .args(["-ww", "-eo", "pid,args"])
+            .output()
+    };
+
+    let output = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return Vec::new(),
+    };
+
+    let mut candidates = Vec::new();
+
+    if cfg!(target_os = "windows") {
+        let value: serde_json::Value = match serde_json::from_str(output.trim()) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        let items: Vec<&serde_json::Value> = match &value {
+            serde_json::Value::Array(arr) => arr.iter().collect(),
+            serde_json::Value::Object(_) => vec![&value],
+            _ => return Vec::new(),
+        };
+        for item in items {
+            let pid = item.get("ProcessId").and_then(|v| v.as_u64()).and_then(|v| u32::try_from(v).ok());
+            let command = item.get("CommandLine").and_then(|v| v.as_str()).unwrap_or_default();
+            if let Some(pid) = pid {
+                if is_windsurf_process(command) {
+                    if let Some(csrf) = extract_csrf_token(command) {
+                        let port = extract_declared_port(command);
+                        candidates.push((pid, port, csrf));
+                    }
+                }
+            }
+        }
+    } else {
+        for line in output.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() < 2 { continue; }
+            let Ok(pid) = parts[0].parse::<u32>() else { continue };
+            let command = parts[1..].join(" ");
+            if is_windsurf_process(&command) {
+                if let Some(csrf) = extract_csrf_token(&command) {
+                    let port = extract_declared_port(&command);
+                    candidates.push((pid, port, csrf));
+                }
+            }
+        }
+    }
+
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.dedup_by(|a, b| a.0 == b.0);
+    candidates
+}
+
+fn find_listening_ports(pid: u32) -> Vec<u16> {
+    if cfg!(target_os = "windows") {
+        let output = Command::new("netstat")
+            .args(["-ano", "-p", "TCP"])
+            .output();
+        let output = match output {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+            Err(_) => return Vec::new(),
+        };
+        let pid_str = pid.to_string();
+        let mut ports = Vec::new();
+        for line in output.lines() {
+            let trimmed = line.trim();
+            if !trimmed.contains("LISTENING") { continue; }
+            if !trimmed.ends_with(&pid_str) { continue; }
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() < 4 { continue; }
+            if let Some(addr) = parts.get(1) {
+                if let Some(port_str) = addr.rsplit(':').next() {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        if !ports.contains(&port) {
+                            ports.push(port);
+                        }
+                    }
+                }
+            }
+        }
+        ports
+    } else {
+        let output = Command::new("lsof")
+            .args(["-iTCP", "-sTCP:LISTEN", "-P", "-n"])
+            .output();
+        let output = match output {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+            Err(_) => return Vec::new(),
+        };
+        let pid_str = pid.to_string();
+        let mut ports = Vec::new();
+        for line in output.lines() {
+            if !line.contains(&pid_str) { continue; }
+            if let Some(addr_part) = line.split_whitespace().nth(8) {
+                if let Some(port_str) = addr_part.rsplit(':').next() {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        if !ports.contains(&port) {
+                            ports.push(port);
+                        }
+                    }
+                }
+            }
+        }
+        ports
+    }
+}
+
+fn probe_windsurf_heartbeat(port: u16, csrf_token: &str) -> bool {
+    let addr = format!("127.0.0.1:{}", port);
+    let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() else {
+        return false;
+    };
+    let Ok(mut stream) = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+
+    let body = r#"{"uuid":"00000000-0000-0000-0000-000000000000"}"#;
+    let request = format!(
+        "POST /exa.language_server_pb.LanguageServerService/Heartbeat HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnect-Protocol-Version: 1\r\nX-Codeium-Csrf-Token: {}\r\nConnection: close\r\n\r\n{}",
+        port, body.len(), csrf_token, body
+    );
+
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+
+    let mut reader = BufReader::new(stream);
+    let mut status_line = String::new();
+    if reader.read_line(&mut status_line).is_err() {
+        return false;
+    }
+
+    status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse::<u16>().ok())
+        .is_some_and(|s| s == 200)
+}
+
+fn discover_windsurf_connections() -> Vec<WindsurfConnection> {
+    let processes = discover_windsurf_processes();
+    let mut connections = Vec::new();
+
+    for (pid, declared_port, csrf_token) in processes {
+        let mut ports = find_listening_ports(pid);
+        if let Some(dp) = declared_port {
+            if !ports.contains(&dp) {
+                ports.insert(0, dp);
+            }
+        }
+
+        for port in ports {
+            if probe_windsurf_heartbeat(port, &csrf_token) {
+                connections.push(WindsurfConnection { port, csrf_token });
+                break;
+            }
+        }
+    }
+
+    connections
+}
+
+fn local_rpc_get_user_status(conn: &WindsurfConnection, api_key: &str) -> Result<serde_json::Value> {
+    let mut stream = TcpStream::connect(("127.0.0.1", conn.port))
+        .with_context(|| format!("Failed to connect to Windsurf RPC on port {}", conn.port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+    let body = serde_json::json!({
+        "metadata": {
+            "apiKey": api_key,
+            "ideName": "windsurf",
+            "ideVersion": "0.0.0",
+            "extensionName": "windsurf",
+            "extensionVersion": "0.0.0",
+            "locale": "en"
+        }
+    });
+    let body_text = serde_json::to_string(&body)?;
+    let request = format!(
+        "POST /exa.seat_management_pb.SeatManagementService/GetUserStatus HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnect-Protocol-Version: 1\r\nX-Codeium-Csrf-Token: {}\r\nConnection: close\r\n\r\n{}",
+        conn.port, body_text.len(), conn.csrf_token, body_text
+    );
+
+    stream.write_all(request.as_bytes())?;
+
+    let mut reader = BufReader::new(stream);
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line)?;
+
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse::<u16>().ok())
+        .ok_or_else(|| anyhow::anyhow!("Malformed HTTP response from Windsurf RPC"))?;
+
+    let mut content_length: Option<usize> = None;
+    let mut chunked = false;
+    loop {
+        let mut header = String::new();
+        reader.read_line(&mut header)?;
+        let trimmed = header.trim();
+        if trimmed.is_empty() { break; }
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(value) = lower.strip_prefix("content-length:") {
+            content_length = value.trim().parse::<usize>().ok();
+        }
+        if lower.contains("transfer-encoding") && lower.contains("chunked") {
+            chunked = true;
+        }
+    }
+
+    let response_body = if chunked {
+        read_chunked_body(&mut reader)?
+    } else if let Some(length) = content_length {
+        let mut bytes = vec![0_u8; length];
+        reader.read_exact(&mut bytes)?;
+        String::from_utf8(bytes)?
+    } else {
+        let mut text = String::new();
+        reader.by_ref().take(1024 * 1024).read_to_string(&mut text)?;
+        text
+    };
+
+    if status_code != 200 {
+        anyhow::bail!("Windsurf local RPC failed with status {}: {}", status_code, response_body);
+    }
+
+    Ok(serde_json::from_str(&response_body)?)
+}
+
+fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Result<String> {
+    let mut body = Vec::new();
+    loop {
+        let mut size_line = String::new();
+        reader.read_line(&mut size_line)?;
+        let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
+        if size == 0 { break; }
+        let mut chunk = vec![0_u8; size];
+        reader.read_exact(&mut chunk)?;
+        body.extend_from_slice(&chunk);
+        let mut crlf = [0_u8; 2];
+        let _ = reader.read_exact(&mut crlf);
+    }
+    Ok(String::from_utf8(body)?)
+}
+
+fn read_account_info() -> Option<(String, String)> {
+    for db_path in windsurf_db_paths() {
+        if !db_path.exists() { continue; }
+        let Ok(conn) = rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ) else { continue };
+
+        // Try reading email from windsurfAuthStatus
+        if let Ok(value) = conn.query_row(
+            "SELECT value FROM ItemTable WHERE key = 'windsurfAuthStatus'",
+            [], |row| row.get::<_, String>(0),
+        ) {
+            if let Ok(auth) = serde_json::from_str::<serde_json::Value>(&value) {
+                let email = auth.get("email").and_then(|v| v.as_str()).map(String::from);
+                let name = auth.get("name").and_then(|v| v.as_str()).map(String::from);
+                if let Some(email) = email {
+                    return Some((email, name.unwrap_or_default()));
+                }
+            }
+        }
+
+        // Try reading from other keys
+        for key in ["windsurf.user.email", "windsurf.user.name", "codeium.userEmail"] {
+            if let Ok(value) = conn.query_row(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                [&key], |row| row.get::<_, String>(0),
+            ) {
+                if !value.is_empty() && value.contains('@') {
+                    return Some((value, String::new()));
+                }
+            }
+        }
+    }
+    None
+}
+
+// --- Main fetch with fallback: local RPC → cloud API → SQLite ---
+
 pub fn fetch() -> Result<UsageOutput> {
     let api_key = read_api_key()?;
+    let (email, account_name) = read_account_info().unwrap_or((String::new(), String::new()));
 
+    // Try local RPC first (Cockpit-style: talk to running process)
+    let local_connections = discover_windsurf_connections();
+    for conn in &local_connections {
+        if let Ok(body) = local_rpc_get_user_status(conn, &api_key) {
+            if let Some(plan_status) = body.get("userStatus").and_then(|v| v.get("planStatus")) {
+                let plan_name = plan_status
+                    .get("planInfo")
+                    .and_then(|v| v.get("planName"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown");
+
+                let mut metrics = build_metrics(plan_status);
+                if !metrics.is_empty() {
+                    // Try per-model analytics from cloud (best-effort)
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?;
+                    let model_credits = rt.block_on(async {
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(10))
+                            .build()
+                            .ok()?;
+                        fetch_model_analytics(&client, &api_key).await.ok()
+                    }).unwrap_or_default();
+                    metrics.extend(build_model_metrics(&model_credits));
+
+                    return Ok(UsageOutput {
+                        provider: "Windsurf".into(),
+                        account: if account_name.is_empty() { None } else { Some(super::UsageAccount {
+                            id: email.clone(),
+                            label: Some(account_name),
+                            is_active: true,
+                        }) },
+                        plan: Some(plan_name.to_string()),
+                        email: if email.is_empty() { None } else { Some(email) },
+                        metrics,
+                        reset_credits: None,
+                        credit_status: None,
+                        spend_control: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // Fallback: cloud API
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -269,9 +660,13 @@ pub fn fetch() -> Result<UsageOutput> {
 
         Ok(UsageOutput {
             provider: "Windsurf".into(),
-            account: None,
+            account: if account_name.is_empty() { None } else { Some(super::UsageAccount {
+                id: email.clone(),
+                label: Some(account_name),
+                is_active: true,
+            }) },
             plan: Some(plan_name.to_string()),
-            email: None,
+            email: if email.is_empty() { None } else { Some(email) },
             metrics,
             reset_credits: None,
             credit_status: None,
