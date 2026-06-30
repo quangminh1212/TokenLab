@@ -55,7 +55,6 @@ pub mod auth {
     use base64::Engine;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
-    use std::io::Write;
     use std::path::PathBuf;
 
     // ── API endpoints (constants, not secrets) ─────────────────────────────

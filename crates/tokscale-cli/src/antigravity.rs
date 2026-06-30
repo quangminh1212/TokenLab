@@ -928,6 +928,7 @@ fn is_antigravity_process(command: &str) -> bool {
         || lower.contains("\\antigravity\\")
 }
 
+#[allow(dead_code)]
 fn process_executable_path(pid: u32) -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
@@ -1055,6 +1056,7 @@ fn parse_port_from_windows_address(address: &str) -> Option<u16> {
     port.parse::<u16>().ok()
 }
 
+#[allow(dead_code)]
 fn run_port_query(program: &str, warning_label: &str, args: &[&str]) -> Result<Vec<u16>> {
     match run_command(program, args) {
         Ok(output) => Ok(parse_ports(&output)),
@@ -1077,6 +1079,7 @@ fn is_command_not_found(err: &anyhow::Error) -> bool {
     })
 }
 
+#[allow(dead_code)]
 fn parse_ports(output: &str) -> Vec<u16> {
     let mut ports = Vec::new();
     for line in output.lines() {
@@ -1087,6 +1090,7 @@ fn parse_ports(output: &str) -> Vec<u16> {
     ports
 }
 
+#[allow(dead_code)]
 fn parse_port_from_line(line: &str) -> Option<u16> {
     for token in line.split_whitespace() {
         if let Some(port) = token
@@ -1384,6 +1388,7 @@ fn contains_antigravity_marker(value: &Value) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn run_command(program: &str, args: &[&str]) -> Result<String> {
     let output = run_command_output(program, args)?;
 
