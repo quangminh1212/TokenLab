@@ -895,6 +895,7 @@ pub enum ClientFilter {
     AntigravityCli,
     Junie,
     Zcode,
+    Windsurf,
     Synthetic,
 }
 
@@ -938,6 +939,7 @@ impl ClientFilter {
             Self::AntigravityCli => "antigravity-cli",
             Self::Junie => "junie",
             Self::Zcode => "zcode",
+            Self::Windsurf => "windsurf",
             Self::Synthetic => "synthetic",
         }
     }
@@ -984,6 +986,7 @@ impl ClientFilter {
             Self::AntigravityCli => Some(ClientId::AntigravityCli),
             Self::Junie => Some(ClientId::Junie),
             Self::Zcode => Some(ClientId::Zcode),
+            Self::Windsurf => Some(ClientId::Windsurf),
             Self::Synthetic => None,
         }
     }
@@ -1027,6 +1030,7 @@ impl ClientFilter {
             ClientId::AntigravityCli => Self::AntigravityCli,
             ClientId::Junie => Self::Junie,
             ClientId::Zcode => Self::Zcode,
+            ClientId::Windsurf => Self::Windsurf,
         }
     }
 
@@ -3507,6 +3511,7 @@ fn capitalize_client(client: &str) -> String {
         "commandcode" => "Command Code".to_string(),
         "junie" => "Junie".to_string(),
         "zcode" => "ZCode".to_string(),
+        "windsurf" => "Windsurf".to_string(),
         other => other.to_string(),
     }
 }
