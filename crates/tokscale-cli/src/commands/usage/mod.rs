@@ -9,6 +9,7 @@ mod minimax;
 mod minimax_tokenplan;
 mod sakana;
 mod warp;
+mod windsurf;
 mod zai;
 
 use anyhow::Result;
@@ -297,6 +298,11 @@ pub fn fetch_all_with_errors() -> (Vec<UsageOutput>, Vec<ProviderError>) {
             "Sakana",
             sakana::has_credentials,
             Fetch::Single(sakana::fetch),
+        ),
+        (
+            "Windsurf",
+            windsurf::has_credentials,
+            Fetch::Single(windsurf::fetch),
         ),
     ];
 
