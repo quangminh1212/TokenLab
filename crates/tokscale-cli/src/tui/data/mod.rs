@@ -1373,6 +1373,8 @@ mod tests {
         assert_eq!(clients[30], ClientId::MiMoCode);
         assert_eq!(clients[31], ClientId::AntigravityCli);
         assert_eq!(clients[32], ClientId::Junie);
+        assert_eq!(clients[33], ClientId::Zcode);
+        assert_eq!(clients[34], ClientId::Windsurf);
     }
 
     #[test]
@@ -1468,6 +1470,10 @@ mod tests {
             crate::tui::client_ui::display_name(ClientId::Junie),
             "Junie"
         );
+        assert_eq!(
+            crate::tui::client_ui::display_name(ClientId::Windsurf),
+            "Windsurf"
+        );
     }
 
     #[test]
@@ -1501,6 +1507,7 @@ mod tests {
         assert_eq!(crate::tui::client_ui::hotkey(ClientId::Jcode), 'j');
         assert_eq!(crate::tui::client_ui::hotkey(ClientId::AntigravityCli), 'f');
         assert_eq!(crate::tui::client_ui::hotkey(ClientId::Junie), 'p');
+        assert_eq!(crate::tui::client_ui::hotkey(ClientId::Windsurf), 't');
     }
 
     #[test]
@@ -1600,6 +1607,10 @@ mod tests {
         assert_eq!(
             crate::tui::client_ui::from_hotkey('p'),
             Some(ClientId::Junie)
+        );
+        assert_eq!(
+            crate::tui::client_ui::from_hotkey('t'),
+            Some(ClientId::Windsurf)
         );
     }
 
