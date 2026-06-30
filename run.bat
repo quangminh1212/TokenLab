@@ -120,41 +120,74 @@ if !errorlevel! neq 0 (
 echo [OK] Npm dependencies installed
 echo.
 
-:: Build Rust core (skip if already built)
+:: Build Rust core (always rebuild to pick up changes)
 echo [4/4] Building Rust core (tokscale-cli)...
-set "RUST_SKIP=0"
-if exist "target\debug\tokscale.exe" set "RUST_SKIP=1"
-if exist "target\release\tokscale.exe" set "RUST_SKIP=1"
-if "!RUST_SKIP!"=="1" (
-    echo [SKIP] Rust binary already built, skipping...
+if defined CARGO_PATH (
+    call "!CARGO_PATH!" build -p tokscale-cli
 ) else (
-    if defined CARGO_PATH (
-        call "!CARGO_PATH!" build -p tokscale-cli
-    ) else (
-        call cargo build -p tokscale-cli
-    )
-    if !errorlevel! neq 0 (
-        echo [ERROR] Rust build failed
-        pause
-        exit /b 1
-    )
+    call cargo build -p tokscale-cli
+)
+if !errorlevel! neq 0 (
+    echo [ERROR] Rust build failed
+    pause
+    exit /b 1
 )
 echo [OK] Rust core ready
 echo.
 
+:: Check if cargo-watch is installed for hot reload
+echo [4.5] Checking cargo-watch for Rust hot reload...
+set "HAS_WATCH=0"
+where cargo-watch >nul 2>&1
+if !errorlevel! equ 0 (
+    set "HAS_WATCH=1"
+    echo [OK] cargo-watch is installed
+) else (
+    echo [INFO] cargo-watch not found, installing...
+    if defined CARGO_PATH (
+        call "!CARGO_PATH!" install cargo-watch
+    ) else (
+        call cargo install cargo-watch
+    )
+    if !errorlevel! equ 0 (
+        set "HAS_WATCH=1"
+        echo [OK] cargo-watch installed
+    ) else (
+        echo [WARN] Could not install cargo-watch, Rust hot reload disabled
+    )
+)
+echo.
+
 echo ========================================
-echo Starting frontend dev server...
+echo Starting dev servers with hot reload...
 echo ========================================
-echo Frontend will run at http://localhost:3737
-echo Press Ctrl+C to stop server
+echo Frontend:  http://localhost:3737  (Next.js HMR)
+echo Rust:      auto-rebuild on change (cargo-watch)
+echo Press Ctrl+C to stop all servers
 echo.
 
 :: Kill any existing node/next processes and clean lock file
 taskkill /f /im node.exe >nul 2>&1
 if exist "packages\frontend\.next\dev\lock" del /f /q "packages\frontend\.next\dev\lock" >nul 2>&1
 
+:: Start Rust watcher in background (auto-rebuild on .rs changes)
+if "!HAS_WATCH!"=="1" (
+    echo [START] Rust watcher: cargo watch -x build -p tokscale-cli
+    if defined CARGO_PATH (
+        start "tokscale-rust-watch" /min cmd /c "!CARGO_PATH!" watch -x "build -p tokscale-cli" --watch crates
+    ) else (
+        start "tokscale-rust-watch" /min cmd /c cargo watch -x "build -p tokscale-cli" --watch crates
+    )
+) else (
+    echo [SKIP] Rust hot reload not available - manual rebuild needed
+)
+
+:: Start frontend dev server (Next.js HMR - hot reload)
 if defined BUN_PATH (
     call "!BUN_PATH!" run dev:frontend
 ) else (
     call bun run dev:frontend
 )
+
+:: Cleanup: kill Rust watcher when frontend stops
+taskkill /fi "WINDOWTITLE eq tokscale-rust-watch" /f >nul 2>&1
