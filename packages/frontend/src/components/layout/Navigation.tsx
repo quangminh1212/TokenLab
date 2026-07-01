@@ -675,8 +675,8 @@ export function Navigation() {
           <NavLogoImage
             src="/assets/hero-logo.svg"
             alt="XLab Token"
-            width={100}
-            height={21}
+            width={80}
+            height={32}
             priority
           />
         </NavLogoLink>
@@ -692,11 +692,11 @@ export function Navigation() {
           <NavItemLink href="/" $isActive={pathname === "/"}>
             About
           </NavItemLink>
-          <NavItemLink href="/leaderboard" $isActive={pathname === "/leaderboard" || pathname.startsWith("/groups")}>
-            Leaderboard
-          </NavItemLink>
           <NavItemLink href="/profile" $isActive={pathname === "/profile" || pathname.startsWith("/u/")}>
-            Profile
+            Dashboard
+          </NavItemLink>
+          <NavItemLink href="/settings" $isActive={pathname === "/settings"}>
+            Settings
           </NavItemLink>
           <NavItemBase
             as="a"
@@ -716,7 +716,7 @@ export function Navigation() {
             <UserMenu user={user} onSignOut={async () => {
               await fetch("/api/auth/logout", { method: "POST" });
               setUser(null);
-              window.location.href = "/leaderboard";
+              window.location.href = "/";
             }} />
           ) : (
             <SignInButton href="/api/auth/github" aria-label="Sign in with GitHub">
@@ -736,11 +736,11 @@ export function Navigation() {
           <DropdownNavLink href="/" $isActive={pathname === "/"} onClick={closeMobileMenu}>
             About
           </DropdownNavLink>
-          <DropdownNavLink href="/leaderboard" $isActive={pathname === "/leaderboard" || pathname.startsWith("/groups")} onClick={closeMobileMenu}>
-            Leaderboard
-          </DropdownNavLink>
           <DropdownNavLink href="/profile" $isActive={pathname === "/profile" || pathname.startsWith("/u/")} onClick={closeMobileMenu}>
-            Profile
+            Dashboard
+          </DropdownNavLink>
+          <DropdownNavLink href="/settings" $isActive={pathname === "/settings"} onClick={closeMobileMenu}>
+            Settings
           </DropdownNavLink>
           <DropdownNavLinkExternal
             href="https://github.com/quangminh1212/XLab_Token"
@@ -782,7 +782,7 @@ export function Navigation() {
                   await fetch("/api/auth/logout", { method: "POST" });
                   setUser(null);
                   closeMobileMenu();
-                  window.location.href = "/leaderboard";
+                  window.location.href = "/";
                 }}
               >
                 <SignOutIcon size={16} />
