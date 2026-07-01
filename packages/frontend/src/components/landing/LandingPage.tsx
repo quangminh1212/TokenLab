@@ -4,8 +4,6 @@ import styled from "styled-components";
 import {
   HeroSection,
   QuickstartSection,
-  DashboardSection,
-  SettingsSection,
   FooterSection,
 } from "./sections";
 
@@ -21,8 +19,6 @@ export function LandingPage({
       <PageInner>
         <HeroSection stargazersCount={stargazersCount} />
         <QuickstartSection />
-        <DashboardSection />
-        <SettingsSection />
         <FooterSection />
       </PageInner>
     </PageWrapper>
