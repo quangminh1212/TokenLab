@@ -4,17 +4,17 @@
   --color-bg-elevated: #f1f3f4;
   --color-bg-button: #dadce0;
   --color-bg-subtle: #f1f3f4;
-  --color-bg-active: #0f9d58;
+  --color-bg-active: #00A19A;
 
   --color-text-primary: #202124;
   --color-text-muted: #5f6368;
 
-  --color-primary: #0f9d58;
-  --color-primary-hover: #0c8a4a;
-  --color-primary-active: #0a7a3f;
+  --color-primary: #00A19A;
+  --color-primary-hover: #008b85;
+  --color-primary-active: #007a75;
 
-  --color-accent-blue: #0f9d58;
-  --color-accent-link: #0f9d58;
+  --color-accent-blue: #00A19A;
+  --color-accent-link: #00A19A;
 
   --color-graph-empty: #f1f3f4;
   --color-graph-canvas: #ffffff;
@@ -28,8 +28,8 @@
   --color-border-default: #dadce0;
   --color-border-muted: #dadce0;
   --color-border-subtle: rgba(0, 0, 0, 0.08);
-  --color-accent-fg: #0f9d58;
-  --color-accent-emphasis: #0f9d58;
+  --color-accent-fg: #00A19A;
+  --color-accent-emphasis: #00A19A;
   --color-card-bg: #ffffff;
   --color-card-border: #dadce0;
   --color-btn-bg: #f1f3f4;
@@ -37,8 +37,8 @@
   --color-btn-hover-bg: #e8eaed;
   --color-btn-active-bg: #dadce0;
   --color-btn-selected-bg: #e6f4ea;
-  --color-badge-bg: rgba(15, 157, 88, 0.1);
-  --color-badge-text: #0f9d58;
+  --color-badge-bg: rgba(0, 161, 154, 0.1);
+  --color-badge-text: #00A19A;
   --background: #ffffff;
   --foreground: #202124;
 }
@@ -49,17 +49,17 @@
   --color-bg-elevated: #3c4043;
   --color-bg-button: #5f6368;
   --color-bg-subtle: #292a2d;
-  --color-bg-active: #0f9d58;
+  --color-bg-active: #00A19A;
 
   --color-text-primary: #ffffff;
   --color-text-muted: #9aa0a6;
 
-  --color-primary: #0f9d58;
-  --color-primary-hover: #1eb864;
-  --color-primary-active: #2cd870;
+  --color-primary: #00A19A;
+  --color-primary-hover: #00bdb3;
+  --color-primary-active: #00d4c8;
 
-  --color-accent-blue: #0f9d58;
-  --color-accent-link: #0f9d58;
+  --color-accent-blue: #00A19A;
+  --color-accent-link: #00A19A;
 
   --color-graph-empty: #3c4043;
   --color-graph-canvas: #202124;
@@ -73,8 +73,8 @@
   --color-border-default: #5f6368;
   --color-border-muted: #5f6368;
   --color-border-subtle: rgba(255, 255, 255, 0.08);
-  --color-accent-fg: #0f9d58;
-  --color-accent-emphasis: #0f9d58;
+  --color-accent-fg: #00A19A;
+  --color-accent-emphasis: #00A19A;
   --color-card-bg: #3c4043;
   --color-card-border: #5f6368;
   --color-btn-bg: #3c4043;
@@ -82,8 +82,8 @@
   --color-btn-hover-bg: #5f6368;
   --color-btn-active-bg: #5f6368;
   --color-btn-selected-bg: #202124;
-  --color-badge-bg: rgba(15, 157, 88, 0.15);
-  --color-badge-text: #2cd870;
+  --color-badge-bg: rgba(0, 161, 154, 0.15);
+  --color-badge-text: #00d4c8;
   --background: #202124;
   --foreground: #ffffff;
 }
