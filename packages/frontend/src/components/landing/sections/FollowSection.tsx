@@ -11,11 +11,11 @@ export function FollowSection() {
         Don't miss the next one.
       </HeadingText>
       <FollowLink
-        href="https://github.com/junhoyeo"
+        href="https://github.com/quangminh1212"
         target="_blank"
         rel="noopener noreferrer"
       >
-        Follow @junhoyeo on GitHub
+        Follow @quangminh1212 on GitHub
       </FollowLink>
     </SectionWrapper>
   );

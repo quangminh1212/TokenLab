@@ -4,8 +4,8 @@ import styled from "styled-components";
 import { useCopy } from "../hooks";
 
 export function QuickstartSection() {
-  const tui = useCopy("bunx tokscale@latest");
-  const submit = useCopy("bunx tokscale@latest submit");
+  const tui = useCopy("bunx xlab-token@latest");
+  const submit = useCopy("bunx xlab-token@latest submit");
 
   return (
     <SectionWrapper>
@@ -14,14 +14,14 @@ export function QuickstartSection() {
         <Card>
           <CardTitle>View your usage stats</CardTitle>
           <CommandBox>
-            <CommandText>bunx tokscale@latest</CommandText>
+            <CommandText>bunx xlab-token@latest</CommandText>
             <CopyBtn onClick={tui.copy}>{tui.copied ? "Copied!" : "Copy"}</CopyBtn>
           </CommandBox>
         </Card>
         <Card>
           <CardTitle>Submit to leaderboard</CardTitle>
           <CommandBox>
-            <CommandText>bunx tokscale@latest submit</CommandText>
+            <CommandText>bunx xlab-token@latest submit</CommandText>
             <CopyBtn onClick={submit.copy}>{submit.copied ? "Copied!" : "Copy"}</CopyBtn>
           </CommandBox>
         </Card>
