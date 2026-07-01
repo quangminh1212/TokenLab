@@ -63,7 +63,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className={`${figtree.variable} ${jetbrainsMono.variable} dark`}>
       <body className={figtree.className}>
-        <NextTopLoader color="#00A19A" showSpinner={false} />
+        <NextTopLoader color="#0f9d58" showSpinner={false} />
         <Providers>
           {children}
         </Providers>
