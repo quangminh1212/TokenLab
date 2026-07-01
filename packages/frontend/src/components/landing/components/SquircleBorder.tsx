@@ -15,7 +15,7 @@ interface SquircleBorderProps {
 
 export function SquircleBorder({
   def,
-  color = "#10233E",
+  color = "#475569",
   gradient,
 }: SquircleBorderProps) {
   if (!def) return null;

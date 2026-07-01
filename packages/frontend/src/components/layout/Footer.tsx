@@ -31,7 +31,7 @@ const FooterElement = styled.footer`
   height: 436px;
   border-radius: 20px;
   overflow: hidden;
-  background: linear-gradient(to bottom, black, #10121C);
+  background: linear-gradient(to bottom, var(--color-canvas-inset), var(--color-canvas-default));
 
   @media (max-width: 560px) {
     height: 350px;
@@ -112,7 +112,7 @@ const LogoSvg = styled(Image)`
 const Divider = styled.div`
   width: 74px;
   height: 2px;
-  background: #0073FF;
+  background: var(--color-primary);
 
   @media (max-width: 560px) {
     width: 56px;
@@ -130,8 +130,7 @@ const TextContainer = styled.div`
 `;
 
 const CopyrightText = styled.p`
-  color: #0073FF;
-  font-size: 18px;
+  color: var(--color-primary);
   font-weight: 500;
   line-height: 1.25;
   font-family: sans-serif;
@@ -142,7 +141,7 @@ const CopyrightText = styled.p`
 `;
 
 const GitHubLink = styled.a`
-  color: #3D526C;
+  color: var(--color-fg-muted);
   font-size: 18px;
   font-weight: 500;
   line-height: 1.25;
@@ -150,7 +149,7 @@ const GitHubLink = styled.a`
   transition: color 0.2s ease-in-out;
 
   &:hover {
-    color: #0073FF;
+    color: var(--color-primary);
   }
 
   @media (max-width: 560px) {

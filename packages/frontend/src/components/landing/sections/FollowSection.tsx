@@ -68,8 +68,8 @@ const CardOuter = styled.div`
   align-items: center;
   width: 100%;
   max-width: 1200px;
-  border-left: 1px solid #0073ff;
-  border-right: 1px solid #0073ff;
+  border-left: 1px solid var(--color-primary);
+  border-right: 1px solid var(--color-primary);
 `;
 
 const TopBar = styled.div`

@@ -1,11 +1,9 @@
 "use client";
 
 import styled from "styled-components";
-import type { LeaderboardUser } from "@/lib/leaderboard/getLeaderboard";
 import {
   HeroSection,
   QuickstartSection,
-  WorldwideSection,
   DescriptionSection,
   FollowSection,
   FooterSection,
@@ -13,24 +11,16 @@ import {
 
 interface LandingPageProps {
   stargazersCount?: number;
-  topUsersByCost?: LeaderboardUser[];
-  topUsersByTokens?: LeaderboardUser[];
 }
 
 export function LandingPage({
   stargazersCount = 0,
-  topUsersByCost = [],
-  topUsersByTokens = [],
 }: LandingPageProps) {
   return (
     <PageWrapper>
       <PageInner>
         <HeroSection stargazersCount={stargazersCount} />
         <QuickstartSection />
-        <WorldwideSection
-          topUsersByCost={topUsersByCost}
-          topUsersByTokens={topUsersByTokens}
-        />
         <DescriptionSection />
         <FollowSection />
         <FooterSection />

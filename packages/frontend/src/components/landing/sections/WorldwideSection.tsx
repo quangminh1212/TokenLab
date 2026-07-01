@@ -98,7 +98,7 @@ export function WorldwideSection({
           clipPath: worldwideClipPath || undefined,
         }}
       >
-        <SquircleBorder def={worldwideBorderDef} color="#0073FF" gradient={gradientTransitionY > 0 ? { colors: ["#0073FF", "#10233E"], transitionY: gradientTransitionY } : undefined} />
+        <SquircleBorder def={worldwideBorderDef} color="#00A19A" gradient={gradientTransitionY > 0 ? { colors: ["#00A19A", "#475569"], transitionY: gradientTransitionY } : undefined} />
         <GlobeImageWrapper>
           <GlobeBackground />
           <GlobeFadeTop />
