@@ -36,14 +36,14 @@ export function HeroSection({ stargazersCount }: HeroSectionProps) {
 
         <HeroActions>
           <InstallBox>
-            <InstallText>bunx tokscale@latest</InstallText>
+            <InstallText>bunx xlab-token@latest</InstallText>
             <CopyButton onClick={handleCopy}>
               {copied ? "Copied!" : "Copy"}
             </CopyButton>
           </InstallBox>
 
           <StarButton
-            href="https://github.com/junhoyeo/tokscale"
+            href="https://github.com/quangminh1212/XLab_Token"
             target="_blank"
             rel="noopener noreferrer"
           >

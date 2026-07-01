@@ -20,9 +20,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tokscale - AI Token Usage Tracker & Leaderboard",
+  title: "XLab Token - AI Token Usage Tracker & Leaderboard",
   description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen. The Kardashev Scale for AI Devs.",
-  metadataBase: new URL("https://tokscale.ai"),
+  metadataBase: new URL("https://xlab-token.ai"),
   icons: {
     icon: [
       { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
@@ -32,25 +32,25 @@ export const metadata: Metadata = {
   },
   manifest: "/site.webmanifest",
   openGraph: {
-    title: "Tokscale - AI Token Usage Tracker & Leaderboard",
+    title: "XLab Token - AI Token Usage Tracker & Leaderboard",
     description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen. The Kardashev Scale for AI Devs.",
     type: "website",
-    url: "https://tokscale.ai",
-    siteName: "Tokscale",
+    url: "https://xlab-token.ai",
+    siteName: "XLab Token",
     images: [
       {
-        url: "https://tokscale.ai/og-image.png",
+        url: "https://xlab-token.ai/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Tokscale - AI Token Usage Tracker",
+        alt: "XLab Token - AI Token Usage Tracker",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Tokscale - AI Token Usage Tracker & Leaderboard",
+    title: "XLab Token - AI Token Usage Tracker & Leaderboard",
     description: "Track, visualize, and compete on AI coding assistant token usage across Claude Code, Cursor, OpenCode, Codex, Gemini, Kimi, and Qwen.",
-    images: ["https://tokscale.ai/og-image.png"],
+    images: ["https://xlab-token.ai/og-image.png"],
   },
 };
 

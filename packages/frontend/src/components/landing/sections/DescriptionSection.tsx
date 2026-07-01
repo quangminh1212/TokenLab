@@ -10,7 +10,7 @@ export function DescriptionSection() {
         token usage and costs across multiple AI coding agents.
       </DescriptionText>
       <GitHubBtn
-        href="https://github.com/junhoyeo/tokscale"
+        href="https://github.com/quangminh1212/XLab_Token"
         target="_blank"
         rel="noopener noreferrer"
       >

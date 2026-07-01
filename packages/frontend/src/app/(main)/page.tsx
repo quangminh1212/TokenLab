@@ -3,7 +3,7 @@ import { LandingPage } from "@/components/landing/LandingPage";
 import { getStargazersCount } from "@/lib/github";
 
 export default async function HomePage() {
-  const stargazersCount = await getStargazersCount("junhoyeo/tokscale");
+  const stargazersCount = await getStargazersCount("quangminh1212/XLab_Token");
 
   return (
     <>

@@ -212,19 +212,19 @@ export function Footer() {
           <LogoContainer>
             <LogoImage
               src="/assets/footer-logo-icon.png"
-              alt="Tokscale Icon"
+              alt="XLab Token Icon"
               fill
             />
           </LogoContainer>
 
           <LogoLink 
-            href="https://tokscale.ai" 
+            href="https://xlab-token.ai" 
             target="_blank" 
             rel="noopener noreferrer"
           >
             <LogoSvg
               src="/assets/footer-logo.svg"
-              alt="Tokscale"
+              alt="XLab Token"
               width={184}
               height={21}
             />
@@ -234,14 +234,14 @@ export function Footer() {
 
           <TextContainer>
             <CopyrightText>
-              © {currentYear} Tokscale. All rights reserved.
+              © {currentYear} XLab Token. All rights reserved.
             </CopyrightText>
             <GitHubLink 
-              href="https://github.com/junhoyeo/tokscale" 
+              href="https://github.com/quangminh1212/XLab_Token" 
               target="_blank" 
               rel="noopener noreferrer"
             >
-              github.com/junhoyeo/tokscale
+              github.com/quangminh1212/XLab_Token
             </GitHubLink>
           </TextContainer>
         </ContentContainer>

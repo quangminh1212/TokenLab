@@ -671,10 +671,10 @@ export function Navigation() {
   return (
     <NavContainer aria-label="Main navigation">
       <NavHeaderRow>
-        <NavLogoLink href="/" aria-label="Tokscale home">
+        <NavLogoLink href="/" aria-label="XLab Token home">
           <NavLogoImage
             src="/assets/hero-logo.svg"
-            alt="Tokscale"
+            alt="XLab Token"
             width={100}
             height={21}
             priority
@@ -700,7 +700,7 @@ export function Navigation() {
           </NavItemLink>
           <NavItemBase
             as="a"
-            href="https://github.com/junhoyeo/tokscale"
+            href="https://github.com/quangminh1212/XLab_Token"
             target="_blank"
             rel="noopener noreferrer"
             $isActive={false}
@@ -743,7 +743,7 @@ export function Navigation() {
             Profile
           </DropdownNavLink>
           <DropdownNavLinkExternal
-            href="https://github.com/junhoyeo/tokscale"
+            href="https://github.com/quangminh1212/XLab_Token"
             target="_blank"
             rel="noopener noreferrer"
             $isActive={false}
