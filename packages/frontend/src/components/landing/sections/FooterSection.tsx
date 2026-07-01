@@ -6,7 +6,7 @@ export function FooterSection() {
   return (
     <LandingFooter>
       <FooterInner>
-        <FooterCopyright>© 2026 STROKE</FooterCopyright>
+        <FooterCopyright>© 2026 XLab Token</FooterCopyright>
       </FooterInner>
     </LandingFooter>
   );
@@ -40,6 +40,5 @@ const FooterCopyright = styled.p`
   font-size: 16px;
   line-height: 1.5em;
   letter-spacing: -0.0195em;
-  text-transform: uppercase;
   color: var(--color-fg-muted);
 `;

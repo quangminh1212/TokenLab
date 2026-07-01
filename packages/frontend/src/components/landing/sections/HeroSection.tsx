@@ -15,7 +15,7 @@ export function HeroSection({ stargazersCount }: HeroSectionProps) {
       : "Star on GitHub";
 
   const handleCopy = () => {
-    navigator.clipboard.writeText("bunx tokscale@latest");
+    navigator.clipboard.writeText("bunx xlab-token@latest");
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
