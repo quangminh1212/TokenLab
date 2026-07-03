@@ -20,16 +20,7 @@ interface LeaderboardUser {
   lastSubmission: string;
 }
 
-interface LeaderboardData {
-  users: LeaderboardUser[];
-  pagination: {
-    page: number;
-    limit: number;
-    totalUsers: number;
-    totalPages: number;
-    hasNext: boolean;
-    hasPrev: boolean;
-  };
+interface StatsData {
   stats: {
     totalTokens: number;
     totalCost: number;
@@ -37,12 +28,11 @@ interface LeaderboardData {
     totalSubmissions: number | null;
     uniqueUsers: number;
   };
-  period: string;
-  sortBy: string;
+  users: LeaderboardUser[];
 }
 
 interface DashboardClientProps {
-  leaderboard: LeaderboardData;
+  data: StatsData;
 }
 
 const PageContainer = styled.div`
@@ -308,8 +298,8 @@ const BAR_COLORS = [
   "#8B5CF6", "#3B82F6",
 ];
 
-export default function DashboardClient({ leaderboard }: DashboardClientProps) {
-  const { users, stats } = leaderboard;
+export default function DashboardClient({ data }: DashboardClientProps) {
+  const { users, stats } = data;
 
   const topUsers = useMemo(() => users.slice(0, 10), [users]);
   const maxTokens = useMemo(() => Math.max(...topUsers.map(u => u.totalTokens), 1), [topUsers]);

@@ -1,4 +1,4 @@
-const DEFAULT_AUTH_RETURN_TO = "/leaderboard";
+const DEFAULT_AUTH_RETURN_TO = "/dashboard";
 const RETURN_TO_BASE_URL = "https://xlab-token.invalid";
 
 function hasUnsafeRelativeStart(value: string): boolean {

@@ -3,22 +3,12 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { ColorPaletteName } from "./themes";
 import { DEFAULT_PALETTE } from "./themes";
-import {
-  type LeaderboardSortBy,
-  SORT_BY_COOKIE_NAME,
-  isValidSortBy,
-} from "./leaderboard/constants";
-
-export type { LeaderboardSortBy };
-
 export interface Settings {
   paletteName: ColorPaletteName;
-  leaderboardSortBy: LeaderboardSortBy;
 }
 
 const DEFAULT_SETTINGS: Settings = {
   paletteName: DEFAULT_PALETTE,
-  leaderboardSortBy: "tokens",
 };
 
 const STORAGE_KEY = "xlab-token-settings";
@@ -26,11 +16,6 @@ const SETTINGS_EVENT = "xlab-token-settings-changed";
 
 let cachedRawSettings: string | null = null;
 let cachedSettings: Settings = DEFAULT_SETTINGS;
-
-function setSortByCookie(sortBy: LeaderboardSortBy): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${SORT_BY_COOKIE_NAME}=${sortBy}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
-}
 
 function getStoredSettings(): Settings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -51,9 +36,6 @@ function getStoredSettings(): Settings {
     cachedRawSettings = stored;
     cachedSettings = {
       paletteName: parsed.paletteName || DEFAULT_SETTINGS.paletteName,
-      leaderboardSortBy: isValidSortBy(parsed.leaderboardSortBy)
-        ? parsed.leaderboardSortBy
-        : DEFAULT_SETTINGS.leaderboardSortBy,
     };
     return cachedSettings;
   } catch {
@@ -122,23 +104,15 @@ export function useSettings() {
 
   useEffect(() => {
     applyDarkModeToDocument();
-    setSortByCookie(settings.leaderboardSortBy);
-  }, [settings.leaderboardSortBy]);
+  }, []);
 
   const setPalette = useCallback((paletteName: ColorPaletteName) => {
     saveSettings({ ...getStoredSettings(), paletteName });
   }, []);
 
-  const setLeaderboardSort = useCallback((sortBy: LeaderboardSortBy) => {
-    setSortByCookie(sortBy);
-    saveSettings({ ...getStoredSettings(), leaderboardSortBy: sortBy });
-  }, []);
-
   return {
     paletteName: settings.paletteName,
     setPalette,
-    leaderboardSortBy: settings.leaderboardSortBy,
-    setLeaderboardSort,
     mounted,
   };
 }

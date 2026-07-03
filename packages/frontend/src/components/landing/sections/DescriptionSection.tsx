@@ -6,7 +6,7 @@ const FEATURES = [
   { title: "Multi-Tool Support", desc: "Tracks 30+ AI coding assistants including Claude Code, Cursor, Windsurf, Codex, Gemini, and more." },
   { title: "Cost Analytics", desc: "See exactly how much you're spending on AI APIs with per-model cost breakdowns." },
   { title: "Token Visualization", desc: "Interactive 2D and 3D graphs show your token usage patterns over time." },
-  { title: "Global Leaderboard", desc: "Compete with developers worldwide. See where you rank on the Kardashev Scale." },
+  { title: "Usage Dashboard", desc: "Track your token usage and cost over time. See exactly where your AI budget goes." },
 ];
 
 export function DescriptionSection() {

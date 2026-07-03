@@ -32,8 +32,8 @@ export function QuickstartSection() {
           <CardIcon>
             <TrophyIcon />
           </CardIcon>
-          <CardTitle>Submit to leaderboard</CardTitle>
-          <CardDesc>Push your usage data to the global leaderboard and compete with other AI developers worldwide.</CardDesc>
+          <CardTitle>Submit your usage</CardTitle>
+          <CardDesc>Push your token usage data to the dashboard and track your AI consumption over time.</CardDesc>
           <CommandBox>
             <CommandPrompt>$</CommandPrompt>
             <CommandText>bunx xlab-token@latest submit</CommandText>

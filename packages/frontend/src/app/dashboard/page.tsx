@@ -9,8 +9,8 @@ function getBaseUrl(): string {
     || 'http://127.0.0.1:3000';
 }
 
-async function getLeaderboardData() {
-  const res = await fetch(`${getBaseUrl()}/api/leaderboard?limit=10&sortBy=tokens`, {
+async function getStatsData() {
+  const res = await fetch(`${getBaseUrl()}/api/stats`, {
     next: { revalidate: 60 },
   });
   if (!res.ok) return null;
@@ -18,11 +18,11 @@ async function getLeaderboardData() {
 }
 
 export default async function DashboardPage() {
-  const leaderboardData = await getLeaderboardData();
+  const statsData = await getStatsData();
 
-  if (!leaderboardData) {
-    redirect("/leaderboard");
+  if (!statsData) {
+    redirect("/dashboard");
   }
 
-  return <DashboardClient leaderboard={leaderboardData} />;
+  return <DashboardClient data={statsData} />;
 }

@@ -21,7 +21,7 @@ export function FooterSection() {
         <FooterLinks>
           <FooterColumn>
             <ColumnTitle>Product</ColumnTitle>
-            <FooterLink href="/leaderboard">Leaderboard</FooterLink>
+            <FooterLink href="/dashboard">Dashboard</FooterLink>
             <FooterLink href="/profile">Profile</FooterLink>
             <FooterLink href="/settings">Settings</FooterLink>
           </FooterColumn>

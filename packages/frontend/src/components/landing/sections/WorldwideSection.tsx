@@ -6,11 +6,22 @@ import styled from "styled-components";
 import { useSquircleClip } from "../hooks";
 import { SquircleBorder } from "../components";
 
-import type { LeaderboardUser } from "@/lib/leaderboard/getLeaderboard";
+interface TopUser {
+  rank: number;
+  userId: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  totalTokens: number;
+  totalCost: number;
+  totalActiveTimeMs: number | null;
+  submissionCount: number | null;
+  lastSubmission: string;
+}
 
 interface WorldwideSectionProps {
-  topUsersByCost?: LeaderboardUser[];
-  topUsersByTokens?: LeaderboardUser[];
+  topUsersByCost?: TopUser[];
+  topUsersByTokens?: TopUser[];
 }
 
 function formatCompactNumber(n: number): string {
@@ -126,9 +137,9 @@ export function WorldwideSection({
                 <br />
                 Tokens Worldwide
               </GlobeLeftTitle>
-              <LeaderboardBtn href="/leaderboard">
-                <LeaderboardBtnText>Leaderboard</LeaderboardBtnText>
-              </LeaderboardBtn>
+              <DashboardBtn href="/dashboard">
+                <DashboardBtnText>Dashboard</DashboardBtnText>
+              </DashboardBtn>
             </GlobeLeftCol>
             <GlobeRightCol>
               <LeaderboardWidget>
@@ -329,7 +340,7 @@ const GlobeLeftTitle = styled.h2`
   }
 `;
 
-const LeaderboardBtn = styled(Link)`
+const DashboardBtn = styled(Link)`
   display: inline-flex;
   justify-content: center;
   align-items: center;
@@ -346,7 +357,7 @@ const LeaderboardBtn = styled(Link)`
   }
 `;
 
-const LeaderboardBtnText = styled.span`
+const DashboardBtnText = styled.span`
   font-family: var(--font-figtree), "Figtree", sans-serif;
   font-weight: 700;
   font-size: 23px;
