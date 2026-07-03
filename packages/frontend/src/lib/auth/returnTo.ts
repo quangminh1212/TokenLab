@@ -1,5 +1,5 @@
 const DEFAULT_AUTH_RETURN_TO = "/leaderboard";
-const RETURN_TO_BASE_URL = "https://tokscale.invalid";
+const RETURN_TO_BASE_URL = "https://xlab-token.invalid";
 
 function hasUnsafeRelativeStart(value: string): boolean {
   return !value.startsWith("/") || value.startsWith("//");

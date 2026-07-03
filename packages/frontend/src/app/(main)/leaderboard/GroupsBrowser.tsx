@@ -252,7 +252,7 @@ function GroupCard({ group }: { group: GroupCardData }) {
           </Meta>
         </div>
       </CardTop>
-      <BodyText>{group.description || "A scoped Tokscale leaderboard."}</BodyText>
+      <BodyText>{group.description || "A scoped XLab Token leaderboard."}</BodyText>
     </Card>
   );
 }
@@ -401,7 +401,7 @@ export default function GroupsBrowser({
       <Header>
         <Description>
           Create private or public leaderboards for teams, friends, and workspaces without changing
-          the global Tokscale rankings.
+          the global XLab Token rankings.
         </Description>
         {currentUser ? (
           <PrimaryLink href="/groups/new">New group</PrimaryLink>

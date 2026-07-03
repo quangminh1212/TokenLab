@@ -64,7 +64,7 @@ export const SOURCE_DISPLAY_NAMES: Record<ClientType, string> = {
 };
 
 // Client logos from GitHub CDN (public repo)
-const GITHUB_CDN_BASE = "https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets";
+const GITHUB_CDN_BASE = "https://raw.githubusercontent.com/quangminh1212/XLab_Token/main/.github/assets";
 export const SOURCE_LOGOS: Record<ClientType, string> = {
   opencode: `${GITHUB_CDN_BASE}/client-opencode.png`,
   claude: `${GITHUB_CDN_BASE}/client-claude.jpg`,

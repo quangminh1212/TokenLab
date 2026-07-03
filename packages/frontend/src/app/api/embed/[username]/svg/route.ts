@@ -172,8 +172,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     });
 
     const svg = view === "3d"
-      ? renderIsometric3DErrorSvg("Tokscale stats are temporarily unavailable", { theme })
-      : renderProfileEmbedErrorSvg("Tokscale stats are temporarily unavailable", { theme, color, compact });
+      ? renderIsometric3DErrorSvg("XLab Token stats are temporarily unavailable", { theme })
+      : renderProfileEmbedErrorSvg("XLab Token stats are temporarily unavailable", { theme, color, compact });
 
     return createSvgResponse(svg, {
       status: 500,

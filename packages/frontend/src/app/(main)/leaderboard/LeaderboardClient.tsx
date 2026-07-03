@@ -1445,7 +1445,7 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
                 <>
                   <EmptyMessage>No submissions yet. Be the first!</EmptyMessage>
                   <EmptyHint>
-                    Run <CodeSnippet>tokscale login && tokscale submit</CodeSnippet>
+                    Run <CodeSnippet>xlab-token login && xlab-token submit</CodeSnippet>
                   </EmptyHint>
                 </>
               )}
@@ -1545,47 +1545,47 @@ export default function LeaderboardClient({ initialData, currentUser, initialSor
 
       <CTASection>
         <CTATitle>Join the Leaderboard</CTATitle>
-        <CTADescription>Install Tokscale CLI and submit your usage data:</CTADescription>
+        <CTADescription>Install XLab Token CLI and submit your usage data:</CTADescription>
         <CodeBlock>
-          {mounted && typeof window !== "undefined" && window.location.hostname !== "tokscale.ai" && (
+          {mounted && typeof window !== "undefined" && window.location.hostname !== "xlab-token.ai" && (
             <CodeLine>
               <CommandPrompt>$</CommandPrompt>
               <CommandPrefix>export</CommandPrefix>
-              <CommandName>TOKSCALE_API_URL</CommandName>
+              <CommandName>XLAB_TOKEN_API_URL</CommandName>
               <CommandArg>={`${window.location.origin}`}</CommandArg>
               <CopyIconButton
-                onClick={() => handleCopyCommand(`export TOKSCALE_API_URL=${window.location.origin}`)}
-                className={copiedCommand === `export TOKSCALE_API_URL=${window.location.origin}` ? "copied" : ""}
+                onClick={() => handleCopyCommand(`export XLAB_TOKEN_API_URL=${window.location.origin}`)}
+                className={copiedCommand === `export XLAB_TOKEN_API_URL=${window.location.origin}` ? "copied" : ""}
                 aria-label="Copy command"
               >
-                {copiedCommand === `export TOKSCALE_API_URL=${window.location.origin}` ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+                {copiedCommand === `export XLAB_TOKEN_API_URL=${window.location.origin}` ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
               </CopyIconButton>
             </CodeLine>
           )}
           <CodeLine>
             <CommandPrompt>$</CommandPrompt>
             <CommandPrefix>bunx</CommandPrefix>
-            <CommandName>tokscale</CommandName>
+            <CommandName>xlab-token</CommandName>
             <CommandArg>login</CommandArg>
             <CopyIconButton
-              onClick={() => handleCopyCommand("bunx tokscale login")}
-              className={copiedCommand === "bunx tokscale login" ? "copied" : ""}
+              onClick={() => handleCopyCommand("bunx xlab-token@latest login")}
+              className={copiedCommand === "bunx xlab-token@latest login" ? "copied" : ""}
               aria-label="Copy command"
             >
-              {copiedCommand === "bunx tokscale login" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+              {copiedCommand === "bunx xlab-token@latest login" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
             </CopyIconButton>
           </CodeLine>
           <CodeLine>
             <CommandPrompt>$</CommandPrompt>
             <CommandPrefix>bunx</CommandPrefix>
-            <CommandName>tokscale</CommandName>
+            <CommandName>xlab-token</CommandName>
             <CommandArg>submit</CommandArg>
             <CopyIconButton
-              onClick={() => handleCopyCommand("bunx tokscale submit")}
-              className={copiedCommand === "bunx tokscale submit" ? "copied" : ""}
+              onClick={() => handleCopyCommand("bunx xlab-token@latest submit")}
+              className={copiedCommand === "bunx xlab-token@latest submit" ? "copied" : ""}
               aria-label="Copy command"
             >
-              {copiedCommand === "bunx tokscale submit" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+              {copiedCommand === "bunx xlab-token@latest submit" ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
             </CopyIconButton>
           </CodeLine>
         </CodeBlock>

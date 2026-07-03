@@ -33,11 +33,7 @@ export function BlackholeHero() {
 
       <ContentWrapper>
         <LogoWrapper>
-          <LogoImage
-            src="/assets/hero-logo.svg"
-            alt="Tokscale Logo"
-            fill
-          />
+          XLab Token
         </LogoWrapper>
 
         <HeroTitle>
@@ -59,7 +55,7 @@ export function BlackholeHero() {
                 bunx&nbsp;
               </CommandPrefix>
               <CommandName>
-                tokscale
+                xlab-token@latest
               </CommandName>
             </CommandTextWrapper>
             <GradientSeparator />
@@ -79,11 +75,11 @@ export function BlackholeHero() {
             </StarText>
           </StarContainer>
           <GitHubLink
-            href="https://github.com/junhoyeo/tokscale"
+            href="https://github.com/quangminh1212/XLab_Token"
             target="_blank"
             rel="noopener noreferrer"
           >
-            junhoyeo/tokscale
+            quangminh1212/XLab_Token
           </GitHubLink>
         </FooterContainer>
       </ContentWrapper>
@@ -158,24 +154,20 @@ const ContentWrapper = styled.div`
 `;
 
 const LogoWrapper = styled.div`
-  position: relative;
-  width: 173px;
-  height: 36px;
+  font-family: var(--font-figtree), "Figtree", sans-serif;
+  font-weight: 800;
+  font-size: 28px;
+  color: white;
+  letter-spacing: -0.02em;
   flex-shrink: 0;
 
   @media (max-width: 560px) {
-    width: 140px;
-    height: 30px;
+    font-size: 22px;
   }
 
   @media (max-width: 400px) {
-    width: 120px;
-    height: 26px;
+    font-size: 18px;
   }
-`;
-
-const LogoImage = styled(Image)`
-  object-fit: contain;
 `;
 
 const HeroTitle = styled.h1`

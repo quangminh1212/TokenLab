@@ -157,7 +157,7 @@ const EARLY_ADOPTERS = ["code-yeongyu", "gtg7784", "qodot"];
             <BannerText>
               <BannerBold>Update available:</BannerBold>{" "}
               If you&apos;re <BannerBold>@{data.user.username}</BannerBold>, please re-submit your data with{" "}
-              <BannerCode>bunx tokscale submit</BannerCode>{" "}
+              <BannerCode>bunx xlab-token@latest submit</BannerCode>{" "}
               to see detailed model breakdowns per day.
             </BannerText>
           </BannerContent>

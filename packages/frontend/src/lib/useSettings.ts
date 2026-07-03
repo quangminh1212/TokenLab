@@ -21,8 +21,8 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardSortBy: "tokens",
 };
 
-const STORAGE_KEY = "tokscale-settings";
-const SETTINGS_EVENT = "tokscale-settings-changed";
+const STORAGE_KEY = "xlab-token-settings";
+const SETTINGS_EVENT = "xlab-token-settings-changed";
 
 let cachedRawSettings: string | null = null;
 let cachedSettings: Settings = DEFAULT_SETTINGS;

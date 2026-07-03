@@ -24,7 +24,7 @@ interface ProfileEmbedDialogProps {
   onClose: () => void;
 }
 
-const TOKSCALE_URL = "https://tokscale.ai";
+const XLAB_TOKEN_URL = "https://xlab-token.ai";
 
 export function ProfileEmbedDialog({
   open,
@@ -85,14 +85,14 @@ export function ProfileEmbedDialog({
     params.set("cost", costFormat);
 
     const query = params.toString();
-    const baseEmbedUrl = `${TOKSCALE_URL}/api/embed/${username}/svg`;
+    const baseEmbedUrl = `${XLAB_TOKEN_URL}/api/embed/${username}/svg`;
     const resolvedEmbedUrl = query ? `${baseEmbedUrl}?${query}` : baseEmbedUrl;
-    const resolvedProfileUrl = `${TOKSCALE_URL}/u/${username}`;
+    const resolvedProfileUrl = `${XLAB_TOKEN_URL}/u/${username}`;
 
     return {
       embedUrl: resolvedEmbedUrl,
-      markdownSnippet: `[![Tokscale Stats](${resolvedEmbedUrl})](${resolvedProfileUrl})`,
-      htmlSnippet: `<a href="${resolvedProfileUrl}"><img alt="Tokscale Stats for @${username}" src="${resolvedEmbedUrl}" /></a>`,
+      markdownSnippet: `[![XLab Token Stats](${resolvedEmbedUrl})](${resolvedProfileUrl})`,
+      htmlSnippet: `<a href="${resolvedProfileUrl}"><img alt="XLab Token Stats for @${username}" src="${resolvedEmbedUrl}" /></a>`,
       profileUrl: resolvedProfileUrl,
     };
   }, [color, compact, costFormat, graph, graphCapable, rankFormat, sortBy, template, theme, tokensFormat, username, view]);
@@ -123,7 +123,7 @@ export function ProfileEmbedDialog({
           <HeaderCopy>
             <Eyebrow>GitHub README embed</Eyebrow>
             <DialogTitle id="profile-embed-dialog-title">
-              Share @{username} with a polished Tokscale card
+              Share @{username} with a polished XLab Token card
             </DialogTitle>
             <DialogDescription>
               Preview the live embed, tweak the presentation, and copy a ready-to-paste snippet for your README.
@@ -142,14 +142,14 @@ export function ProfileEmbedDialog({
               <PreviewFrame>
                 <PreviewImage
                   src={embedUrl}
-                  alt={`Tokscale README embed preview for ${displayName || username}`}
+                  alt={`XLab Token README embed preview for ${displayName || username}`}
                 />
               </PreviewFrame>
             </PreviewSurface>
 
             <HighlightsList>
               <HighlightItem>GitHub-ready markdown with a linked image card</HighlightItem>
-              <HighlightItem>Matches the new Tokscale 2.0 visual language</HighlightItem>
+              <HighlightItem>Matches the new XLab Token 2.0 visual language</HighlightItem>
               <HighlightItem>Automatically refreshes as profile stats update</HighlightItem>
             </HighlightsList>
           </PreviewPanel>

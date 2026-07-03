@@ -584,7 +584,7 @@ export default function SettingsClient() {
             <CodeText
               style={{ backgroundColor: "var(--color-bg-subtle)" }}
             >
-              tokscale login
+              xlab-token login
             </CodeText>{" "}
             from the CLI.
           </Description>
@@ -640,7 +640,7 @@ export default function SettingsClient() {
                 <CodeText
                   style={{ backgroundColor: "var(--color-bg-subtle)" }}
                 >
-                  tokscale login
+                  xlab-token login
                 </CodeText>{" "}
                 from the CLI.
               </EmptyText>
@@ -700,7 +700,7 @@ export default function SettingsClient() {
                 <CodeText
                   style={{ backgroundColor: "var(--color-bg-subtle)" }}
                 >
-                  bunx tokscale submit
+                  bunx xlab-token@latest submit
                 </CodeText>{" "}
                 to register this machine.
               </EmptyText>

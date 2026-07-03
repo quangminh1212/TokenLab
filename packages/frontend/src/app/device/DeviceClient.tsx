@@ -302,7 +302,7 @@ export default function DeviceClient() {
               </Icon>
             </IconBox>
             <Title>Authorize CLI</Title>
-            <Subtitle>Connect your terminal to Tokscale</Subtitle>
+            <Subtitle>Connect your terminal to XLab Token</Subtitle>
           </Header>
 
           {!user ? (
