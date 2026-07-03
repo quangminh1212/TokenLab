@@ -34,3 +34,7 @@ self-host/
 .next/
 .vercel
 .env*.local
+
+# Screenshots
+*.png
+!packages/frontend/public/**/*.png
