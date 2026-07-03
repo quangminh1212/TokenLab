@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth/session";
 import DashboardClient from "./DashboardClient";
 
 export const revalidate = 60;
@@ -10,8 +9,8 @@ function getBaseUrl(): string {
     || 'http://127.0.0.1:3000';
 }
 
-async function getDashboardData(username: string) {
-  const res = await fetch(`${getBaseUrl()}/api/users/${username}`, {
+async function getLeaderboardData() {
+  const res = await fetch(`${getBaseUrl()}/api/leaderboard?limit=10&sortBy=tokens`, {
     next: { revalidate: 60 },
   });
   if (!res.ok) return null;
@@ -19,17 +18,11 @@ async function getDashboardData(username: string) {
 }
 
 export default async function DashboardPage() {
-  const session = await getSession();
+  const leaderboardData = await getLeaderboardData();
 
-  if (!session) {
-    redirect("/api/auth/github?returnTo=/dashboard");
+  if (!leaderboardData) {
+    redirect("/leaderboard");
   }
 
-  const data = await getDashboardData(session.username);
-
-  if (!data) {
-    redirect(`/u/${session.username}`);
-  }
-
-  return <DashboardClient data={data} />;
+  return <DashboardClient leaderboard={leaderboardData} />;
 }

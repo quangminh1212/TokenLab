@@ -392,10 +392,6 @@ export default function GroupsBrowser({
     loadGroups(activeTab, true);
   };
 
-  // Send unauthenticated users back to /leaderboard?view=groups so they land
-  // on the groups view after sign-in (was /groups before the consolidation).
-  const signInHref = "/api/auth/github?returnTo=/leaderboard?view=groups";
-
   return (
     <>
       <Header>
@@ -403,11 +399,7 @@ export default function GroupsBrowser({
           Create private or public leaderboards for teams, friends, and workspaces without changing
           the global XLab Token rankings.
         </Description>
-        {currentUser ? (
-          <PrimaryLink href="/groups/new">New group</PrimaryLink>
-        ) : (
-          <PrimaryLink href={signInHref}>Sign in</PrimaryLink>
-        )}
+        <PrimaryLink href="/groups/new">New group</PrimaryLink>
       </Header>
 
       <Tabs aria-label="Group filters">

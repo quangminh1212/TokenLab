@@ -1,18 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import styled, { css, keyframes } from "styled-components";
-import { PersonIcon, GearIcon, SignOutIcon } from "@/components/ui/Icons";
-
-interface User {
-  id: string;
-  username: string;
-  displayName: string | null;
-  avatarUrl: string | null;
-}
 
 const MOBILE_BREAKPOINT = "520px";
 
@@ -587,84 +579,9 @@ const CloseIcon = () => (
   </svg>
 );
 
-function UserMenu({ user, onSignOut }: { user: User; onSignOut: () => void }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const handleClose = useCallback(() => setIsOpen(false), []);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        handleClose();
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isOpen, handleClose]);
-
-  return (
-    <MenuWrapper ref={menuRef}>
-      <ProfileButton
-        aria-label={`User menu for ${user.username}`}
-        aria-expanded={isOpen}
-        aria-haspopup="true"
-        onClick={() => setIsOpen((v) => !v)}
-      >
-        <AvatarImg
-          src={user.avatarUrl || `https://github.com/${user.username}.png`}
-          alt={user.username}
-          width={32}
-          height={32}
-          style={{ width: "100%", height: "100%" }}
-        />
-      </ProfileButton>
-      {isOpen && (
-        <MenuOverlay>
-          <MenuUserInfo>
-            <DisplayName>{user.displayName || user.username}</DisplayName>
-            <Username>@{user.username}</Username>
-          </MenuUserInfo>
-          <div style={{ padding: "4px 0" }}>
-            <MenuItem href={`/u/${user.username}`} onClick={handleClose}>
-              <MenuIconSlot><PersonIcon /></MenuIconSlot>
-              Your Profile
-            </MenuItem>
-            <MenuItem href="/settings" onClick={handleClose}>
-              <MenuIconSlot><GearIcon /></MenuIconSlot>
-              Settings
-            </MenuItem>
-          </div>
-          <MenuDivider />
-          <div style={{ padding: "4px 0" }}>
-            <MenuItemButton $danger onClick={() => { handleClose(); onSignOut(); }}>
-              <MenuIconSlot><SignOutIcon /></MenuIconSlot>
-              Sign Out
-            </MenuItemButton>
-          </div>
-        </MenuOverlay>
-      )}
-    </MenuWrapper>
-  );
-}
-
 export function Navigation() {
   const pathname = usePathname();
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/auth/session")
-      .then((res) => res.json())
-      .then((data) => {
-        setUser(data.user || null);
-        setIsLoading(false);
-      })
-      .catch(() => {
-        setIsLoading(false);
-      });
-  }, []);
 
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
@@ -708,26 +625,6 @@ export function Navigation() {
             GitHub
           </NavItemBase>
         </DesktopNavItems>
-
-        <DesktopAuthSection>
-          {isLoading ? (
-            <LoadingSkeleton />
-          ) : user ? (
-            <UserMenu user={user} onSignOut={async () => {
-              await fetch("/api/auth/logout", { method: "POST" });
-              setUser(null);
-              window.location.href = "/";
-            }} />
-          ) : (
-            <SignInButton href="/api/auth/github" aria-label="Sign in with GitHub">
-              <SignInIcon>
-                <GitHubIcon />
-              </SignInIcon>
-              <SignInTextFull>Sign in with GitHub</SignInTextFull>
-              <SignInTextCompact>Sign in</SignInTextCompact>
-            </SignInButton>
-          )}
-        </DesktopAuthSection>
       </NavHeaderRow>
 
 
@@ -751,52 +648,6 @@ export function Navigation() {
           >
             GitHub ↗
           </DropdownNavLinkExternal>
-
-          <DropdownDivider />
-
-          {isLoading ? null : user ? (
-            <>
-              <DropdownUserCard>
-                <AvatarImg
-                  src={user.avatarUrl || `https://github.com/${user.username}.png`}
-                  alt={user.username}
-                  width={32}
-                  height={32}
-                  style={{ width: "32px", height: "32px" }}
-                />
-                <DropdownUserDetails>
-                  <DropdownDisplayName>{user.displayName || user.username}</DropdownDisplayName>
-                  <DropdownUsername>@{user.username}</DropdownUsername>
-                </DropdownUserDetails>
-              </DropdownUserCard>
-              <DropdownUserAction href={`/u/${user.username}`} onClick={closeMobileMenu}>
-                <PersonIcon size={16} />
-                Your Profile
-              </DropdownUserAction>
-              <DropdownUserAction href="/settings" onClick={closeMobileMenu}>
-                <GearIcon size={16} />
-                Settings
-              </DropdownUserAction>
-              <DropdownSignOutButton
-                onClick={async () => {
-                  await fetch("/api/auth/logout", { method: "POST" });
-                  setUser(null);
-                  closeMobileMenu();
-                  window.location.href = "/";
-                }}
-              >
-                <SignOutIcon size={16} />
-                Sign Out
-              </DropdownSignOutButton>
-            </>
-          ) : (
-            <DropdownSignInButton href="/api/auth/github">
-              <SignInIcon>
-                <GitHubIcon />
-              </SignInIcon>
-              <DropdownSignInText>Sign in with GitHub</DropdownSignInText>
-            </DropdownSignInButton>
-          )}
         </MobileDropdown>
       </MobileDropdownWrapper>
     </NavContainer>

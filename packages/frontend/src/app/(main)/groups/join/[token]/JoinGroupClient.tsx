@@ -126,7 +126,7 @@ export default function JoinGroupClient({ token }: { token: string }) {
       const payload = await response.json();
 
       if (response.status === 401) {
-        window.location.href = `/api/auth/github?returnTo=/groups/join/${token}`;
+        setError("Authentication required to join this group.");
         return;
       }
 

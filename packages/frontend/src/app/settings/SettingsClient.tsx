@@ -366,27 +366,27 @@ export default function SettingsClient() {
         const sessionData = await sessionResponse.json();
         if (cancelled) return;
 
-        if (!sessionData.user) {
-          router.push("/api/auth/github?returnTo=/settings");
-          return;
+        if (sessionData.user) {
+          setUser(sessionData.user);
+          const [loadedTokens, loadedDevices] = await Promise.all([
+            fetchApiTokens().catch(() => []),
+            fetchDevices(sessionData.user.username).catch(
+              () => [] as SettingsDevice[]
+            ),
+          ]);
+
+          if (!cancelled) {
+            setTokens((current) => mergeApiTokenList(loadedTokens, current));
+            setDevices(loadedDevices);
+          }
         }
 
-        const [loadedTokens, loadedDevices] = await Promise.all([
-          fetchApiTokens().catch(() => []),
-          fetchDevices(sessionData.user.username).catch(
-            () => [] as SettingsDevice[]
-          ),
-        ]);
-
         if (!cancelled) {
-          setUser(sessionData.user);
-          setTokens((current) => mergeApiTokenList(loadedTokens, current));
-          setDevices(loadedDevices);
           setIsLoading(false);
         }
       } catch {
         if (!cancelled) {
-          router.push("/leaderboard");
+          setIsLoading(false);
         }
       }
     }

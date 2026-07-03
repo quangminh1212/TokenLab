@@ -2,43 +2,47 @@
 
 import { useMemo } from "react";
 import styled from "styled-components";
+import Link from "next/link";
 import { Navigation } from "@/components/layout/Navigation";
 import { Footer } from "@/components/layout/Footer";
 import { formatNumber, formatCurrency } from "@/lib/utils";
-import type { DailyContribution, ClientType } from "@/lib/types";
 
-interface DashboardData {
-  user: {
-    id: string;
-    username: string;
-    displayName: string | null;
-    avatarUrl: string | null;
-    createdAt: string;
-    rank: number | null;
+interface LeaderboardUser {
+  rank: number;
+  userId: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  totalTokens: number;
+  totalCost: number;
+  totalActiveTimeMs: number | null;
+  submissionCount: number | null;
+  lastSubmission: string;
+}
+
+interface LeaderboardData {
+  users: LeaderboardUser[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalUsers: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
   };
   stats: {
     totalTokens: number;
     totalCost: number;
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-    reasoningTokens: number;
-    submissionCount: number;
-    activeDays: number;
-    totalActiveTimeMs: number;
-    sessionCount: number;
+    totalActiveTimeMs: number | null;
+    totalSubmissions: number | null;
+    uniqueUsers: number;
   };
-  dateRange: { start: string | null; end: string | null };
-  updatedAt: string | null;
-  clients: string[];
-  models: string[];
-  modelUsage?: Array<{ model: string; tokens: number; cost: number; percentage: number }>;
-  contributions: DailyContribution[];
+  period: string;
+  sortBy: string;
 }
 
 interface DashboardClientProps {
-  data: DashboardData;
+  leaderboard: LeaderboardData;
 }
 
 const PageContainer = styled.div`
@@ -56,57 +60,17 @@ const MainContent = styled.main`
   width: 100%;
 `;
 
-const HeaderRow = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 32px;
-  flex-wrap: wrap;
-  gap: 16px;
-`;
-
-const HeaderLeft = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-`;
-
-const Avatar = styled.img`
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  object-fit: cover;
-`;
-
-const HeaderInfo = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-`;
-
-const HeaderName = styled.h1`
-  font-size: 24px;
-  font-weight: 700;
+const Title = styled.h1`
+  font-size: 28px;
+  font-weight: 800;
   color: var(--color-fg-default);
-  margin: 0;
+  margin: 0 0 8px 0;
 `;
 
-const HeaderSub = styled.p`
+const Subtitle = styled.p`
   font-size: 14px;
   color: var(--color-fg-muted);
-  margin: 0;
-`;
-
-const RankBadge = styled.div`
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: 9999px;
-  font-size: 14px;
-  font-weight: 600;
-  background-color: var(--color-badge-bg, rgba(0, 115, 255, 0.1));
-  color: var(--color-primary, #006edb);
+  margin: 0 0 32px 0;
 `;
 
 const HeroGrid = styled.div`
@@ -169,90 +133,139 @@ const Card = styled.div`
   margin-bottom: 24px;
 `;
 
-const BreakdownBar = styled.div`
-  height: 12px;
-  border-radius: 9999px;
-  overflow: hidden;
+const UserList = styled.div`
   display: flex;
-  margin-bottom: 20px;
-  background-color: var(--color-bg-subtle);
+  flex-direction: column;
+  gap: 0;
 `;
 
-const BreakdownSegment = styled.div<{ $width: number; $color: string }>`
-  width: ${props => props.$width}%;
-  background-color: ${props => props.$color};
-  transition: width 0.3s ease;
-`;
-
-const BreakdownLegend = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+const UserRow = styled(Link)`
+  display: flex;
+  align-items: center;
   gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--color-border-default);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s ease;
 
-  @media (min-width: 768px) {
-    grid-template-columns: repeat(4, 1fr);
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &:hover {
+    background-color: var(--color-bg-subtle);
+    margin: 0 -12px;
+    padding: 14px 12px;
+    border-radius: 8px;
+    border-bottom-color: transparent;
   }
 `;
 
-const LegendItem = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 10px;
+const RankText = styled.span`
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-fg-muted);
+  min-width: 36px;
+  text-align: center;
 `;
 
-const LegendDot = styled.div<{ $color: string }>`
-  width: 12px;
-  height: 12px;
-  border-radius: 9999px;
-  background-color: ${props => props.$color};
+const Avatar = styled.img`
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
   flex-shrink: 0;
 `;
 
-const LegendText = styled.div`
+const UserInfo = styled.div`
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1;
   min-width: 0;
 `;
 
-const LegendLabel = styled.span`
+const UserName = styled.span`
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-fg-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const UserHandle = styled.span`
   font-size: 12px;
   color: var(--color-fg-muted);
 `;
 
-const LegendValue = styled.span`
-  font-size: 16px;
+const UserStats = styled.div`
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-shrink: 0;
+`;
+
+const UserStat = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+`;
+
+const UserStatValue = styled.span`
+  font-size: 14px;
   font-weight: 700;
   color: var(--color-fg-default);
 `;
 
-const LegendPct = styled.span`
+const UserStatLabel = styled.span`
   font-size: 11px;
-  color: var(--color-fg-subtle);
+  color: var(--color-fg-muted);
 `;
 
-const ChartContainer = styled.div`
+const BarChartContainer = styled.div`
   display: flex;
   align-items: flex-end;
-  gap: 4px;
-  height: 160px;
+  gap: 6px;
+  height: 180px;
   overflow-x: auto;
   padding-bottom: 8px;
 `;
 
-const ChartBar = styled.div<{ $height: number; $color: string }>`
+const BarChartBar = styled.div<{ $height: number; $color: string }>`
   flex: 1;
-  min-width: 8px;
-  max-width: 40px;
+  min-width: 24px;
+  max-width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+`;
+
+const BarFill = styled.div<{ $height: number; $color: string }>`
+  width: 100%;
   height: ${props => props.$height}%;
-  border-radius: 4px 4px 0 0;
+  border-radius: 6px 6px 0 0;
   background-color: ${props => props.$color};
-  opacity: ${props => props.$height < 5 ? 0.3 : 1};
+  opacity: ${props => props.$height < 5 ? 0.4 : 1};
   transition: opacity 0.2s;
+  min-height: 4px;
 
   &:hover {
     opacity: 1;
   }
+`;
+
+const BarLabel = styled.span`
+  font-size: 11px;
+  color: var(--color-fg-muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 `;
 
 const ChartEmpty = styled.div`
@@ -262,48 +275,6 @@ const ChartEmpty = styled.div`
   height: 100%;
   color: var(--color-fg-muted);
   font-size: 14px;
-`;
-
-const ModelList = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`;
-
-const ModelRow = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`;
-
-const ModelName = styled.span`
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-fg-default);
-  min-width: 120px;
-`;
-
-const ModelBar = styled.div`
-  flex: 1;
-  height: 8px;
-  border-radius: 9999px;
-  background-color: var(--color-bg-subtle);
-  overflow: hidden;
-`;
-
-const ModelBarFill = styled.div<{ $pct: number; $color: string }>`
-  width: ${props => props.$pct}%;
-  height: 100%;
-  border-radius: 9999px;
-  background-color: ${props => props.$color};
-`;
-
-const ModelCost = styled.span`
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-fg-muted);
-  min-width: 80px;
-  text-align: right;
 `;
 
 const EmptyState = styled.div`
@@ -319,6 +290,11 @@ const EmptyTitle = styled.h3`
   margin: 0 0 8px 0;
 `;
 
+const EmptyDesc = styled.p`
+  font-size: 14px;
+  margin: 0;
+`;
+
 const EmptyCode = styled.code`
   background-color: var(--color-bg-subtle);
   padding: 2px 8px;
@@ -326,52 +302,17 @@ const EmptyCode = styled.code`
   font-size: 13px;
 `;
 
-const EmptyDesc = styled.p`
-  font-size: 14px;
-  margin: 0;
-`;
-
-const TwoCol = styled.div`
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 24px;
-
-  @media (min-width: 768px) {
-    grid-template-columns: 1fr 1fr;
-  }
-`;
-
-const MODEL_COLORS = [
+const BAR_COLORS = [
   "#006edb", "#894ceb", "#30a147", "#eb670f",
   "#D97706", "#DC2626", "#059669", "#6366F1",
-  "#8B5CF6", "#3B82F6", "#06B6D4", "#F59E0B",
-  "#A855F7", "#1A73E8", "#10B981", "#EC4899",
+  "#8B5CF6", "#3B82F6",
 ];
 
-export default function DashboardClient({ data }: DashboardClientProps) {
-  const { user, stats, contributions, modelUsage } = data;
+export default function DashboardClient({ leaderboard }: DashboardClientProps) {
+  const { users, stats } = leaderboard;
 
-  const tokenBreakdown = useMemo(() => {
-    const total = stats.totalTokens || 0;
-    return [
-      { label: "Input", value: stats.inputTokens, color: "#006edb", pct: total > 0 ? (stats.inputTokens / total) * 100 : 0 },
-      { label: "Output", value: stats.outputTokens, color: "#894ceb", pct: total > 0 ? (stats.outputTokens / total) * 100 : 0 },
-      { label: "Cache Read", value: stats.cacheReadTokens, color: "#30a147", pct: total > 0 ? (stats.cacheReadTokens / total) * 100 : 0 },
-      { label: "Cache Write", value: stats.cacheWriteTokens, color: "#eb670f", pct: total > 0 ? (stats.cacheWriteTokens / total) * 100 : 0 },
-    ];
-  }, [stats]);
-
-  const last30Days = useMemo(() => {
-    const now = new Date();
-    const thirtyAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    return contributions
-      .filter(c => new Date(c.date) >= thirtyAgo)
-      .sort((a, b) => a.date.localeCompare(b.date));
-  }, [contributions]);
-
-  const maxDayCost = useMemo(() => {
-    return Math.max(...last30Days.map(d => d.totals.cost), 0);
-  }, [last30Days]);
+  const topUsers = useMemo(() => users.slice(0, 10), [users]);
+  const maxTokens = useMemo(() => Math.max(...topUsers.map(u => u.totalTokens), 1), [topUsers]);
 
   const hasData = stats.totalTokens > 0 || stats.totalCost > 0;
 
@@ -397,122 +338,79 @@ export default function DashboardClient({ data }: DashboardClientProps) {
       <Navigation />
 
       <MainContent>
-        <HeaderRow>
-          <HeaderLeft>
-            {user.avatarUrl && (
-              <Avatar src={user.avatarUrl} alt={`@${user.username}`} />
-            )}
-            <HeaderInfo>
-              <HeaderName>{user.displayName || `@${user.username}`}</HeaderName>
-              <HeaderSub>
-                {data.dateRange.start && data.dateRange.end
-                  ? `${data.dateRange.start} → ${data.dateRange.end}`
-                  : "No date range"}
-                {data.updatedAt && ` · Updated ${new Date(data.updatedAt).toLocaleDateString()}`}
-              </HeaderSub>
-            </HeaderInfo>
-          </HeaderLeft>
-          {user.rank && (
-            <RankBadge>#{user.rank} on leaderboard</RankBadge>
-          )}
-        </HeaderRow>
+        <Title>Token & Usage Dashboard</Title>
+        <Subtitle>Aggregate AI token usage across all {stats.uniqueUsers} users</Subtitle>
 
         {/* Hero stats */}
         <HeroGrid>
           <HeroCard>
             <HeroLabel>Total Tokens</HeroLabel>
             <HeroValue>{formatNumber(stats.totalTokens)}</HeroValue>
-            <HeroSub>{stats.activeDays} active days</HeroSub>
+            <HeroSub>{stats.uniqueUsers} users</HeroSub>
           </HeroCard>
           <HeroCard>
             <HeroLabel>Total Cost</HeroLabel>
             <HeroValue>{formatCurrency(stats.totalCost)}</HeroValue>
-            <HeroSub>{stats.submissionCount} submissions</HeroSub>
+            <HeroSub>{stats.totalSubmissions || 0} submissions</HeroSub>
           </HeroCard>
           <HeroCard>
-            <HeroLabel>Input Tokens</HeroLabel>
-            <HeroValue>{formatNumber(stats.inputTokens)}</HeroValue>
-            <HeroSub>{tokenBreakdown[0].pct.toFixed(1)}% of total</HeroSub>
+            <HeroLabel>Top User Tokens</HeroLabel>
+            <HeroValue>{topUsers[0] ? formatNumber(topUsers[0].totalTokens) : "—"}</HeroValue>
+            <HeroSub>{topUsers[0] ? `@${topUsers[0].username}` : "No data"}</HeroSub>
           </HeroCard>
           <HeroCard>
-            <HeroLabel>Output Tokens</HeroLabel>
-            <HeroValue>{formatNumber(stats.outputTokens)}</HeroValue>
-            <HeroSub>{tokenBreakdown[1].pct.toFixed(1)}% of total</HeroSub>
+            <HeroLabel>Top User Cost</HeroLabel>
+            <HeroValue>{topUsers[0] ? formatCurrency(topUsers[0].totalCost) : "—"}</HeroValue>
+            <HeroSub>{topUsers[0] ? `@${topUsers[0].username}` : "No data"}</HeroSub>
           </HeroCard>
         </HeroGrid>
 
-        {/* Token breakdown */}
+        {/* Bar chart - top users by tokens */}
         <Card>
-          <SectionTitle>Token Breakdown</SectionTitle>
-          <BreakdownBar>
-            {tokenBreakdown.map(t => (
-              <BreakdownSegment
-                key={t.label}
-                $width={t.pct}
-                $color={t.color}
-              />
-            ))}
-          </BreakdownBar>
-          <BreakdownLegend>
-            {tokenBreakdown.map(t => (
-              <LegendItem key={t.label}>
-                <LegendDot $color={t.color} />
-                <LegendText>
-                  <LegendLabel>{t.label}</LegendLabel>
-                  <LegendValue>{formatNumber(t.value)}</LegendValue>
-                  <LegendPct>{t.pct.toFixed(1)}%</LegendPct>
-                </LegendText>
-              </LegendItem>
-            ))}
-          </BreakdownLegend>
+          <SectionTitle>Top Users by Tokens</SectionTitle>
+          {topUsers.length > 0 ? (
+            <BarChartContainer>
+              {topUsers.map((u, i) => {
+                const heightPct = (u.totalTokens / maxTokens) * 100;
+                return (
+                  <BarChartBar key={u.userId} $height={heightPct} $color={BAR_COLORS[i % BAR_COLORS.length]}>
+                    <BarFill $height={heightPct} $color={BAR_COLORS[i % BAR_COLORS.length]} />
+                    <BarLabel>{u.username}</BarLabel>
+                  </BarChartBar>
+                );
+              })}
+            </BarChartContainer>
+          ) : (
+            <ChartEmpty>No data available</ChartEmpty>
+          )}
         </Card>
 
-        <TwoCol>
-          {/* Last 30 days chart */}
-          <Card>
-            <SectionTitle>Usage (Last 30 Days)</SectionTitle>
-            {last30Days.length > 0 ? (
-              <ChartContainer>
-                {last30Days.map(day => {
-                  const heightPct = maxDayCost > 0 ? (day.totals.cost / maxDayCost) * 100 : 0;
-                  return (
-                    <ChartBar
-                      key={day.date}
-                      $height={Math.max(heightPct, 2)}
-                      $color={day.totals.cost > 0 ? "var(--color-primary, #006edb)" : "var(--color-border-default)"}
-                      title={`${day.date}: ${formatCurrency(day.totals.cost)} · ${formatNumber(day.totals.tokens)} tokens`}
-                    />
-                  );
-                })}
-              </ChartContainer>
-            ) : (
-              <ChartEmpty>No usage in the last 30 days</ChartEmpty>
-            )}
-          </Card>
-
-          {/* Model usage */}
-          <Card>
-            <SectionTitle>Top Models by Cost</SectionTitle>
-            {modelUsage && modelUsage.length > 0 ? (
-              <ModelList>
-                {modelUsage.slice(0, 6).map((m, i) => (
-                  <ModelRow key={m.model}>
-                    <ModelName>{m.model}</ModelName>
-                    <ModelBar>
-                      <ModelBarFill
-                        $pct={m.percentage}
-                        $color={MODEL_COLORS[i % MODEL_COLORS.length]}
-                      />
-                    </ModelBar>
-                    <ModelCost>{formatCurrency(m.cost)}</ModelCost>
-                  </ModelRow>
-                ))}
-              </ModelList>
-            ) : (
-              <ChartEmpty>No model data available</ChartEmpty>
-            )}
-          </Card>
-        </TwoCol>
+        {/* User list */}
+        <Card>
+          <SectionTitle>Leaderboard — Top {topUsers.length}</SectionTitle>
+          <UserList>
+            {topUsers.map((u) => (
+              <UserRow key={u.userId} href={`/u/${u.username}`}>
+                <RankText>#{u.rank}</RankText>
+                {u.avatarUrl && <Avatar src={u.avatarUrl} alt={u.username} />}
+                <UserInfo>
+                  <UserName>{u.displayName || u.username}</UserName>
+                  <UserHandle>@{u.username}</UserHandle>
+                </UserInfo>
+                <UserStats>
+                  <UserStat>
+                    <UserStatValue>{formatNumber(u.totalTokens)}</UserStatValue>
+                    <UserStatLabel>tokens</UserStatLabel>
+                  </UserStat>
+                  <UserStat>
+                    <UserStatValue>{formatCurrency(u.totalCost)}</UserStatValue>
+                    <UserStatLabel>cost</UserStatLabel>
+                  </UserStat>
+                </UserStats>
+              </UserRow>
+            ))}
+          </UserList>
+        </Card>
       </MainContent>
 
       <Footer />
