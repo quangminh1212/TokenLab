@@ -160,7 +160,7 @@ pub fn clear_credentials() -> Result<bool> {
 }
 
 pub fn get_api_base_url() -> String {
-    std::env::var("TOKSCALE_API_URL").unwrap_or_else(|_| "https://tokscale.ai".to_string())
+    std::env::var("TOKSCALE_API_URL").unwrap_or_else(|_| "https://xlab-token.ai".to_string())
 }
 
 fn get_device_name() -> String {
@@ -616,7 +616,7 @@ mod tests {
         unsafe {
             env::remove_var("TOKSCALE_API_URL");
         }
-        assert_eq!(get_api_base_url(), "https://tokscale.ai");
+        assert_eq!(get_api_base_url(), "https://xlab-token.ai");
     }
 
     #[test]

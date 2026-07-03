@@ -10,7 +10,7 @@ export function BlackholeHero() {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText("bunx tokscale");
+    navigator.clipboard.writeText("bunx xlab-token@latest");
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

@@ -4,6 +4,8 @@ import styled from "styled-components";
 import {
   HeroSection,
   QuickstartSection,
+  DescriptionSection,
+  FollowSection,
   FooterSection,
 } from "./sections";
 
@@ -19,6 +21,8 @@ export function LandingPage({
       <PageInner>
         <HeroSection stargazersCount={stargazersCount} />
         <QuickstartSection />
+        <DescriptionSection />
+        <FollowSection />
         <FooterSection />
       </PageInner>
     </PageWrapper>
@@ -35,12 +39,13 @@ const PageWrapper = styled.div`
 `;
 
 const PageInner = styled.div`
-  width: 1200px;
+  width: 100%;
+  max-width: 1080px;
   display: flex;
   flex-direction: column;
   align-items: center;
 
-  @media (max-width: 1200px) {
+  @media (max-width: 1080px) {
     width: 100%;
   }
 `;

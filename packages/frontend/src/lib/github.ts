@@ -1,7 +1,7 @@
 'use server';
 
 export async function getStargazersCount(
-  repo: string = 'junhoyeo/tokscale'
+  repo: string = 'quangminh1212/XLab_Token'
 ): Promise<number> {
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}`, {
