@@ -692,7 +692,7 @@ export function Navigation() {
           <NavItemLink href="/" $isActive={pathname === "/"}>
             About
           </NavItemLink>
-          <NavItemLink href="/profile" $isActive={pathname === "/profile" || pathname.startsWith("/u/")}>
+          <NavItemLink href="/dashboard" $isActive={pathname === "/dashboard" || pathname.startsWith("/u/")}>
             Dashboard
           </NavItemLink>
           <NavItemLink href="/settings" $isActive={pathname === "/settings"}>
@@ -736,7 +736,7 @@ export function Navigation() {
           <DropdownNavLink href="/" $isActive={pathname === "/"} onClick={closeMobileMenu}>
             About
           </DropdownNavLink>
-          <DropdownNavLink href="/profile" $isActive={pathname === "/profile" || pathname.startsWith("/u/")} onClick={closeMobileMenu}>
+          <DropdownNavLink href="/dashboard" $isActive={pathname === "/dashboard" || pathname.startsWith("/u/")} onClick={closeMobileMenu}>
             Dashboard
           </DropdownNavLink>
           <DropdownNavLink href="/settings" $isActive={pathname === "/settings"} onClick={closeMobileMenu}>
