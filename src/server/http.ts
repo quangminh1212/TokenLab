@@ -278,19 +278,20 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if (req.method === "PUT" && pathname === "/api/config") {
       const body = await readJsonBody(req);
       const prev = await loadConfig();
+      const bodyPricing =
+        body.pricing && typeof body.pricing === "object"
+          ? (body.pricing as Record<string, unknown>)
+          : {};
+      const bodyRates = bodyPricing.customRates;
       const next = await saveConfig({
         ...prev,
-        ...body,
         pricing: {
           ...prev.pricing,
-          ...((body.pricing as object) || {}),
+          ...bodyPricing,
           // never wipe custom rates via this endpoint unless explicitly provided
           customRates:
-            body.pricing &&
-            typeof body.pricing === "object" &&
-            (body.pricing as { customRates?: unknown }).customRates &&
-            typeof (body.pricing as { customRates?: unknown }).customRates === "object"
-              ? ((body.pricing as { customRates: typeof prev.pricing.customRates }).customRates as typeof prev.pricing.customRates)
+            bodyRates && typeof bodyRates === "object"
+              ? (bodyRates as NonNullable<typeof prev.pricing>["customRates"])
               : prev.pricing?.customRates,
         },
       });
