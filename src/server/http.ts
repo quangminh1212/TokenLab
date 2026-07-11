@@ -87,6 +87,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     // Coalesce concurrent rescans — never return mid-scan empty cache to callers.
     if (scanPromise) return scanPromise;
     scanning = true;
+    // Keep previous cache visible until first progressive batch arrives
     broadcastStream({
       type: "scan",
       revision: scanRevision,
@@ -97,11 +98,51 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       pricingRevision,
     });
     scanPromise = (async () => {
+      const prev = cache;
+      const byAgent = new Map<string, UsageEvent[]>();
+      // Seed with previous events so UI does not flash to 0 while scanning
+      for (const e of prev) {
+        const list = byAgent.get(e.agent) ?? [];
+        list.push(e);
+        byAgent.set(e.agent, list);
+      }
+      const rebuild = (): void => {
+        const next: UsageEvent[] = [];
+        for (const list of byAgent.values()) {
+          for (const e of list) next.push(e);
+        }
+        cache = next;
+      };
       try {
-        cache = await scanAll();
+        // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+
+        await scanAll({
+          concurrency: 4,
+          timeoutMs: 25_000,
+          onAgentDone: ({ agent, events, durationMs, error }) => {
+            // On timeout/error with empty batch, keep previous events for that agent
+            if (!error || events.length > 0) {
+              byAgent.set(agent, events);
+              rebuild();
+            }
+            broadcastStream({
+              type: "scan",
+              revision: scanRevision,
+              updatedAt: Date.now(),
+              reason: "progress",
+              agent,
+              durationMs,
+              error: error || null,
+              eventCount: cache.length,
+              scanning: true,
+              pricingRevision,
+            });
+          },
+        });
+        rebuild();
         bumpScan("complete");
         return cache.length;
       } catch (err) {
+        // Keep last progressive cache rather than wiping
         bumpScan("error");
         throw err;
       } finally {
@@ -195,6 +236,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
     if (req.method === "POST" && pathname === "/api/scan") {
       const t0 = Date.now();
+      // async=1: start scan in background and return immediately (UI stays responsive)
+      const asyncMode =
+        url.searchParams.get("async") === "1" ||
+        url.searchParams.get("wait") === "0";
+      if (asyncMode) {
+        void rescan().catch((err) => {
+          console.error("[xlab-token] async scan failed:", err instanceof Error ? err.message : err);
+        });
+        return json(res, 202, {
+          ok: true,
+          accepted: true,
+          scanning: true,
+          eventCount: cache.length,
+          scanRevision,
+        });
+      }
       const n = await rescan();
       return json(res, 200, { ok: true, eventsIngested: n, durationMs: Date.now() - t0 });
     }

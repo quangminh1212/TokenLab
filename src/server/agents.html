@@ -448,9 +448,12 @@
     $('providerSearch').oninput = () => renderProviders();
     $('since').onchange = load;
     $('refresh').onclick = async () => {
-      setRefreshBusy('Refreshing\u2026');
+      setRefreshBusy('Scanning\u2026');
       try {
-        await fetch('/api/scan', { method: 'POST' });
+        // Background scan — do not block UI for 10\u201320s
+        await fetch('/api/scan?async=1', { method: 'POST' });
+        awaitingData = true;
+        scheduleScanPoll();
         await load();
       } finally {
         setRefreshIdle();
@@ -480,7 +483,17 @@
             void load();
             return;
           }
-          if (msg.type === 'scan' && msg.reason !== 'start') {
+          if (msg.type === 'scan') {
+            if (msg.reason === 'start') {
+              awaitingData = (msg.eventCount || 0) === 0;
+              scheduleScanPoll();
+              return;
+            }
+            if (msg.reason === 'progress') {
+              if ((msg.eventCount || 0) > 0) awaitingData = false;
+              void load();
+              return;
+            }
             if (typeof msg.revision === 'number') scanRevision = msg.revision;
             awaitingData = false;
             void load();

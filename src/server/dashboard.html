@@ -352,7 +352,8 @@
     }
 
     function emptyMsg(kind) {
-      if (state.scanning || state.awaitingData) {
+      // Only show "scanning" empty state when we truly have no data yet
+      if ((state.scanning || state.awaitingData) && state.lastEventCount === 0) {
         return kind === 'table'
           ? 'Đang quét agents\u2026 dữ liệu sẽ hiện ngay khi xong.'
           : 'Scanning agents\u2026';
@@ -585,10 +586,12 @@
     function scheduleScanPoll() {
       if (scanPollTimer) clearTimeout(scanPollTimer);
       if (!state.scanning && !state.awaitingData) return;
+      // Faster poll while scanning so progressive events show up quickly
+      const delay = state.scanning ? 600 : 1200;
       scanPollTimer = setTimeout(() => {
         scanPollTimer = 0;
         void load({ quiet: true });
-      }, 1200);
+      }, delay);
     }
 
     // Segment handlers
@@ -622,13 +625,20 @@
       load();
     };
 
-    // Single action: rescan local agents + reload dashboard
+    // Rescan in background (async) so UI never freezes 10\u201320s on heavy agents
     $('refresh').onclick = async () => {
-      setRefreshBusy('Refreshing\u2026');
+      setRefreshBusy('Scanning\u2026');
       try {
-        await fetch('/api/scan', { method: 'POST' });
+        state.scanning = true;
+        state.awaitingData = state.lastEventCount === 0;
+        await fetch('/api/scan?async=1', { method: 'POST' });
+        await load({ quiet: true });
+        scheduleScanPoll();
+      } catch {
+        // still try to load whatever is cached
         await load({ quiet: true });
       } finally {
+        // Idle button immediately; meta chip shows scanning until SSE/poll clears it
         setRefreshIdle();
       }
     };
@@ -667,9 +677,17 @@
                 scheduleScanPoll();
                 return;
               }
+              // Progressive agent batches: refresh totals as soon as data arrives
+              if (msg.reason === 'progress') {
+                state.lastEventCount = msg.eventCount || state.lastEventCount;
+                if ((msg.eventCount || 0) > 0) state.awaitingData = false;
+                void load({ quiet: true });
+                return;
+              }
               // Scan finished (or error idle) \u2014 always reload so empty UI fills
-              if (rev !== state.scanRevision || wasScanning || msg.reason === 'complete') {
+              if (rev !== state.scanRevision || wasScanning || msg.reason === 'complete' || msg.reason === 'error') {
                 state.scanRevision = rev;
+                state.scanning = false;
                 state.awaitingData = false;
                 void load({ quiet: true });
               }

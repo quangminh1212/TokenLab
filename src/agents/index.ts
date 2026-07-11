@@ -119,8 +119,53 @@ export function agentPathSpecs(): AgentPathSpec[] {
   }));
 }
 
-export async function scanAll(enabled?: Partial<Record<AgentId, boolean>>): Promise<UsageEvent[]> {
-  const all: UsageEvent[] = [];
+export type ScanAllOptions = {
+  enabled?: Partial<Record<AgentId, boolean>>;
+  /** Max agents parsed at once (default 4). */
+  concurrency?: number;
+  /** Soft timeout per agent; on timeout keep partial empty for that agent (default 25s). */
+  timeoutMs?: number;
+  /** Called after each agent finishes so the server can stream progressive totals. */
+  onAgentDone?: (info: { agent: AgentId; events: UsageEvent[]; durationMs: number; error?: string }) => void;
+};
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  if (!ms || ms <= 0) return p;
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
+/**
+ * Scan all enabled agents. Runs parsers in parallel (bounded concurrency) so a
+ * single heavy agent (9router/devin) does not block the rest for tens of seconds.
+ * Does not sort the full list (callers that need newest-first sort a slice).
+ */
+export async function scanAll(
+  enabledOrOpts?: Partial<Record<AgentId, boolean>> | ScanAllOptions,
+): Promise<UsageEvent[]> {
+  const opts: ScanAllOptions =
+    enabledOrOpts && ("enabled" in enabledOrOpts || "concurrency" in enabledOrOpts || "timeoutMs" in enabledOrOpts || "onAgentDone" in enabledOrOpts)
+      ? (enabledOrOpts as ScanAllOptions)
+      : { enabled: enabledOrOpts as Partial<Record<AgentId, boolean>> | undefined };
+
+  const enabled = opts.enabled;
+  const concurrency = Math.max(1, Math.min(8, opts.concurrency ?? 4));
+  const timeoutMs = opts.timeoutMs ?? 25_000;
+  const onAgentDone = opts.onAgentDone;
+
+  type Job = { id: AgentId; label: string; roots: string[]; parse: (roots: string[]) => Promise<UsageEvent[]> };
+  const jobs: Job[] = [];
 
   for (const mod of AGENTS) {
     if (enabled && enabled[mod.id] === false) continue;
@@ -129,25 +174,43 @@ export async function scanAll(enabled?: Partial<Record<AgentId, boolean>>): Prom
       if (await pathExists(r)) roots.push(r);
     }
     if (roots.length === 0) continue;
-    try {
-      // Avoid push(...hugeArray) — spread arg list overflows the stack at ~100k+ events
-      const batch = await mod.parse(roots);
-      for (const e of batch) all.push(e);
-    } catch (err) {
-      console.error("[xlab-token] parser " + mod.id + " failed:", err instanceof Error ? err.message : err);
+    if (!mod.parse) continue;
+    jobs.push({ id: mod.id, label: mod.label, roots, parse: mod.parse });
+  }
+
+  const all: UsageEvent[] = [];
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (cursor < jobs.length) {
+      const i = cursor++;
+      const job = jobs[i]!;
+      const t0 = Date.now();
+      try {
+        const batch = await withTimeout(job.parse(job.roots), timeoutMs, `parser ${job.id}`);
+        for (const e of batch) all.push(e);
+        onAgentDone?.({ agent: job.id, events: batch, durationMs: Date.now() - t0 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[xlab-token] parser " + job.id + " failed:", msg);
+        onAgentDone?.({ agent: job.id, events: [], durationMs: Date.now() - t0, error: msg });
+      }
     }
   }
 
-  all.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const workers = Array.from({ length: Math.min(concurrency, jobs.length || 1) }, () => worker());
+  await Promise.all(workers);
   return all;
 }
 
 export async function detectAgents(events: UsageEvent[] = []): Promise<AgentStatus[]> {
-  const byAgent = new Map<string, UsageEvent[]>();
+  // O(n) counts + last timestamp — avoid storing 100k+ event arrays per agent
+  const counts = new Map<string, number>();
+  const lastAt = new Map<string, string>();
   for (const e of events) {
-    const list = byAgent.get(e.agent) ?? [];
-    list.push(e);
-    byAgent.set(e.agent, list);
+    counts.set(e.agent, (counts.get(e.agent) ?? 0) + 1);
+    const prev = lastAt.get(e.agent);
+    if (!prev || e.timestamp > prev) lastAt.set(e.agent, e.timestamp);
   }
 
   const out: AgentStatus[] = [];
@@ -156,16 +219,14 @@ export async function detectAgents(events: UsageEvent[] = []): Promise<AgentStat
     for (const r of mod.roots()) {
       if (await pathExists(r)) paths.push(r);
     }
-    const list = byAgent.get(mod.id) ?? [];
-    const last = list.length ? (list.map((e) => e.timestamp).sort().at(-1) ?? null) : null;
     out.push({
       id: mod.id,
       label: mod.label,
       detected: paths.length > 0,
       enabled: true,
       paths,
-      lastEventAt: last,
-      eventCount: list.length,
+      lastEventAt: lastAt.get(mod.id) ?? null,
+      eventCount: counts.get(mod.id) ?? 0,
     });
   }
   return out;
