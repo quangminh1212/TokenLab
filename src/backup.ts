@@ -1,32 +1,117 @@
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { XlabTokenConfig } from "./config.js";
 import { getConfigSync, loadConfig, saveConfig } from "./config.js";
+import {
+  getOpenRouterFetchedAt,
+  getOpenRouterModelsSync,
+  openrouterCachePath,
+  type OpenRouterModelEntry,
+} from "./openrouter-models.js";
+import type { UsageEvent } from "./types.js";
+import { appDataDir, pathExists } from "./util.js";
 import { VERSION } from "./version.js";
 
 export const BACKUP_FORMAT = "xlab-token-backup" as const;
-export const BACKUP_FORMAT_VERSION = 1 as const;
+/** v1 = settings only · v2 = full project data */
+export const BACKUP_FORMAT_VERSION = 2 as const;
+
+export type BackupScope = "settings" | "full";
 
 export interface XlabBackup {
   format: typeof BACKUP_FORMAT;
-  formatVersion: typeof BACKUP_FORMAT_VERSION;
+  formatVersion: number;
   appVersion: string;
   exportedAt: string;
   platform?: string;
-  /** Portable settings + custom model rates (no usage event logs). */
+  scope: BackupScope;
+  /** Settings + custom model rates */
   config: {
     timezone?: string;
     pricing?: XlabTokenConfig["pricing"];
   };
-  /** Optional last known gist destination (id only). */
+  /** Scanned usage events (full scope) */
+  events?: UsageEvent[];
+  /** Cached OpenRouter model catalog (full scope) */
+  openrouter?: {
+    fetchedAt: number;
+    models: OpenRouterModelEntry[];
+  };
+  /**
+   * Mirror files under %APPDATA%/xlab-token/mirrors (full scope).
+   * Keys are relative paths like "9router/usage-daily.json".
+   */
+  mirrors?: Record<string, string>;
   meta?: {
     note?: string;
-    eventCountHint?: number;
+    eventCount?: number;
+    openrouterModelCount?: number;
+    mirrorFileCount?: number;
+    mirrorBytes?: number;
   };
 }
 
-export function buildBackup(opts?: {
-  eventCountHint?: number;
-  note?: string;
-}): XlabBackup {
+export function dataRoot(): string {
+  return process.env.XLAB_TOKEN_DATA_DIR || path.join(appDataDir(), "xlab-token");
+}
+
+export function mirrorsRoot(): string {
+  return path.join(dataRoot(), "mirrors");
+}
+
+async function listFilesRecursive(dir: string, base = dir): Promise<string[]> {
+  const out: string[] = [];
+  if (!(await pathExists(dir))) return out;
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      out.push(...(await listFilesRecursive(full, base)));
+    } else if (ent.isFile()) {
+      out.push(path.relative(base, full).split(path.sep).join("/"));
+    }
+  }
+  return out;
+}
+
+/** Soft cap for mirror inclusion in JSON export (GitHub Gist / browser). */
+const MIRROR_MAX_TOTAL_BYTES = 25 * 1024 * 1024; // 25 MB
+const MIRROR_MAX_FILE_BYTES = 8 * 1024 * 1024; // skip single files > 8 MB
+
+async function collectMirrors(): Promise<{
+  files: Record<string, string>;
+  fileCount: number;
+  bytes: number;
+  skipped: string[];
+}> {
+  const root = mirrorsRoot();
+  const files: Record<string, string> = {};
+  const skipped: string[] = [];
+  let bytes = 0;
+  const rels = await listFilesRecursive(root);
+  for (const rel of rels.sort()) {
+    const full = path.join(root, ...rel.split("/"));
+    try {
+      const st = await stat(full);
+      if (st.size > MIRROR_MAX_FILE_BYTES) {
+        skipped.push(`${rel} (${Math.round(st.size / 1024 / 1024)}MB)`);
+        continue;
+      }
+      if (bytes + st.size > MIRROR_MAX_TOTAL_BYTES) {
+        skipped.push(`${rel} (over total cap)`);
+        continue;
+      }
+      const text = await readFile(full, "utf8");
+      files[rel] = text;
+      bytes += Buffer.byteLength(text, "utf8");
+    } catch {
+      skipped.push(rel);
+    }
+  }
+  return { files, fileCount: Object.keys(files).length, bytes, skipped };
+}
+
+export function buildSettingsBackup(opts?: { eventCountHint?: number; note?: string }): XlabBackup {
   const cfg = getConfigSync();
   return {
     format: BACKUP_FORMAT,
@@ -34,6 +119,7 @@ export function buildBackup(opts?: {
     appVersion: VERSION,
     exportedAt: new Date().toISOString(),
     platform: process.platform,
+    scope: "settings",
     config: {
       timezone: cfg.timezone || "local",
       pricing: {
@@ -44,9 +130,82 @@ export function buildBackup(opts?: {
     },
     meta: {
       note: opts?.note || "XLab Token settings & custom model rates",
-      eventCountHint: opts?.eventCountHint,
+      eventCount: opts?.eventCountHint,
     },
   };
+}
+
+/** @deprecated use buildSettingsBackup or buildFullBackup */
+export function buildBackup(opts?: { eventCountHint?: number; note?: string }): XlabBackup {
+  return buildSettingsBackup(opts);
+}
+
+export async function buildFullBackup(opts: {
+  events: UsageEvent[];
+  includeMirrors?: boolean;
+  note?: string;
+}): Promise<XlabBackup> {
+  const base = buildSettingsBackup({
+    eventCountHint: opts.events.length,
+    note: opts.note || "XLab Token full project backup",
+  });
+  base.scope = "full";
+
+  // Events (in-memory scan cache)
+  base.events = opts.events.map((e) => ({ ...e }));
+
+  // OpenRouter catalog from memory or disk
+  const memModels = getOpenRouterModelsSync();
+  const memAt = getOpenRouterFetchedAt();
+  if (memModels.length > 0) {
+    base.openrouter = { fetchedAt: memAt || Date.now(), models: memModels };
+  } else {
+    try {
+      const p = openrouterCachePath();
+      if (await pathExists(p)) {
+        const raw = JSON.parse(await readFile(p, "utf8")) as {
+          fetchedAt?: number;
+          models?: OpenRouterModelEntry[];
+        };
+        if (Array.isArray(raw.models) && raw.models.length) {
+          base.openrouter = {
+            fetchedAt: Number(raw.fetchedAt) || Date.now(),
+            models: raw.models,
+          };
+        }
+      }
+    } catch {
+      // optional
+    }
+  }
+
+  let mirrorFileCount = 0;
+  let mirrorBytes = 0;
+  if (opts.includeMirrors !== false) {
+    const m = await collectMirrors();
+    if (m.fileCount > 0) {
+      base.mirrors = m.files;
+      mirrorFileCount = m.fileCount;
+      mirrorBytes = m.bytes;
+    }
+    if (m.skipped.length) {
+      base.meta = {
+        ...base.meta,
+        note:
+          (base.meta?.note || "") +
+          ` · skipped mirrors: ${m.skipped.slice(0, 5).join(", ")}${m.skipped.length > 5 ? "…" : ""}`,
+      };
+    }
+  }
+
+  base.meta = {
+    ...base.meta,
+    eventCount: base.events.length,
+    openrouterModelCount: base.openrouter?.models.length || 0,
+    mirrorFileCount,
+    mirrorBytes,
+  };
+  return base;
 }
 
 export function isXlabBackup(raw: unknown): raw is XlabBackup {
@@ -55,12 +214,86 @@ export function isXlabBackup(raw: unknown): raw is XlabBackup {
   return o.format === BACKUP_FORMAT && typeof o.config === "object" && o.config != null;
 }
 
-/** Merge backup config into current config (replace custom rates when provided). */
-export async function restoreBackup(raw: unknown): Promise<{
+export type RestoreResult = {
   ok: true;
   config: XlabTokenConfig;
   customRateCount: number;
-}> {
+  events?: UsageEvent[];
+  openrouterRestored: boolean;
+  mirrorsRestored: number;
+  scope: BackupScope | "settings";
+};
+
+async function restoreOpenrouter(or: XlabBackup["openrouter"]): Promise<boolean> {
+  if (!or || !Array.isArray(or.models) || or.models.length === 0) return false;
+  const mod = await import("./openrouter-models.js");
+  await mod.replaceOpenRouterCache({
+    fetchedAt: Number(or.fetchedAt) || Date.now(),
+    models: or.models,
+  });
+  return true;
+}
+
+async function restoreMirrors(mirrors: Record<string, string> | undefined): Promise<number> {
+  if (!mirrors || typeof mirrors !== "object") return 0;
+  const root = mirrorsRoot();
+  let n = 0;
+  for (const [rel, content] of Object.entries(mirrors)) {
+    if (!rel || typeof content !== "string") continue;
+    // Prevent path escape
+    const normalized = rel.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (normalized.includes("..") || path.isAbsolute(normalized)) continue;
+    const full = path.join(root, ...normalized.split("/"));
+    if (!full.startsWith(root)) continue;
+    await mkdir(path.dirname(full), { recursive: true });
+    await writeFile(full, content, "utf8");
+    n += 1;
+  }
+  return n;
+}
+
+function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: UsageEvent[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const e = item as Record<string, unknown>;
+    if (typeof e.id !== "string" || typeof e.agent !== "string") continue;
+    const inputTokens = Number(e.inputTokens) || 0;
+    const outputTokens = Number(e.outputTokens) || 0;
+    const cacheReadTokens = Number(e.cacheReadTokens) || 0;
+    const cacheWriteTokens = Number(e.cacheWriteTokens) || 0;
+    out.push({
+      id: e.id,
+      agent: e.agent as UsageEvent["agent"],
+      model: e.model == null ? null : String(e.model),
+      timestamp: typeof e.timestamp === "string" ? e.timestamp : new Date().toISOString(),
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens:
+        Number(e.totalTokens) ||
+        inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
+      estimatedCost: e.estimatedCost == null ? null : Number(e.estimatedCost),
+      currency: typeof e.currency === "string" ? e.currency : "USD",
+      pricingStatus:
+        e.pricingStatus === "priced" ||
+        e.pricingStatus === "unknown_model" ||
+        e.pricingStatus === "zero_rate" ||
+        e.pricingStatus === "estimated"
+          ? e.pricingStatus
+          : "estimated",
+      workspace: e.workspace == null ? null : String(e.workspace),
+      sourcePath: typeof e.sourcePath === "string" ? e.sourcePath : "backup",
+      estimated: Boolean(e.estimated),
+    });
+  }
+  return out;
+}
+
+/** Restore config (+ optional events / openrouter / mirrors). */
+export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
   if (!isXlabBackup(raw)) {
     throw new Error("Invalid backup file (expected xlab-token-backup format)");
   }
@@ -86,10 +319,23 @@ export async function restoreBackup(raw: unknown): Promise<{
           : prev.pricing?.customRates || {},
     },
   });
+
+  const events = sanitizeEvents(raw.events);
+  const openrouterRestored = await restoreOpenrouter(raw.openrouter);
+  const mirrorsRestored = await restoreMirrors(raw.mirrors);
+  const scope: BackupScope =
+    raw.scope === "full" || (events && events.length > 0) || openrouterRestored || mirrorsRestored > 0
+      ? "full"
+      : "settings";
+
   return {
     ok: true,
     config: next,
     customRateCount: Object.keys(next.pricing?.customRates || {}).length,
+    events,
+    openrouterRestored,
+    mirrorsRestored,
+    scope,
   };
 }
 
@@ -110,10 +356,12 @@ function githubToken(fromBody?: string | null): string | null {
   return t || null;
 }
 
+/** Gist practical soft limit for API content size */
+const GIST_SOFT_MAX_BYTES = 900_000; // ~0.9 MB text
+
 /**
- * Create or update a secret GitHub Gist with the backup JSON.
- * Token: body token | XLAB_GITHUB_TOKEN | GITHUB_TOKEN | config.backup.githubToken
- * Scope: gist
+ * Create or update a secret GitHub Gist.
+ * Default scope is settings (small). Full is only uploaded if it fits Gist size.
  */
 export async function uploadBackupToGist(opts: {
   token?: string | null;
@@ -121,7 +369,10 @@ export async function uploadBackupToGist(opts: {
   public?: boolean;
   eventCountHint?: number;
   saveToken?: boolean;
-}): Promise<{ backup: XlabBackup; gist: GistUploadResult }> {
+  /** Prefer settings-only for Gist unless explicitly full and small enough */
+  scope?: BackupScope;
+  events?: UsageEvent[];
+}): Promise<{ backup: XlabBackup; gist: GistUploadResult; scope: BackupScope }> {
   const token = githubToken(opts.token);
   if (!token) {
     throw new Error(
@@ -129,10 +380,27 @@ export async function uploadBackupToGist(opts: {
     );
   }
 
-  const backup = buildBackup({ eventCountHint: opts.eventCountHint });
+  let backup: XlabBackup;
+  let scope: BackupScope = opts.scope === "full" ? "full" : "settings";
+  if (scope === "full" && opts.events) {
+    backup = await buildFullBackup({ events: opts.events, includeMirrors: false });
+    const size = Buffer.byteLength(JSON.stringify(backup), "utf8");
+    if (size > GIST_SOFT_MAX_BYTES) {
+      // Fall back to settings-only for Gist
+      backup = buildSettingsBackup({
+        eventCountHint: opts.events.length,
+        note: `Settings only (full export was ${Math.round(size / 1024)}KB — use Download for full project)`,
+      });
+      scope = "settings";
+    }
+  } else {
+    backup = buildSettingsBackup({ eventCountHint: opts.eventCountHint });
+    scope = "settings";
+  }
+
   const content = JSON.stringify(backup, null, 2);
   const filename = "xlab-token-backup.json";
-  const description = `XLab Token backup · ${backup.exportedAt} · v${backup.appVersion}`;
+  const description = `XLab Token ${scope} backup · ${backup.exportedAt} · v${backup.appVersion}`;
 
   const prevId =
     (opts.gistId && String(opts.gistId).trim()) ||
@@ -159,7 +427,6 @@ export async function uploadBackupToGist(opts: {
       }),
     });
     updated = true;
-    // If gist missing/deleted, create a new one
     if (res.status === 404) {
       updated = false;
       res = await fetch("https://api.github.com/gists", {
@@ -205,7 +472,6 @@ export async function uploadBackupToGist(opts: {
     updated,
   };
 
-  // Persist gist id (+ optional token) for next update
   const cfg = await loadConfig();
   await saveConfig({
     ...cfg,
@@ -218,5 +484,5 @@ export async function uploadBackupToGist(opts: {
     },
   });
 
-  return { backup, gist };
+  return { backup, gist, scope };
 }
