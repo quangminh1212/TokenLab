@@ -309,7 +309,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       return;
     }
 
-    if (!noUi && req.method === "GET" && (pathname === "/pricing" || pathname === "/pricing.html")) {
+    if (
+      !noUi &&
+      req.method === "GET" &&
+      (pathname === "/model" ||
+        pathname === "/model.html" ||
+        pathname === "/pricing" ||
+        pathname === "/pricing.html")
+    ) {
       const html = await readFile(pricingPagePath, "utf8");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
