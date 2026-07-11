@@ -303,31 +303,36 @@
           return (b.eventCount || 0) - (a.eventCount || 0);
         });
         if (!members.length) continue;
-        sections.push(`
-          <div class="provider-section">
-            <div class="provider-section-head">
-              <h3>${escapeHtml(cat.title)}</h3>
-              <span class="count">${members.length}</span>
-            </div>
-            <div class="provider-grid">${members.map(providerCard).join('')}</div>
-          </div>`);
+        sections.push(sectionHtml(cat.title, members));
       }
 
       const rest = list.filter((a) => !used.has(a.id) && matchesFilter(a, currentFilter, q));
       if (rest.length) {
         rest.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
-        sections.push(`
-          <div class="provider-section">
-            <div class="provider-section-head">
-              <h3>More</h3>
-              <span class="count">${rest.length}</span>
-            </div>
-            <div class="provider-grid">${rest.map(providerCard).join('')}</div>
-          </div>`);
+        sections.push(sectionHtml('More', rest));
       }
 
       $('providerSections').innerHTML = sections.join('') ||
         `<div class="empty">Không có agent khớp bộ lọc.</div>`;
+    }
+
+    /** Category sections default collapsed; expand on click. Auto-open when searching/filtering. */
+    function sectionHtml(title, members) {
+      const id = 'sec-' + String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const q = ($('providerSearch').value || '').trim();
+      const forceOpen = q.length > 0 || currentFilter !== 'all';
+      const collapsed = forceOpen ? '' : ' is-collapsed';
+      const expanded = forceOpen ? 'true' : 'false';
+      const hidden = forceOpen ? '' : ' hidden';
+      return `
+        <div class="provider-section${collapsed}" data-section="${escapeHtml(id)}">
+          <button type="button" class="provider-section-head" aria-expanded="${expanded}">
+            <span class="section-chevron" aria-hidden="true">›</span>
+            <h3>${escapeHtml(title)}</h3>
+            <span class="count">${members.length}</span>
+          </button>
+          <div class="provider-grid"${hidden}>${members.map(providerCard).join('')}</div>
+        </div>`;
     }
 
     async function load() {
@@ -364,6 +369,16 @@
         b.classList.toggle('active', b === btn);
       }
       renderProviders();
+    };
+    $('providerSections').onclick = (e) => {
+      const head = e.target.closest('.provider-section-head');
+      if (!head) return;
+      const sec = head.closest('.provider-section');
+      if (!sec) return;
+      const open = sec.classList.toggle('is-collapsed') === false;
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      const grid = sec.querySelector('.provider-grid');
+      if (grid) grid.hidden = !open;
     };
     $('providerSearch').oninput = () => renderProviders();
     $('refresh').onclick = load;

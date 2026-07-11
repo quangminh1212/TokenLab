@@ -299,14 +299,34 @@
 
     .provider-section { margin-top: 1.35rem; }
     .provider-section-head {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 0.75rem; margin-bottom: 0.7rem;
+      display: flex; align-items: center; gap: 0.5rem;
+      width: 100%; margin: 0 0 0.7rem; padding: 0.35rem 0.15rem;
+      appearance: none; border: 0; background: transparent;
+      color: inherit; font: inherit; cursor: pointer; text-align: left;
+      border-radius: 8px;
     }
+    .provider-section-head:hover { background: color-mix(in srgb, var(--xlab) 6%, transparent); }
     .provider-section-head h3 {
       margin: 0; font-size: 0.95rem; font-weight: 700; letter-spacing: -0.01em;
+      flex: 1; min-width: 0;
     }
     .provider-section-head .count {
       color: var(--muted); font-size: 0.78rem; font-weight: 600;
+    }
+    .section-chevron {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.1rem; color: var(--muted); font-size: 1.1rem; font-weight: 700;
+      line-height: 1; transition: transform .15s ease;
+      transform: rotate(0deg);
+    }
+    .provider-section:not(.is-collapsed) .section-chevron {
+      transform: rotate(90deg);
+    }
+    .provider-section.is-collapsed .provider-section-head {
+      margin-bottom: 0;
+    }
+    .provider-section.is-collapsed .provider-grid {
+      display: none;
     }
 
     .provider-grid {
