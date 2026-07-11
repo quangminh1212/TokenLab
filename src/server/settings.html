@@ -38,106 +38,63 @@
   </header>
 
   <main class="shell settings-page">
-    <header class="settings-head">
-      <div>
-        <h1 class="settings-title">Settings</h1>
-        <p class="settings-sub">Local preferences for theme, timezone, and cost estimates.</p>
+    <div class="settings-panel u-card">
+      <div class="settings-panel-head">
+        <h1>Settings</h1>
+        <a href="/model">Model rates</a>
       </div>
-      <a class="settings-link" href="/model">Model rates &rarr;</a>
-    </header>
 
-    <div class="settings-grid">
-      <!-- Preferences -->
-      <section class="u-card settings-card">
-        <h2 class="settings-card-title">Preferences</h2>
-
-        <div class="settings-field">
-          <div class="settings-field-label">
-            <span>Theme</span>
-            <small>Browser only</small>
-          </div>
-          <button type="button" class="btn btn-sm settings-theme-btn" id="settingsThemeBtn">Light</button>
+      <div class="settings-list">
+        <div class="settings-item">
+          <span class="settings-k">Theme</span>
+          <button type="button" class="btn btn-sm" id="settingsThemeBtn">Light</button>
         </div>
 
-        <div class="settings-field">
-          <div class="settings-field-label">
-            <span>Timezone</span>
-            <small>Calendar day for <em>Today</em></small>
-          </div>
+        <div class="settings-item">
+          <span class="settings-k">Timezone</span>
           <select id="timezoneSelect" class="settings-select" aria-label="Timezone"></select>
         </div>
-        <p class="settings-hint" id="todayStartsLabel">Today starts &mdash;</p>
+        <p class="settings-note" id="todayStartsLabel">Today &mdash;</p>
 
-        <label class="settings-switch">
-          <div class="settings-field-label">
-            <span>Prefer router cost</span>
-            <small>Use 9router / xlabrouter cost when &gt; 0</small>
-          </div>
+        <label class="settings-item settings-item-toggle">
+          <span class="settings-k">Prefer router cost</span>
           <input type="checkbox" id="preferRouterCost" />
         </label>
 
-        <div class="settings-field settings-field-static">
-          <div class="settings-field-label">
-            <span>Currency</span>
-          </div>
+        <div class="settings-item">
+          <span class="settings-k">Currency</span>
           <code class="settings-pill" id="currencyLabel">USD</code>
         </div>
+      </div>
 
-        <div class="settings-footer-row">
-          <button type="button" class="btn btn-primary btn-sm" id="savePrefs">Save</button>
-          <span class="settings-status" id="prefsStatus" aria-live="polite"></span>
-        </div>
-      </section>
+      <div class="settings-bar">
+        <button type="button" class="btn btn-primary btn-sm" id="savePrefs">Save</button>
+        <span class="settings-status" id="prefsStatus" aria-live="polite"></span>
+      </div>
 
-      <!-- System -->
-      <section class="u-card settings-card">
-        <h2 class="settings-card-title">System</h2>
+      <div class="settings-divider"></div>
 
-        <div class="settings-stats" id="systemStats">
-          <div class="settings-stat">
-            <span class="settings-stat-label">Version</span>
-            <strong id="versionLabel">&mdash;</strong>
-          </div>
-          <div class="settings-stat">
-            <span class="settings-stat-label">Events</span>
-            <strong id="eventsLabel">&mdash;</strong>
-          </div>
-          <div class="settings-stat">
-            <span class="settings-stat-label">Scan</span>
-            <strong id="scanningLabel">&mdash;</strong>
-          </div>
-          <div class="settings-stat">
-            <span class="settings-stat-label">Pricing rev</span>
-            <strong id="pricingRevLabel">&mdash;</strong>
-          </div>
-        </div>
+      <div class="settings-chips">
+        <span><b id="versionLabel">&mdash;</b> ver</span>
+        <span><b id="eventsLabel">&mdash;</b> events</span>
+        <span><b id="scanningLabel">&mdash;</b></span>
+        <span>rev <b id="pricingRevLabel">&mdash;</b></span>
+      </div>
 
-        <div class="settings-meta-list">
-          <div class="settings-meta">
-            <span>Config</span>
-            <code id="configPath" title="">&mdash;</code>
-          </div>
-          <div class="settings-meta">
-            <span>Runtime</span>
-            <code id="runtimeLabel">&mdash;</code>
-          </div>
-          <div class="settings-meta">
-            <span>Browser TZ</span>
-            <code id="browserTzLabel">&mdash;</code>
-          </div>
-        </div>
+      <div class="settings-path" title="">
+        <code id="configPath">&mdash;</code>
+      </div>
+      <div class="settings-path muted">
+        <code id="runtimeLabel">&mdash;</code>
+        <span class="dot">&middot;</span>
+        <code id="browserTzLabel">&mdash;</code>
+      </div>
 
-        <div class="settings-footer-row">
-          <button type="button" class="btn btn-sm btn-with-icon" id="rescanBtn">Rescan</button>
-          <span class="settings-status" id="rescanStatus" aria-live="polite"></span>
-        </div>
-      </section>
+      <div class="settings-bar">
+        <button type="button" class="btn btn-sm btn-with-icon" id="rescanBtn">Rescan</button>
+        <span class="settings-status" id="rescanStatus" aria-live="polite"></span>
+      </div>
     </div>
-
-    <p class="settings-footnote">
-      Local-only estimates &middot; not billing invoices &middot;
-      <a href="/">Dashboard</a>
-    </p>
   </main>
 
   <script>
@@ -167,9 +124,9 @@
     $('rescanBtn').innerHTML = ICONS.refresh + '<span>Rescan</span>';
 
     const TIMEZONES = [
-      { value: 'local', label: 'Machine local' },
+      { value: 'local', label: 'Local' },
       { value: 'UTC', label: 'UTC' },
-      { value: 'Asia/Ho_Chi_Minh', label: 'Vietnam (Ho Chi Minh)' },
+      { value: 'Asia/Ho_Chi_Minh', label: 'Vietnam (+7)' },
       { value: 'Asia/Bangkok', label: 'Bangkok' },
       { value: 'Asia/Singapore', label: 'Singapore' },
       { value: 'Asia/Tokyo', label: 'Tokyo' },
@@ -203,22 +160,19 @@
     }
 
     function formatTodayStart(iso, tz) {
-      if (!iso) return 'Today starts \u2014';
+      if (!iso) return 'Today \u2014';
       try {
         const d = new Date(iso);
         const zone = !tz || tz === 'local' ? undefined : tz;
         const nice = d.toLocaleString(undefined, {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
+          month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit',
           timeZone: zone,
           timeZoneName: 'short',
         });
-        return 'Today starts ' + nice;
+        return 'Today from ' + nice;
       } catch {
-        return 'Today starts ' + iso;
+        return 'Today \u2014';
       }
     }
 
@@ -229,10 +183,10 @@
         $('meta').textContent = `v${h.version} \u00B7 ${n} agents \u00B7 ${h.eventCount || 0} events`;
         $('versionLabel').textContent = h.version || '\u2014';
         $('eventsLabel').textContent = Number(h.eventCount || 0).toLocaleString();
-        $('scanningLabel').textContent = h.scanning ? 'running' : 'idle';
+        $('scanningLabel').textContent = h.scanning ? 'scanning' : 'idle';
         $('scanningLabel').classList.toggle('is-busy', Boolean(h.scanning));
         $('pricingRevLabel').textContent = String(h.pricingRevision ?? '\u2014');
-        $('runtimeLabel').textContent = `${h.platform || '\u2014'} \u00B7 ${h.node || '\u2014'}`;
+        $('runtimeLabel').textContent = `${h.platform || '\u2014'} ${h.node || ''}`.trim();
         if (h.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt, h.timezone);
         }
@@ -246,7 +200,7 @@
         const c = await fetch('/api/config').then((r) => r.json());
         const pathEl = $('configPath');
         pathEl.textContent = c.configPath || '\u2014';
-        pathEl.title = c.configPath || '';
+        pathEl.parentElement.title = c.configPath || '';
         $('currencyLabel').textContent = c.pricing?.currency || 'USD';
         $('preferRouterCost').checked = c.pricing?.preferRouterCost !== false;
         fillTimezoneSelect(c.timezone || 'local');
@@ -279,7 +233,7 @@
         if (r.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(r.todayStartsAt, r.timezone || tz);
         }
-        setTimeout(() => { $('prefsStatus').textContent = ''; }, 2200);
+        setTimeout(() => { $('prefsStatus').textContent = ''; }, 1800);
       } catch {
         $('prefsStatus').textContent = 'Failed';
       } finally {
@@ -293,21 +247,20 @@
       try {
         const r = await fetch('/api/scan?async=1', { method: 'POST' }).then((x) => x.json());
         $('rescanStatus').textContent = r.accepted ? 'Started\u2026' : 'Done';
-        // Poll briefly for completion
         let n = 0;
         const tick = async () => {
           n += 1;
           await loadHealth();
-          const scanning = $('scanningLabel').textContent === 'running';
+          const scanning = $('scanningLabel').textContent === 'scanning';
           if (scanning && n < 40) {
             setTimeout(tick, 800);
           } else {
-            $('rescanStatus').textContent = scanning ? 'Still scanning\u2026' : 'Up to date';
-            setTimeout(() => { $('rescanStatus').textContent = ''; }, 2500);
+            $('rescanStatus').textContent = scanning ? 'Still scanning\u2026' : 'Done';
+            setTimeout(() => { $('rescanStatus').textContent = ''; }, 2000);
             $('rescanBtn').disabled = false;
           }
         };
-        setTimeout(tick, 600);
+        setTimeout(tick, 500);
       } catch {
         $('rescanStatus').textContent = 'Failed';
         $('rescanBtn').disabled = false;
