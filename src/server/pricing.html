@@ -446,38 +446,41 @@
         ? `<div class="or-more muted">Showing ${MAX} of ${list.length} — refine search</div>`
         : '';
 
-      $('modelList').innerHTML = slice.map((m) => {
+      const head = `<div class="or-head" aria-hidden="true">
+        <span class="or-head-model">Model</span>
+        <span class="or-head-in">In $/1M</span>
+        <span class="or-head-out">Out $/1M</span>
+      </div>`;
+
+      const rows = slice.map((m) => {
         const rates = effectiveRates(m);
         const id = escapeHtml(m.id);
         const free = Number(rates.input) === 0 && Number(rates.output) === 0;
         const src = rates.source;
         const displayName = escapeHtml((m.name || m.id || '').replace(/^[^:]+:\s*/, ''));
+        // One horizontal row: icon + name | in | out (labels only in header)
         return `<article class="or-row ${src === 'custom' || src === 'draft' ? 'is-custom' : ''} ${free ? 'is-free' : ''}" data-id="${id}">
-          ${providerIconHtml(m.provider)}
-          <div class="or-card-main">
-            <div class="or-card-title-row">
-              <h3 class="or-card-name" title="${escapeHtml(m.name)}">${displayName}</h3>
-              ${free ? '<span class="or-badge free">Free</span>' : ''}
-              ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
-            </div>
-            <div class="or-card-meta">
-              <code class="or-id">${id}</code>
-              <span class="or-dot">·</span>
-              <span>${fmtCtx(m.contextLength)}</span>
+          <div class="or-cell-model">
+            ${providerIconHtml(m.provider)}
+            <div class="or-card-main">
+              <div class="or-card-title-row">
+                <h3 class="or-card-name" title="${escapeHtml(m.name)}">${displayName}</h3>
+                ${free ? '<span class="or-badge free">Free</span>' : ''}
+                ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
+              </div>
+              <div class="or-card-meta">
+                <code class="or-id">${id}</code>
+                <span class="or-dot">·</span>
+                <span>${fmtCtx(m.contextLength)}</span>
+              </div>
             </div>
           </div>
-          <div class="or-card-rates">
-            <label class="or-rate">
-              <span>In</span>
-              <input class="price-input" data-field="in" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.input)}" />
-            </label>
-            <label class="or-rate">
-              <span>Out</span>
-              <input class="price-input" data-field="out" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.output)}" />
-            </label>
-          </div>
+          <input class="price-input or-in" data-field="in" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.input)}" aria-label="Input $/1M" title="Input $/1M" />
+          <input class="price-input or-out" data-field="out" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.output)}" aria-label="Output $/1M" title="Output $/1M" />
         </article>`;
-      }).join('') + more;
+      }).join('');
+
+      $('modelList').innerHTML = head + rows + more;
     }
 
     function scheduleRender() {
