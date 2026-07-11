@@ -234,17 +234,28 @@ async function restoreOpenrouter(or: XlabBackup["openrouter"]): Promise<boolean>
   return true;
 }
 
+function safeMirrorPath(root: string, rel: string): string | null {
+  if (!rel || typeof rel !== "string") return null;
+  // Normalize separators; reject absolute / drive-letter / parent segments
+  const normalized = rel.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+  if (!normalized) return null;
+  if (path.isAbsolute(normalized) || /^[a-zA-Z]:/.test(normalized)) return null;
+  if (normalized.split("/").some((p) => p === ".." || p === "" || p === ".")) return null;
+  const rootResolved = path.resolve(root);
+  const full = path.resolve(rootResolved, ...normalized.split("/"));
+  const prefix = rootResolved.endsWith(path.sep) ? rootResolved : rootResolved + path.sep;
+  if (full !== rootResolved && !full.startsWith(prefix)) return null;
+  return full;
+}
+
 async function restoreMirrors(mirrors: Record<string, string> | undefined): Promise<number> {
   if (!mirrors || typeof mirrors !== "object") return 0;
   const root = mirrorsRoot();
   let n = 0;
   for (const [rel, content] of Object.entries(mirrors)) {
-    if (!rel || typeof content !== "string") continue;
-    // Prevent path escape
-    const normalized = rel.replace(/\\/g, "/").replace(/^\/+/, "");
-    if (normalized.includes("..") || path.isAbsolute(normalized)) continue;
-    const full = path.join(root, ...normalized.split("/"));
-    if (!full.startsWith(root)) continue;
+    if (typeof content !== "string") continue;
+    const full = safeMirrorPath(root, rel);
+    if (!full) continue;
     await mkdir(path.dirname(full), { recursive: true });
     await writeFile(full, content, "utf8");
     n += 1;
