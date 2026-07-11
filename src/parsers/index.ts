@@ -4,8 +4,26 @@ import { pathExists } from "../util.js";
 import { parseClaudeCode } from "./claude-code.js";
 import { parseCodex } from "./codex.js";
 import { parseCursor } from "./cursor.js";
+import {
+  parseAmp,
+  parseAntigravity,
+  parseCline,
+  parseCopilot,
+  parseDroid,
+  parseGoose,
+  parseKiloCode,
+  parseKimi,
+  parsePi,
+  parseQwen,
+  parseRooCode,
+  parseTrae,
+  parseWarp,
+  parseZed,
+} from "./extra-agents.js";
 import { parseGemini } from "./gemini.js";
 import { parseGrok } from "./grok.js";
+import { parseHermes } from "./hermes.js";
+import { parseOpenClaw } from "./openclaw.js";
 import { parseOpenCode } from "./opencode.js";
 import { parseWindsurf } from "./windsurf.js";
 
@@ -19,7 +37,22 @@ const PARSERS: Record<AgentId, ParserFn | null> = {
   grok: parseGrok,
   gemini: parseGemini,
   opencode: parseOpenCode,
-  copilot: null, // path detect only for now
+  copilot: parseCopilot,
+  hermes: parseHermes,
+  openclaw: parseOpenClaw,
+  pi: parsePi,
+  kimi: parseKimi,
+  qwen: parseQwen,
+  droid: parseDroid,
+  amp: parseAmp,
+  goose: parseGoose,
+  cline: parseCline,
+  roocode: parseRooCode,
+  kilocode: parseKiloCode,
+  antigravity: parseAntigravity,
+  warp: parseWarp,
+  trae: parseTrae,
+  zed: parseZed,
   custom: null,
 };
 
@@ -44,7 +77,6 @@ export async function scanAll(enabled?: Partial<Record<AgentId, boolean>>): Prom
     }
   }
 
-  // stable sort by time
   all.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   return all;
 }
@@ -65,9 +97,7 @@ export async function detectAgents(events: UsageEvent[] = []): Promise<AgentStat
       if (await pathExists(r)) paths.push(r);
     }
     const list = byAgent.get(spec.id) ?? [];
-    const last = list.length
-      ? list.map((e) => e.timestamp).sort().at(-1) ?? null
-      : null;
+    const last = list.length ? (list.map((e) => e.timestamp).sort().at(-1) ?? null) : null;
     out.push({
       id: spec.id,
       label: spec.label,
