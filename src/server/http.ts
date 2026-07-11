@@ -61,6 +61,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       return json(res, 200, {
         ok: true,
         version: VERSION,
+        platform: process.platform,
+        arch: process.arch,
+        node: process.version,
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         agentsDetected: agents.filter((a) => a.detected).map((a) => a.id),
         eventCount: cache.length,

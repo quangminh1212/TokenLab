@@ -3,7 +3,7 @@ import { aggregate, costReport } from "./aggregate.js";
 import { detectAgents, scanAll } from "./agents/index.js";
 import { startServer } from "./server/http.js";
 import type { GroupBy } from "./types.js";
-import { filterByPeriod, formatTokens, formatUsd } from "./util.js";
+import { filterByPeriod, formatTokens, formatUsd, openBrowser } from "./util.js";
 import { VERSION } from "./version.js";
 
 function printHelp(): void {
@@ -12,13 +12,15 @@ function printHelp(): void {
 Local-first token API usage & cost tracker for AI agents on this machine.
 
 Usage:
-  xlab-token serve [--host 127.0.0.1] [--port 3737] [--no-ui]
+  xlab-token serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open]
   xlab-token stats [--since 24h|7d|30d] [--by agent|model|day] [--sort tokens|cost] [--json]
   xlab-token cost  [--since 7d] [--json]
   xlab-token scan  [--json]
   xlab-token doctors [--json]
   xlab-token --version
   xlab-token --help
+
+Platforms: Windows, macOS, Linux (Node.js 20+)
 
 Inspired by tokscale / codeburn / ccusage feature sets — original implementation.
 `);
@@ -51,14 +53,17 @@ async function main(): Promise<void> {
     const host = getFlag(args, "--host") || undefined;
     const port = getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined;
     const noUi = has(args, "--no-ui");
+    const shouldOpen = has(args, "--open") || process.env.XLAB_TOKEN_OPEN === "1";
     const srv = await startServer({ host, port, noUi });
-    console.log(`XLab Token v${VERSION}`);
+    const uiUrl = `http://${srv.host}:${srv.port}/`;
+    console.log(`XLab Token v${VERSION}  (${process.platform}/${process.arch})`);
     console.log(`API  http://${srv.host}:${srv.port}/api/health`);
-    if (!noUi) console.log(`UI   http://${srv.host}:${srv.port}/`);
+    if (!noUi) console.log(`UI   ${uiUrl}`);
     console.log("Press Ctrl+C to stop");
+    if (shouldOpen && !noUi) openBrowser(uiUrl);
 
     let shuttingDown = false;
-    const shutdown = async (signal: string) => {
+    const shutdown = async (_signal: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
       try {
@@ -66,7 +71,7 @@ async function main(): Promise<void> {
       } catch {
         // ignore close errors on hot-reload restart
       }
-      process.exit(signal === "SIGTERM" ? 0 : 0);
+      process.exit(0);
     };
     process.on("SIGINT", () => void shutdown("SIGINT"));
     process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -87,11 +92,12 @@ async function main(): Promise<void> {
   if (cmd === "doctors" || cmd === "doctor") {
     const events = await scanAll();
     const agents = await detectAgents(events);
+    const meta = { platform: process.platform, arch: process.arch, node: process.version };
     if (has(args, "--json")) {
-      console.log(JSON.stringify({ agents }, null, 2));
+      console.log(JSON.stringify({ ...meta, agents }, null, 2));
       return;
     }
-    console.log(`XLab Token doctors v${VERSION}\n`);
+    console.log(`XLab Token doctors v${VERSION}  (${meta.platform}/${meta.arch} ${meta.node})\n`);
     for (const a of agents) {
       const mark = a.detected ? (a.enabled ? "OK " : "PATH") : " -- ";
       console.log(

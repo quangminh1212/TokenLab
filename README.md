@@ -204,12 +204,14 @@ Parsers ship incrementally; `xlab-token doctors` reports which agents are detect
 
 ## Quick start
 
+Works on **Windows**, **macOS**, and **Linux** (Node.js 20+).
+
 ### One-shot
 
 ```bash
-npx xlab-token@latest
+npx xlab-token@latest serve
 # or
-bunx xlab-token@latest
+bunx xlab-token@latest serve
 ```
 
 ### Global install
@@ -217,12 +219,32 @@ bunx xlab-token@latest
 ```bash
 npm install -g xlab-token
 xlab-token serve
+# optional: open default browser
+xlab-token serve --open
 ```
 
 Open:
 
 ```text
 http://127.0.0.1:3737
+```
+
+### Local clone (dev / hot reload)
+
+```bash
+git clone https://github.com/quangminh1212/XLab_Token.git
+cd XLab_Token
+npm install
+
+# Windows
+run.bat
+
+# macOS / Linux
+chmod +x run.sh
+./run.sh
+
+# or cross-platform
+npm run serve:watch
 ```
 
 ### Token + cost snapshot (CLI)
@@ -236,6 +258,9 @@ xlab-token stats --since 24h --by agent --sort cost
 
 # Cost only summary
 xlab-token cost --since 7d --currency USD
+
+# Which agents exist on this machine
+xlab-token doctors
 ```
 
 ---
@@ -538,29 +563,35 @@ Do not bind to `0.0.0.0` on untrusted networks. Treat the DB as sensitive if wor
 ## Development
 
 ```bash
-git clone https://github.com/<org>/XLab_Token.git
+git clone https://github.com/quangminh1212/XLab_Token.git
 cd XLab_Token
 npm install
-npm run dev
 npm test
 npm run build
 npm start
 ```
 
+| OS | Dev launcher |
+|----|----------------|
+| Windows | `run.bat` |
+| macOS / Linux | `./run.sh` |
+| Any | `npm run serve:watch` |
+
+Agent data paths are resolved per platform (`%APPDATA%` / `~/Library/Application Support` / XDG). Extension-based agents also scan VS Code, Cursor, VSCodium, Code - OSS, and Windsurf `globalStorage`.
+
 ```text
-packages/
-  cli/      # xlab-token binary
-  core/     # scanners, parsers, cost engine, store
-  server/   # HTTP API (stats + cost)
-  web/      # localhost dashboard
+src/
+  agents/   # one folder per agent (paths + parser)
+  server/   # HTTP API + dashboard
+  cli.ts    # xlab-token binary
 ```
 
 | Script | Purpose |
 |--------|---------|
-| `dev` | API + UI hot reload |
+| `dev` | CLI via tsx |
+| `serve:watch` | API + UI hot reload |
 | `build` | Production build |
 | `test` | Unit + parser fixtures |
-| `lint` | Lint |
 | `typecheck` | TypeScript check |
 
 ---

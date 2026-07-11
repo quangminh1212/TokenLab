@@ -32,6 +32,11 @@
   "engines": {
     "node": ">=20"
   },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
   "keywords": [
     "token-usage",
     "cost-tracking",
@@ -43,7 +48,10 @@
     "grok",
     "devin",
     "localhost",
-    "xlab"
+    "xlab",
+    "macos",
+    "linux",
+    "windows"
   ],
   "author": "XLab",
   "license": "MIT",
@@ -62,7 +70,9 @@
     "dist",
     "README.md",
     "LICENSE",
-    "ATTRIBUTION.md"
+    "ATTRIBUTION.md",
+    "run.sh",
+    "run.bat"
   ],
   "devDependencies": {
     "@types/node": "^22.15.0",
