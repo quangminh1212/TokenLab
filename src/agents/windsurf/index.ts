@@ -1,5 +1,5 @@
 import type { AgentModule } from "../shared/types.js";
-import { pathEnv, unique } from "../shared/env.js";
+import { pathEnv, unique, vscodeGlobalStorage } from "../shared/env.js";
 
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -407,7 +407,7 @@ export const agent: AgentModule = {
   id: "windsurf",
   label: "Windsurf",
   roots() {
-    const { home, appData, localApp, path } = pathEnv();
+    const { home, appData, localApp, xdgConfig, xdgData, path } = pathEnv();
     return unique([
       path.join(home, ".codeium", "windsurf"),
       path.join(home, ".codeium"),
@@ -419,11 +419,12 @@ export const agent: AgentModule = {
       path.join(appData, "Windsurf - Insiders"),
       path.join(localApp, "Windsurf"),
       path.join(localApp, "Programs", "Windsurf"),
-      // Extension host leftovers under VS Code / Cursor
-      path.join(appData, "Code", "User", "globalStorage", "codeium.windsurf"),
-      path.join(appData, "Code", "User", "globalStorage", "codeium.codeium"),
-      path.join(appData, "Cursor", "User", "globalStorage", "codeium.windsurf"),
-      path.join(appData, "Cursor", "User", "globalStorage", "codeium.codeium"),
+      // Linux XDG / portable
+      path.join(xdgConfig, "Windsurf"),
+      path.join(xdgData, "Windsurf"),
+      path.join(xdgConfig, "Windsurf - Insiders"),
+      // Extension host leftovers under VS Code family (Win/macOS/Linux)
+      ...vscodeGlobalStorage("codeium.windsurf", "codeium.codeium"),
     ]);
   },
   parse: parseWindsurf,

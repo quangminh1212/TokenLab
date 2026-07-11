@@ -1,18 +1,17 @@
 import type { AgentModule } from "../shared/types.js";
-import { pathEnv, unique } from "../shared/env.js";
+import { pathEnv, unique, vscodeGlobalStorage } from "../shared/env.js";
 import { parseGenericJsonl } from "../shared/generic-jsonl.js";
 
 export const agent: AgentModule = {
   id: "blackbox",
   label: "Blackbox AI",
   roots() {
-    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    const { home, appData, path } = pathEnv();
     return unique([
       path.join(home, ".blackboxai"),
-        path.join(home, ".blackbox"),
-        path.join(appData, "Blackbox"),
-        path.join(appData, "Code", "User", "globalStorage", "blackboxapp.blackbox"),
-        path.join(appData, "Cursor", "User", "globalStorage", "blackboxapp.blackbox"),
+      path.join(home, ".blackbox"),
+      path.join(appData, "Blackbox"),
+      ...vscodeGlobalStorage("blackboxapp.blackbox"),
     ]);
   },
   parse: (roots) =>

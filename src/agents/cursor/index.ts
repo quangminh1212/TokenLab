@@ -110,12 +110,16 @@ export const agent: AgentModule = {
   id: "cursor",
   label: "Cursor",
   roots() {
-    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    const { home, appData, localApp, xdgData, xdgConfig, path } = pathEnv();
     return unique([
       path.join(appData, "Cursor"),
+      path.join(appData, "Cursor - Nightly"),
       path.join(home, ".cursor"),
       path.join(localApp, "Cursor"),
       path.join(xdgConfig, "Cursor"),
+      path.join(xdgData, "Cursor"),
+      // macOS explicit + Linux portable
+      path.join(home, "Library", "Application Support", "Cursor"),
     ]);
   },
   parse: parseCursor,

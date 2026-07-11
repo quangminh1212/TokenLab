@@ -1,17 +1,17 @@
 import type { AgentModule } from "../shared/types.js";
-import { pathEnv, unique } from "../shared/env.js";
+import { jetbrainsRoots, pathEnv, unique } from "../shared/env.js";
 import { parseGenericJsonl } from "../shared/generic-jsonl.js";
 
 export const agent: AgentModule = {
   id: "junie",
   label: "JetBrains Junie",
   roots() {
-    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    const { home, xdgData, path } = pathEnv();
     return unique([
       path.join(home, ".junie"),
       path.join(xdgData, "junie"),
-      path.join(appData, "JetBrains", "Junie"),
-      path.join(localApp, "JetBrains"),
+      ...jetbrainsRoots("Junie"),
+      ...jetbrainsRoots(),
     ]);
   },
   parse: (roots) =>

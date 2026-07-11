@@ -1,5 +1,5 @@
 import type { AgentModule } from "../shared/types.js";
-import { pathEnv, unique } from "../shared/env.js";
+import { pathEnv, unique, vscodeGlobalStorage } from "../shared/env.js";
 import path from "node:path";
 import { parseGenericJsonl } from "../shared/generic-jsonl.js";
 
@@ -7,12 +7,12 @@ export const agent: AgentModule = {
   id: "copilot",
   label: "GitHub Copilot",
   roots() {
-    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    const { home, appData, path: p, expandHome } = pathEnv();
     return unique([
-      expandHome(process.env.COPILOT_OTEL_FILE_EXPORTER_PATH || path.join(home, ".copilot")),
-      path.join(home, ".copilot"),
-      path.join(appData, "GitHub Copilot"),
-      path.join(appData, "Code", "User", "globalStorage", "github.copilot-chat"),
+      expandHome(process.env.COPILOT_OTEL_FILE_EXPORTER_PATH || p.join(home, ".copilot")),
+      p.join(home, ".copilot"),
+      p.join(appData, "GitHub Copilot"),
+      ...vscodeGlobalStorage("github.copilot-chat", "github.copilot"),
     ]);
   },
   parse: (roots) =>

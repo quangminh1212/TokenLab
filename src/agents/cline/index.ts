@@ -1,16 +1,15 @@
 import type { AgentModule } from "../shared/types.js";
-import { pathEnv, unique } from "../shared/env.js";
+import { pathEnv, unique, vscodeGlobalStorage } from "../shared/env.js";
 import { parseGenericJsonl } from "../shared/generic-jsonl.js";
 
 export const agent: AgentModule = {
   id: "cline",
   label: "Cline",
   roots() {
-    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    const { home, path } = pathEnv();
     return unique([
       path.join(home, ".cline"),
-      path.join(appData, "Code", "User", "globalStorage", "saoudrizwan.claude-dev"),
-      path.join(appData, "Cursor", "User", "globalStorage", "saoudrizwan.claude-dev"),
+      ...vscodeGlobalStorage("saoudrizwan.claude-dev"),
     ]);
   },
   parse: (roots) =>
