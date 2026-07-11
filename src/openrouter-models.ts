@@ -178,6 +178,19 @@ export async function loadOpenRouterCacheFromDisk(): Promise<number> {
   return 0;
 }
 
+/** Replace OpenRouter catalog (used by full backup restore). */
+export async function replaceOpenRouterCache(cache: {
+  fetchedAt: number;
+  models: OpenRouterModelEntry[];
+}): Promise<number> {
+  memory = {
+    fetchedAt: Number(cache.fetchedAt) || Date.now(),
+    models: Array.isArray(cache.models) ? cache.models : [],
+  };
+  await writeDiskCache(memory);
+  return memory.models.length;
+}
+
 function rateFromEntry(e: OpenRouterModelEntry): ModelRate {
   return {
     inputPer1M: e.inputPer1M,

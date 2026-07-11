@@ -110,27 +110,35 @@
         <div class="settings-section-head">
           <h2>Backup &amp; restore</h2>
           <p>
-            Export settings and custom model rates. Usage events stay on this machine (re-scanned from agents).
-            You can also push a <strong>secret</strong> file to a GitHub Gist.
+            Export / import project data: settings, custom rates, scanned usage events,
+            OpenRouter catalog, and local router mirrors (when size allows).
           </p>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Download JSON</span>
-            <span class="settings-help">Portable backup of timezone, cost prefs, and custom rates.</span>
+            <span class="settings-label">Export full project</span>
+            <span class="settings-help">Config + rates + events + OpenRouter cache + mirrors (may be large).</span>
           </div>
-          <button type="button" class="btn" id="backupDownload">Download</button>
+          <button type="button" class="btn btn-primary" id="backupDownloadFull">Export full</button>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Restore from file</span>
-            <span class="settings-help">Merge a previous xlab-token-backup.json into this install.</span>
+            <span class="settings-label">Export settings only</span>
+            <span class="settings-help">Timezone, cost prefs, custom rates — small file, ideal for Gist.</span>
+          </div>
+          <button type="button" class="btn" id="backupDownloadSettings">Export settings</button>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-label">Import backup</span>
+            <span class="settings-help">Restore a previous <code>xlab-token-backup-*.json</code> (settings or full).</span>
           </div>
           <div class="settings-inline-actions">
             <input type="file" id="backupRestoreFile" accept="application/json,.json" hidden />
-            <button type="button" class="btn" id="backupRestoreBtn">Choose file…</button>
+            <button type="button" class="btn" id="backupRestoreBtn">Import file…</button>
             <span class="settings-status" id="backupRestoreStatus" aria-live="polite"></span>
           </div>
         </div>
@@ -139,8 +147,8 @@
           <div class="settings-row-text">
             <span class="settings-label">GitHub Gist</span>
             <span class="settings-help">
-              Requires a classic PAT with the <code>gist</code> scope.
-              Prefer env <code>XLAB_GITHUB_TOKEN</code> (or paste below). Secret gist by default.
+              Secret gist of <strong>settings</strong> (full project is usually too large for Gist).
+              Classic PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>.
             </span>
           </div>
           <div class="settings-gist-box">
@@ -372,21 +380,57 @@
       }
     }
 
-    $('backupDownload').onclick = async () => {
+    async function downloadBackup(scope) {
+      const q = scope === 'settings' ? '?scope=settings' : '?scope=full';
+      const statusId = scope === 'settings' ? null : null;
       try {
-        const backup = await fetch('/api/backup').then((r) => r.json());
-        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+        if (scope === 'full') {
+          // Full export can take a moment with 100k+ events
+          const btn = $('backupDownloadFull');
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Exporting\u2026';
+          }
+        }
+        const res = await fetch('/api/backup' + q);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const backup = await res.json();
+        if (backup.error) throw new Error(backup.error.message || 'Export failed');
+        const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const day = new Date().toISOString().slice(0, 10);
+        const tag = backup.scope === 'full' ? 'full' : 'settings';
+        const events = backup.meta?.eventCount || backup.events?.length || 0;
         a.href = url;
-        a.download = `xlab-token-backup-${day}.json`;
+        a.download = `xlab-token-backup-${tag}-${day}.json`;
         a.click();
         URL.revokeObjectURL(url);
-      } catch {
-        alert('Download failed');
+        if (scope === 'full') {
+          const btn = $('backupDownloadFull');
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Export full';
+          }
+          // brief toast via restore status area
+          const st = $('backupRestoreStatus');
+          if (st) {
+            st.textContent = `Exported \u00B7 ${events} events \u00B7 ${backup.meta?.openrouterModelCount || 0} models`;
+            setTimeout(() => { st.textContent = ''; }, 3200);
+          }
+        }
+      } catch (e) {
+        alert(e instanceof Error ? e.message : 'Download failed');
+        const btn = $('backupDownloadFull');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Export full';
+        }
       }
-    };
+    }
+
+    $('backupDownloadFull').onclick = () => downloadBackup('full');
+    $('backupDownloadSettings').onclick = () => downloadBackup('settings');
 
     $('backupRestoreBtn').onclick = () => $('backupRestoreFile').click();
     $('backupRestoreFile').onchange = async () => {
@@ -394,7 +438,7 @@
       $('backupRestoreFile').value = '';
       if (!file) return;
       const st = $('backupRestoreStatus');
-      st.textContent = 'Restoring\u2026';
+      st.textContent = 'Importing\u2026';
       try {
         const text = await file.text();
         const backup = JSON.parse(text);
@@ -403,12 +447,18 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ backup }),
         }).then((r) => r.json());
-        if (res.error) throw new Error(res.error.message || 'Restore failed');
-        st.textContent = `Restored \u00B7 ${res.customRateCount || 0} rates`;
+        if (res.error) throw new Error(res.error.message || 'Import failed');
+        const parts = [
+          `${res.customRateCount || 0} rates`,
+          res.eventsRestored ? `${res.eventsRestored} events` : null,
+          res.openrouterRestored ? 'OpenRouter cache' : null,
+          res.mirrorsRestored ? `${res.mirrorsRestored} mirrors` : null,
+        ].filter(Boolean);
+        st.textContent = 'Imported \u00B7 ' + parts.join(' \u00B7 ');
         await loadConfigUi();
-        setTimeout(() => { st.textContent = ''; }, 2500);
+        setTimeout(() => { st.textContent = ''; }, 4000);
       } catch (e) {
-        st.textContent = e instanceof Error ? e.message : 'Restore failed';
+        st.textContent = e instanceof Error ? e.message : 'Import failed';
       }
     };
 

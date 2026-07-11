@@ -4,7 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
 import { detectAgents, scanAll } from "../agents/index.js";
-import { buildBackup, restoreBackup, uploadBackupToGist } from "../backup.js";
+import {
+  buildFullBackup,
+  buildSettingsBackup,
+  restoreBackup,
+  uploadBackupToGist,
+} from "../backup.js";
 import { loadConfig, saveConfig, setCustomRates, configPath, getConfigSync } from "../config.js";
 import {
   fetchOpenRouterModels,
@@ -466,10 +471,27 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       });
     }
 
-    // Portable backup of settings + custom model rates (not raw usage logs)
+    // Backup: ?scope=settings|full (default full for download)
     if (req.method === "GET" && pathname === "/api/backup") {
-      const backup = buildBackup({ eventCountHint: cache.length });
-      return json(res, 200, backup);
+      const scope = url.searchParams.get("scope") === "settings" ? "settings" : "full";
+      if (scope === "settings") {
+        return json(res, 200, buildSettingsBackup({ eventCountHint: cache.length }));
+      }
+      try {
+        const includeMirrors = url.searchParams.get("mirrors") !== "0";
+        const backup = await buildFullBackup({
+          events: cache,
+          includeMirrors,
+        });
+        return json(res, 200, backup);
+      } catch (err) {
+        return json(res, 500, {
+          error: {
+            code: "BACKUP_FAILED",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
     }
 
     if (req.method === "POST" && pathname === "/api/backup/gist") {
@@ -481,12 +503,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           public: body.public === true,
           eventCountHint: cache.length,
           saveToken: body.saveToken === true,
+          // Gist: settings by default (size limits); full only if requested & fits
+          scope: body.scope === "full" ? "full" : "settings",
+          events: cache,
         });
         return json(res, 200, {
           ok: true,
           gist: result.gist,
+          scope: result.scope,
           exportedAt: result.backup.exportedAt,
           customRateCount: Object.keys(result.backup.config.pricing?.customRates || {}).length,
+          eventCount: result.backup.events?.length || result.backup.meta?.eventCount || 0,
         });
       } catch (err) {
         return json(res, 400, {
@@ -503,13 +530,26 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const payload = (body.backup && typeof body.backup === "object" ? body.backup : body) as unknown;
       try {
         const result = await restoreBackup(payload);
-        cache = repriceEvents(cache, {
-          forceTable: result.config.pricing?.preferRouterCost === false,
-        });
+        // Full restore: replace in-memory event cache when present
+        if (result.events && result.events.length > 0) {
+          cache = repriceEvents(result.events, {
+            forceTable: result.config.pricing?.preferRouterCost === false,
+          });
+          bumpScan("restore");
+        } else {
+          cache = repriceEvents(cache, {
+            forceTable: result.config.pricing?.preferRouterCost === false,
+          });
+        }
         bumpPricing("restore");
         return json(res, 200, {
           ok: true,
+          scope: result.scope,
           customRateCount: result.customRateCount,
+          eventCount: cache.length,
+          eventsRestored: result.events?.length || 0,
+          openrouterRestored: result.openrouterRestored,
+          mirrorsRestored: result.mirrorsRestored,
           timezone: result.config.timezone || "local",
         });
       } catch (err) {
