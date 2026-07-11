@@ -32,8 +32,8 @@
       </nav>
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading…</span>
-        <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
-        <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings">⚙</a>
+        <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
+        <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings"></a>
       </div>
     </div>
   </header>
@@ -45,8 +45,8 @@
         <p>Map local coding agents on this machine — live / detected / offline, with token &amp; cost when available.</p>
       </div>
       <div class="toolbar" style="margin:0">
-        <button class="btn" id="refresh" type="button">Refresh</button>
-        <button class="btn btn-primary" id="scan" type="button">Rescan</button>
+        <button class="btn btn-with-icon" id="refresh" type="button">Refresh</button>
+        <button class="btn btn-primary btn-with-icon" id="scan" type="button">Rescan</button>
       </div>
     </section>
 
@@ -185,13 +185,26 @@
     let tokensByAgent = {};
     let currentFilter = 'all';
 
+    const ICONS = {
+      moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
+      sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+      settings: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>',
+      refresh: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
+      scan: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>',
+    };
+
     function applyTheme(mode) {
       document.documentElement.classList.toggle('dark', mode === 'dark');
       localStorage.setItem('xlab-token-theme', mode);
-      $('themeBtn').textContent = mode === 'dark' ? '☀' : '☾';
-      $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+      const btn = $('themeBtn');
+      btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
+      btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+      btn.setAttribute('aria-label', mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
+    $('settingsBtn').innerHTML = ICONS.settings;
+    $('refresh').innerHTML = ICONS.refresh + '<span>Refresh</span>';
+    $('scan').innerHTML = ICONS.scan + '<span>Rescan</span>';
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
@@ -399,13 +412,13 @@
     $('since').onchange = load;
     $('scan').onclick = async () => {
       $('scan').disabled = true;
-      $('scan').textContent = 'Scanning…';
+      $('scan').innerHTML = ICONS.scan + '<span>Scanning…</span>';
       try {
         await fetch('/api/scan', { method: 'POST' });
         await load();
       } finally {
         $('scan').disabled = false;
-        $('scan').textContent = 'Rescan';
+        $('scan').innerHTML = ICONS.scan + '<span>Rescan</span>';
       }
     };
     load();
