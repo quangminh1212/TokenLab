@@ -27,39 +27,83 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
   let cache: UsageEvent[] = [];
   let scanning = false;
+  /** Shared promise so concurrent /api/scan waits for the in-flight scan (not empty cache). */
+  let scanPromise: Promise<number> | null = null;
+  /** Bumps after each completed scan so UIs can reload when cache fills. */
+  let scanRevision = 0;
+  let scanUpdatedAt = 0;
   /** Bumps when pricing rates change so UIs can refresh costs in realtime. */
   let pricingRevision = 1;
   let pricingUpdatedAt = Date.now();
-  const pricingListeners = new Set<ServerResponse>();
+  /** SSE clients (pricing + scan status). */
+  const streamListeners = new Set<ServerResponse>();
+
+  function broadcastStream(payload: Record<string, unknown>): void {
+    const data = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const res of streamListeners) {
+      try {
+        res.write(data);
+      } catch {
+        streamListeners.delete(res);
+      }
+    }
+  }
 
   function bumpPricing(reason = "update"): void {
     pricingRevision += 1;
     pricingUpdatedAt = Date.now();
-    const payload = `data: ${JSON.stringify({
+    broadcastStream({
       type: "pricing",
       revision: pricingRevision,
       updatedAt: pricingUpdatedAt,
       reason,
       eventCount: cache.length,
-    })}\n\n`;
-    for (const res of pricingListeners) {
-      try {
-        res.write(payload);
-      } catch {
-        pricingListeners.delete(res);
-      }
-    }
+      scanning,
+      scanRevision,
+    });
+  }
+
+  function bumpScan(reason = "scan"): void {
+    scanRevision += 1;
+    scanUpdatedAt = Date.now();
+    broadcastStream({
+      type: "scan",
+      revision: scanRevision,
+      updatedAt: scanUpdatedAt,
+      reason,
+      eventCount: cache.length,
+      scanning: false,
+      pricingRevision,
+    });
   }
 
   async function rescan(): Promise<number> {
-    if (scanning) return cache.length;
+    // Coalesce concurrent rescans — never return mid-scan empty cache to callers.
+    if (scanPromise) return scanPromise;
     scanning = true;
-    try {
-      cache = await scanAll();
-      return cache.length;
-    } finally {
-      scanning = false;
-    }
+    broadcastStream({
+      type: "scan",
+      revision: scanRevision,
+      updatedAt: Date.now(),
+      reason: "start",
+      eventCount: cache.length,
+      scanning: true,
+      pricingRevision,
+    });
+    scanPromise = (async () => {
+      try {
+        cache = await scanAll();
+        bumpScan("complete");
+        return cache.length;
+      } catch (err) {
+        bumpScan("error");
+        throw err;
+      } finally {
+        scanning = false;
+        scanPromise = null;
+      }
+    })();
+    return scanPromise;
   }
 
   // Do NOT block listen on the full scan — large agent datasets (100k+ events)
@@ -96,6 +140,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         agentsDetected: agents.filter((a) => a.detected).map((a) => a.id),
         eventCount: cache.length,
         scanning,
+        scanRevision,
+        scanUpdatedAt,
         pricingRevision,
         pricingUpdatedAt,
       });
@@ -162,7 +208,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       });
     }
 
-    // Server-Sent Events: live pricing revision pushes for multi-tab / dashboard
+    // Server-Sent Events: pricing + scan completion for multi-tab / dashboard
     if (req.method === "GET" && pathname === "/api/pricing/stream") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream; charset=utf-8",
@@ -173,23 +219,26 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         `data: ${JSON.stringify({
           type: "hello",
           revision: pricingRevision,
+          pricingRevision,
+          scanRevision,
+          scanning,
           updatedAt: pricingUpdatedAt,
           eventCount: cache.length,
         })}\n\n`,
       );
-      pricingListeners.add(res);
+      streamListeners.add(res);
       const keepAlive = setInterval(() => {
         try {
           res.write(`: ping ${Date.now()}\n\n`);
         } catch {
           clearInterval(keepAlive);
-          pricingListeners.delete(res);
+          streamListeners.delete(res);
         }
       }, 15000);
       keepAlive.unref?.();
       req.on("close", () => {
         clearInterval(keepAlive);
-        pricingListeners.delete(res);
+        streamListeners.delete(res);
       });
       return;
     }

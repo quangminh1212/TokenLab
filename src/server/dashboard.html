@@ -180,7 +180,13 @@
       chartByHour: false,
       groups: [],
       totals: null,
+      scanning: false,
+      awaitingData: true, // until first non-empty scan or confirmed idle empty
+      scanRevision: 0,
+      lastEventCount: 0,
+      loading: false,
     };
+    let pricingRevision = 0;
 
     function isHourlyPeriod() {
       return state.period === 'today' || state.period === '24h';
@@ -345,9 +351,20 @@
       return new Date(iso).toLocaleDateString();
     }
 
+    function emptyMsg(kind) {
+      if (state.scanning || state.awaitingData) {
+        return kind === 'table'
+          ? 'Đang quét agents… dữ liệu sẽ hiện ngay khi xong.'
+          : 'Scanning agents…';
+      }
+      if (kind === 'chart') return 'No data for this period';
+      if (kind === 'table') return 'Chưa có usage. Dùng AI agents rồi bấm Refresh.';
+      return 'No events yet.';
+    }
+
     function renderRecent(events) {
       if (!events.length) {
-        $('recentBody').innerHTML = '<div class="chart-empty">No events yet.</div>';
+        $('recentBody').innerHTML = `<div class="chart-empty">${emptyMsg('recent')}</div>`;
         return;
       }
       $('recentBody').innerHTML = `
@@ -377,7 +394,7 @@
       const vals = series.map((d) => mode === 'tokens' ? (d.totalTokens || 0) : (d.estimatedCost || 0));
       const has = vals.some((v) => v > 0);
       if (!has) {
-        $('chartBody').innerHTML = '<div class="chart-empty">No data for this period</div>';
+        $('chartBody').innerHTML = `<div class="chart-empty">${emptyMsg('chart')}</div>`;
         return;
       }
 
@@ -444,7 +461,7 @@
 
       const groups = state.groups;
       if (!groups.length) {
-        $('tableBody').innerHTML = `<tr><td colspan="${head.length}"><div class="empty">Chưa có usage. Dùng AI agents rồi bấm Rescan.</div></td></tr>`;
+        $('tableBody').innerHTML = `<tr><td colspan="${head.length}"><div class="empty">${emptyMsg('table')}</div></td></tr>`;
         return;
       }
 
@@ -482,6 +499,8 @@
 
     async function load(opts = {}) {
       const quiet = opts.quiet === true;
+      if (state.loading && quiet) return; // avoid piling quiet reloads
+      state.loading = true;
       if (!quiet) $('fetchSpin').classList.remove('hidden');
       syncTimeGroupButton();
       const since = sinceParam();
@@ -520,8 +539,17 @@
         const rawSeries = (seriesStats.groups || []).slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
         state.daySeries = hourly ? fillHourSeries(rawSeries, state.period) : rawSeries;
 
+        const eventCount = health.eventCount || 0;
         const detected = health.agentsDetected?.length || 0;
-        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(health.eventCount || 0)} events`;
+        state.scanning = Boolean(health.scanning);
+        if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
+        if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
+        // First boot / empty cache: keep polling until first scan finishes
+        state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
+        state.lastEventCount = eventCount;
+
+        const scanHint = state.scanning ? ' · scanning…' : (state.awaitingData ? ' · waiting…' : '');
+        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(eventCount)} events${scanHint}`;
 
         renderOverview(state.totals);
         renderChart();
@@ -541,11 +569,26 @@
           .slice()
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         renderRecent(recent.slice(0, 25));
+
+        scheduleScanPoll();
       } catch {
         if (!quiet) $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+        // Still retry while bootstrapping empty UI
+        if (state.awaitingData || state.scanning) scheduleScanPoll();
       } finally {
+        state.loading = false;
         $('fetchSpin').classList.add('hidden');
       }
+    }
+
+    let scanPollTimer = 0;
+    function scheduleScanPoll() {
+      if (scanPollTimer) clearTimeout(scanPollTimer);
+      if (!state.scanning && !state.awaitingData) return;
+      scanPollTimer = setTimeout(() => {
+        scanPollTimer = 0;
+        void load({ quiet: true });
+      }, 1200);
     }
 
     // Segment handlers
@@ -593,25 +636,51 @@
     load();
     setInterval(() => void load({ quiet: true }), 30000);
 
-    // Realtime cost refresh when Settings updates model rates (quiet — no spinner/button flash)
-    let pricingRevision = 0;
-    function watchPricingStream() {
+    // Realtime: pricing rate changes + scan completion (fills empty bootstrap UI)
+    function watchLiveStream() {
       try {
         const es = new EventSource('/api/pricing/stream');
         es.onmessage = (ev) => {
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === 'hello') {
-              pricingRevision = msg.revision || 0;
+              pricingRevision = msg.pricingRevision || msg.revision || 0;
+              if (typeof msg.scanRevision === 'number') state.scanRevision = msg.scanRevision;
+              state.scanning = Boolean(msg.scanning);
+              if (msg.scanning || (msg.eventCount || 0) === 0) {
+                state.awaitingData = true;
+                scheduleScanPoll();
+              }
               return;
             }
             if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
               pricingRevision = msg.revision;
               void load({ quiet: true });
+              return;
+            }
+            if (msg.type === 'scan') {
+              const rev = msg.revision || 0;
+              const wasScanning = state.scanning;
+              state.scanning = Boolean(msg.scanning);
+              if (msg.reason === 'start') {
+                state.awaitingData = state.awaitingData || state.lastEventCount === 0;
+                scheduleScanPoll();
+                return;
+              }
+              // Scan finished (or error idle) — always reload so empty UI fills
+              if (rev !== state.scanRevision || wasScanning || msg.reason === 'complete') {
+                state.scanRevision = rev;
+                state.awaitingData = false;
+                void load({ quiet: true });
+              }
             }
           } catch {
             // ignore parse errors
           }
+        };
+        es.onerror = () => {
+          // Browser auto-reconnects; keep poll as backup
+          if (state.scanning || state.awaitingData) scheduleScanPoll();
         };
       } catch {
         // EventSource unavailable
@@ -619,16 +688,32 @@
       setInterval(async () => {
         try {
           const h = await fetch('/api/health').then((r) => r.json());
+          let need = false;
           if (h.pricingRevision && h.pricingRevision !== pricingRevision) {
             pricingRevision = h.pricingRevision;
-            void load({ quiet: true });
+            need = true;
+          }
+          if (typeof h.scanRevision === 'number' && h.scanRevision !== state.scanRevision) {
+            state.scanRevision = h.scanRevision;
+            need = true;
+          }
+          if (Boolean(h.scanning) !== state.scanning) {
+            state.scanning = Boolean(h.scanning);
+            need = true;
+          }
+          if ((h.eventCount || 0) !== state.lastEventCount) {
+            need = true;
+          }
+          if (need) void load({ quiet: true });
+          else if (h.scanning || ((h.eventCount || 0) === 0 && state.awaitingData)) {
+            scheduleScanPoll();
           }
         } catch {
           // offline
         }
       }, 3000);
     }
-    watchPricingStream();
+    watchLiveStream();
   </script>
 </body>
 </html>

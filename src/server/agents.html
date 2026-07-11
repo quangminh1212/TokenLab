@@ -380,6 +380,19 @@
       return v;
     }
 
+    let scanRevision = 0;
+    let awaitingData = true;
+    let scanPollTimer = 0;
+
+    function scheduleScanPoll() {
+      if (scanPollTimer) clearTimeout(scanPollTimer);
+      if (!awaitingData) return;
+      scanPollTimer = setTimeout(() => {
+        scanPollTimer = 0;
+        void load();
+      }, 1200);
+    }
+
     async function load() {
       const since = sinceParam();
       const agentStatsQ = new URLSearchParams({ groupBy: 'agent', sort: 'cost' });
@@ -391,7 +404,12 @@
           fetch('/api/health').then((r) => r.json()),
         ]);
         const detected = health.agentsDetected?.length || 0;
-        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(health.eventCount || 0)} events`;
+        const eventCount = health.eventCount || 0;
+        if (typeof health.scanRevision === 'number') scanRevision = health.scanRevision;
+        const scanning = Boolean(health.scanning);
+        awaitingData = scanning || (eventCount === 0 && scanRevision === 0);
+        const scanHint = scanning ? ' · scanning…' : '';
+        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(eventCount)} events${scanHint}`;
 
         costByAgent = {};
         tokensByAgent = {};
@@ -401,8 +419,10 @@
         }
         agentState = agents.agents || [];
         renderProviders();
+        if (awaitingData) scheduleScanPoll();
       } catch (e) {
         $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+        if (awaitingData) scheduleScanPoll();
       }
     }
 
@@ -439,16 +459,30 @@
     load();
     setInterval(load, 30000);
 
-    // Quiet reload when Settings updates rates (no button flash)
+    // Quiet reload on pricing changes + scan completion
     let pricingRevision = 0;
     try {
       const es = new EventSource('/api/pricing/stream');
       es.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
-          if (msg.type === 'hello') pricingRevision = msg.revision || 0;
+          if (msg.type === 'hello') {
+            pricingRevision = msg.pricingRevision || msg.revision || 0;
+            if (typeof msg.scanRevision === 'number') scanRevision = msg.scanRevision;
+            if (msg.scanning || (msg.eventCount || 0) === 0) {
+              awaitingData = true;
+              scheduleScanPoll();
+            }
+            return;
+          }
           if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
             pricingRevision = msg.revision;
+            void load();
+            return;
+          }
+          if (msg.type === 'scan' && msg.reason !== 'start') {
+            if (typeof msg.revision === 'number') scanRevision = msg.revision;
+            awaitingData = false;
             void load();
           }
         } catch { /* ignore */ }
