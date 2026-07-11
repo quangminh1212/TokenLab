@@ -50,24 +50,39 @@ describe("router usage parsers", () => {
     try {
       await writeFile(
         path.join(dir, "usage-history.jsonl"),
-        JSON.stringify({
-          id: 1,
-          timestamp: "2026-07-01T12:00:00.000Z",
-          provider: "xai",
-          model: "grok-4-fast",
-          promptTokens: 100,
-          completionTokens: 20,
-          cost: 0.0123,
-          tokens: JSON.stringify({ prompt_tokens: 100, completion_tokens: 20 }),
-        }) + "\n",
+        [
+          JSON.stringify({
+            id: 1,
+            timestamp: "2026-07-01T12:00:00.000Z",
+            provider: "xai",
+            model: "grok-4-fast",
+            promptTokens: 100,
+            completionTokens: 20,
+            cost: 0.0123,
+            tokens: JSON.stringify({ prompt_tokens: 100, completion_tokens: 20 }),
+          }),
+          // cost:0 must stay 0 (not re-priced by bundled table)
+          JSON.stringify({
+            id: 2,
+            timestamp: "2026-07-01T13:00:00.000Z",
+            provider: "xai",
+            model: "grok-4-fast",
+            promptTokens: 50_000,
+            completionTokens: 100,
+            cost: 0,
+            tokens: JSON.stringify({ prompt_tokens: 50000, completion_tokens: 100 }),
+          }),
+        ].join("\n") + "\n",
         "utf8",
       );
       const events = await parseRouterUsage([dir], "9router");
-      assert.equal(events.length, 1);
+      assert.equal(events.length, 2);
       assert.equal(events[0].inputTokens, 100);
       assert.equal(events[0].outputTokens, 20);
       assert.equal(events[0].estimatedCost, 0.0123);
       assert.equal(events[0].model, "grok-4-fast");
+      assert.equal(events[1].estimatedCost, 0);
+      assert.equal(events[1].pricingStatus, "zero_rate");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
