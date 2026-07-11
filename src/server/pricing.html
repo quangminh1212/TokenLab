@@ -173,112 +173,210 @@
       return v.toFixed(2);
     }
 
-    /** Map OpenRouter provider slug → brand domain for favicon. */
-    const PROVIDER_DOMAIN = {
-      openai: 'openai.com',
-      anthropic: 'anthropic.com',
-      google: 'ai.google.dev',
-      'x-ai': 'x.ai',
-      'meta-llama': 'meta.com',
-      mistralai: 'mistral.ai',
-      deepseek: 'deepseek.com',
-      qwen: 'qwen.ai',
-      'qwen3': 'qwen.ai',
-      moonshotai: 'moonshot.cn',
-      cohere: 'cohere.com',
-      nvidia: 'nvidia.com',
-      perplexity: 'perplexity.ai',
-      amazon: 'amazon.com',
-      'amazon-bedrock': 'aws.amazon.com',
-      microsoft: 'microsoft.com',
-      azure: 'azure.microsoft.com',
-      together: 'together.ai',
-      fireworks: 'fireworks.ai',
-      groq: 'groq.com',
-      cerebras: 'cerebras.ai',
-      deepinfra: 'deepinfra.com',
-      hyperbolic: 'hyperbolic.xyz',
-      sambanova: 'sambanova.ai',
-      ai21: 'ai21.com',
-      inflect: 'inflection.ai',
-      inflection: 'inflection.ai',
-      nousresearch: 'nousresearch.com',
-      openrouter: 'openrouter.ai',
-      liquid: 'liquid.ai',
-      minimax: 'minimaxi.com',
-      'z-ai': 'zhipuai.cn',
-      zhipu: 'zhipuai.cn',
-      '01-ai': '01.ai',
-      thruline: 'thruline.ai',
-      inception: 'inceptionlabs.ai',
-      tencent: 'tencent.com',
-      baidu: 'baidu.com',
-      bytedance: 'bytedance.com',
-      alibaba: 'alibaba.com',
-      stepfun: 'stepfun.com',
-      'aion-labs': 'aionlabs.ai',
-      poolside: 'poolside.ai',
-      sakana: 'sakana.ai',
-      'nex-agi': 'nex-agi.com',
-      reka: 'reka.ai',
-      writer: 'writer.com',
-      morph: 'morphllm.com',
-      alpine: 'alpinemd.com',
-      arcee: 'arcee.ai',
-      cognitivecomputations: 'erichartford.com',
-      gryphe: 'huggingface.co',
-      undi95: 'huggingface.co',
-      sao10k: 'huggingface.co',
-      neversleep: 'huggingface.co',
-      sophosympatheia: 'huggingface.co',
-      aetherwiing: 'huggingface.co',
-      nothingiisreal: 'huggingface.co',
-      anthracite: 'huggingface.co',
-      raifle: 'huggingface.co',
-      thedrummer: 'huggingface.co',
-      eva: 'huggingface.co',
-      agentica: 'huggingface.co',
-      alfredpros: 'huggingface.co',
-      mancer: 'mancer.tech',
-      pyjai: 'huggingface.co',
-      integuru: 'huggingface.co',
-      scb10x: 'scb10x.com',
-      thudm: 'chatglm.cn',
-      tngtech: 'tngtech.com',
-      'eleutherai': 'eleuther.ai',
-      'princeton-nlp': 'princeton.edu',
-      'microsoft/phi': 'microsoft.com',
-      ibm: 'ibm.com',
-      databricks: 'databricks.com',
-      snowflake: 'snowflake.com',
-      upstage: 'upstage.ai',
-      '01ai': '01.ai',
-      kai: 'huggingface.co',
-      'google-vertex': 'cloud.google.com',
-      'google-ai-studio': 'aistudio.google.com',
+    /**
+     * Local brand icons (src/server/assets/providers) — NOT Google favicons (wrong/generic).
+     * OpenRouter author slug → filename under /assets/providers/
+     */
+    const PROVIDER_ICON_FILE = {
+      openai: 'openai.png',
+      anthropic: 'anthropic.png',
+      google: 'gemini.png',
+      'google-vertex': 'vertex.png',
+      'google-ai-studio': 'gemini.png',
+      'x-ai': 'xai.png',
+      'meta-llama': 'huggingface.png',
+      mistralai: 'mistral.png',
+      deepseek: 'deepseek.png',
+      qwen: 'qwen.png',
+      moonshotai: 'kimi.png',
+      cohere: 'cohere.png',
+      nvidia: 'nvidia.png',
+      perplexity: 'perplexity.png',
+      amazon: 'azure.png',
+      'amazon-bedrock': 'azure.png',
+      microsoft: 'azure.png',
+      azure: 'azure.png',
+      together: 'together.png',
+      fireworks: 'fireworks.png',
+      groq: 'groq.png',
+      cerebras: 'cerebras.png',
+      deepinfra: 'huggingface.png',
+      hyperbolic: 'hyperbolic.png',
+      minimax: 'minimax.png',
+      'z-ai': 'glm.png',
+      zhipu: 'glm.png',
+      thudm: 'glm.png',
+      openrouter: 'openrouter.png',
+      tencent: 'huggingface.png',
+      baidu: 'huggingface.png',
+      bytedance: 'byteplus.png',
+      'bytedance-seed': 'byteplus.png',
+      alibaba: 'alicode.png',
+      stepfun: 'huggingface.png',
+      nousresearch: 'huggingface.png',
+      ai21: 'huggingface.png',
+      inflection: 'huggingface.png',
+      reka: 'huggingface.png',
+      rekaai: 'huggingface.png',
+      writer: 'huggingface.png',
+      ibm: 'huggingface.png',
+      'ibm-granite': 'huggingface.png',
+      databricks: 'huggingface.png',
+      upstage: 'huggingface.png',
+      liquid: 'huggingface.png',
+      '01-ai': 'huggingface.png',
+      mancer: 'huggingface.png',
+      huggingface: 'huggingface.png',
+      nebius: 'nebius.png',
+      siliconflow: 'siliconflow.png',
+      chutes: 'chutes.png',
+      'black-forest-labs': 'black-forest-labs.png',
+      'stability-ai': 'stability-ai.png',
+      eleutherai: 'huggingface.png',
+      cognitivecomputations: 'huggingface.png',
+      gryphe: 'huggingface.png',
+      undi95: 'huggingface.png',
+      sao10k: 'huggingface.png',
+      neversleep: 'huggingface.png',
+      thedrummer: 'huggingface.png',
+      'anthracite-org': 'huggingface.png',
+      anthracite: 'huggingface.png',
+      'aion-labs': 'deepseek.png',
+      poolside: 'huggingface.png',
+      sakana: 'huggingface.png',
+      'nex-agi': 'huggingface.png',
+      morph: 'huggingface.png',
+      'arcee-ai': 'huggingface.png',
+      arcee: 'huggingface.png',
+      inception: 'huggingface.png',
+      inclusionai: 'huggingface.png',
+      kwaipilot: 'huggingface.png',
+      allenai: 'huggingface.png',
+      deepcogito: 'huggingface.png',
+      perceptron: 'huggingface.png',
+      relace: 'huggingface.png',
+      xiaomi: 'xiaomi-mimo.png',
+      fal: 'fal-ai.png',
+      'fal-ai': 'fal-ai.png',
+      voyage: 'voyage-ai.png',
+      jina: 'jina-ai.png',
+      iflow: 'iflow.png',
+      qoder: 'qoder.png',
+      blackbox: 'blackbox.png',
+      opencode: 'opencode.png',
+      openclaw: 'openclaw.png',
+      amp: 'amp.png',
+      cline: 'cline.png',
+      cursor: 'cursor.png',
+      copilot: 'copilot.png',
+      kilocode: 'kilocode.png',
+      kiro: 'kiro.png',
+      hermes: 'hermes.png',
+      ollama: 'ollama.png',
     };
 
-    function providerDomain(provider) {
-      const p = String(provider || '').toLowerCase().trim();
-      if (!p) return 'openrouter.ai';
-      if (PROVIDER_DOMAIN[p]) return PROVIDER_DOMAIN[p];
-      // heuristic: x-ai → x.ai, foo-bar → foobar.com fallback openrouter
-      if (p.includes('.')) return p;
-      const bare = p.replace(/-/g, '');
-      return bare + '.com';
+    /** Secondary CDN (lobe-icons) when local file missing — curated names only. */
+    const PROVIDER_LOBE = {
+      openai: 'openai',
+      anthropic: 'anthropic',
+      google: 'gemini',
+      'x-ai': 'xai',
+      'meta-llama': 'meta',
+      mistralai: 'mistral',
+      deepseek: 'deepseek',
+      qwen: 'qwen',
+      moonshotai: 'moonshot',
+      cohere: 'cohere',
+      nvidia: 'nvidia',
+      perplexity: 'perplexity',
+      amazon: 'aws',
+      microsoft: 'microsoft',
+      together: 'together',
+      fireworks: 'fireworks',
+      groq: 'groq',
+      cerebras: 'cerebras',
+      minimax: 'minimax',
+      'z-ai': 'zhipu',
+      openrouter: 'openrouter',
+      tencent: 'tencent',
+      baidu: 'baidu',
+      bytedance: 'bytedance',
+      alibaba: 'alibabacloud',
+      nousresearch: 'nousresearch',
+      ai21: 'ai21',
+      inflection: 'inflection',
+      rekaai: 'reka',
+      ibm: 'ibm',
+      'ibm-granite': 'ibm',
+      upstage: 'upstage',
+      liquid: 'liquid',
+      '01-ai': 'yi',
+      huggingface: 'huggingface',
+      xiaomi: 'xiaomi',
+    };
+
+    const PROV_COLORS = [
+      '#00A19A', '#0d9488', '#2563eb', '#7c3aed', '#db2777',
+      '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#4f46e5',
+    ];
+
+    function providerKey(provider) {
+      let p = String(provider || '').toLowerCase().trim();
+      if (p.startsWith('~')) p = p.slice(1); // OpenRouter redirect aliases
+      return p;
+    }
+
+    function providerIconSrcs(provider) {
+      const p = providerKey(provider);
+      const srcs = [];
+      const file = PROVIDER_ICON_FILE[p];
+      if (file) srcs.push('/assets/providers/' + file + '?v=1');
+      const lobe = PROVIDER_LOBE[p];
+      if (lobe) {
+        srcs.push('https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@latest/packages/static-png/light/' + lobe + '.png');
+      }
+      return srcs;
+    }
+
+    function providerColor(provider) {
+      const p = providerKey(provider);
+      let h = 0;
+      for (let i = 0; i < p.length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0;
+      return PROV_COLORS[h % PROV_COLORS.length];
     }
 
     function providerIconHtml(provider) {
-      const p = String(provider || 'openrouter').trim() || 'openrouter';
-      const domain = providerDomain(p);
-      const letter = escapeHtml((p[0] || '?').toUpperCase());
-      const src = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=64';
-      return `<span class="or-prov" title="${escapeHtml(p)}">
-        <img class="or-prov-img" src="${src}" alt="" width="28" height="28" loading="lazy" decoding="async"
-          onerror="this.style.display='none';this.nextElementSibling.hidden=false;" />
-        <span class="or-prov-fallback" hidden aria-hidden="true">${letter}</span>
+      const p = providerKey(provider) || 'openrouter';
+      const letter = escapeHtml((p.replace(/^[^a-z0-9]+/i, '')[0] || '?').toUpperCase());
+      const srcs = providerIconSrcs(p);
+      const bg = providerColor(p);
+      const title = escapeHtml(p);
+      if (!srcs.length) {
+        return `<span class="or-prov or-prov-fallback" title="${title}" style="background:${bg}" aria-hidden="true">${letter}</span>`;
+      }
+      const src0 = escapeHtml(srcs[0]);
+      const rest = srcs.slice(1).map((s) => escapeHtml(s)).join('|');
+      return `<span class="or-prov" title="${title}">
+        <img class="or-prov-img" src="${src0}" data-fallbacks="${rest}" alt="" width="28" height="28" loading="lazy" decoding="async" />
+        <span class="or-prov-fallback" hidden style="background:${bg}" aria-hidden="true">${letter}</span>
       </span>`;
     }
+
+    // Chain local → CDN → monogram (never Google favicon)
+    document.addEventListener('error', (e) => {
+      const img = e.target;
+      if (!img || !img.classList || !img.classList.contains('or-prov-img')) return;
+      const raw = img.getAttribute('data-fallbacks') || '';
+      const queue = raw.split('|').filter(Boolean);
+      if (queue.length) {
+        img.setAttribute('data-fallbacks', queue.slice(1).join('|'));
+        img.src = queue[0];
+        return;
+      }
+      img.style.display = 'none';
+      const fb = img.nextElementSibling;
+      if (fb) fb.hidden = false;
+    }, true);
 
     /** OpenRouter-style multi-token AND search on id, name, provider, slug */
     function matchesQuery(m, q) {
