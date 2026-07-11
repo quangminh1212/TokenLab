@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import { aggregate, costReport } from "./aggregate.js";
 import { detectAgents, scanAll } from "./agents/index.js";
+import {
+  disableAutostart,
+  enableAutostart,
+  getAutostartStatus,
+} from "./autostart.js";
 import { startServer } from "./server/http.js";
+import { startTray } from "./tray.js";
 import type { GroupBy } from "./types.js";
 import { filterByPeriod, formatTokens, formatUsd, openBrowser } from "./util.js";
 import { VERSION } from "./version.js";
@@ -12,13 +18,24 @@ function printHelp(): void {
 Local-first token API usage & cost tracker for AI agents on this machine.
 
 Usage:
-  xlab-token serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open]
+  xlab-token serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open] [--no-tray]
   xlab-token stats [--since 24h|7d|30d] [--by agent|model|day] [--sort tokens|cost] [--json]
   xlab-token cost  [--since 7d] [--json]
   xlab-token scan  [--json]
   xlab-token doctors [--json]
+  xlab-token autostart [on|off|status] [--json]
   xlab-token --version
   xlab-token --help
+
+Serve options:
+  --open       Open dashboard in browser
+  --no-ui      API only (no HTML UI)
+  --no-tray    Do not show system tray icon (Windows)
+
+Autostart (Windows):
+  on           Start xlab-token serve at Windows login (Task Scheduler)
+  off          Remove login autostart
+  status       Show whether autostart is enabled
 
 Platforms: Windows, macOS, Linux (Node.js 20+)
 
@@ -54,6 +71,10 @@ async function main(): Promise<void> {
     const port = getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined;
     const noUi = has(args, "--no-ui");
     const shouldOpen = has(args, "--open") || process.env.XLAB_TOKEN_OPEN === "1";
+    const noTray =
+      has(args, "--no-tray") ||
+      process.env.XLAB_TOKEN_NO_TRAY === "1" ||
+      noUi;
     try {
       const srv = await startServer({ host, port, noUi });
       const uiUrl = `http://${srv.host}:${srv.port}/`;
@@ -65,9 +86,15 @@ async function main(): Promise<void> {
       if (shouldOpen && !noUi) openBrowser(uiUrl);
 
       let shuttingDown = false;
+      let trayStop: (() => void) | null = null;
       const shutdown = async (_signal: string) => {
         if (shuttingDown) return;
         shuttingDown = true;
+        try {
+          trayStop?.();
+        } catch {
+          // ignore
+        }
         try {
           await srv.close();
         } catch {
@@ -79,10 +106,69 @@ async function main(): Promise<void> {
       process.on("SIGTERM", () => void shutdown("SIGTERM"));
       // tsx watch / Windows sometimes sends before handlers finish
       process.on("SIGHUP", () => void shutdown("SIGHUP"));
+
+      if (!noTray && !noUi) {
+        try {
+          const tray = await startTray({
+            url: uiUrl,
+            title: "XLab Token",
+            tooltip: `XLab Token :${srv.port}`,
+            onQuit: () => void shutdown("tray"),
+          });
+          if (tray) {
+            trayStop = tray.stop;
+            console.log("Tray icon enabled (double-click or menu → Open Dashboard)");
+          }
+        } catch {
+          // tray is optional
+        }
+      }
     } catch (err) {
       console.error(err instanceof Error ? err.message : err);
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (cmd === "autostart") {
+    const sub = (args[1] || "status").toLowerCase();
+    const asJson = has(args, "--json");
+    if (sub === "on" || sub === "enable" || sub === "install") {
+      const result = await enableAutostart();
+      if (asJson) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(result.message);
+        if (result.status.detail) console.log(result.status.detail);
+      }
+      if (!result.ok) process.exitCode = 1;
+      return;
+    }
+    if (sub === "off" || sub === "disable" || sub === "uninstall" || sub === "remove") {
+      const result = await disableAutostart();
+      if (asJson) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(result.message);
+      }
+      if (!result.ok) process.exitCode = 1;
+      return;
+    }
+    if (sub === "status" || sub === "show") {
+      const status = await getAutostartStatus();
+      if (asJson) {
+        console.log(JSON.stringify(status, null, 2));
+      } else {
+        console.log(`Autostart: ${status.enabled ? "ON" : "OFF"}  (${status.platform})`);
+        if (status.method) console.log(`Method:  ${status.method}`);
+        if (status.detail) console.log(`Detail:  ${status.detail}`);
+        if (status.command) console.log(`Command: ${status.command}`);
+      }
+      return;
+    }
+    console.error(`Unknown autostart subcommand: ${sub}`);
+    console.error("Use: xlab-token autostart on|off|status");
+    process.exitCode = 1;
     return;
   }
 
