@@ -174,11 +174,10 @@
     }
 
     /**
-     * Strict brand map only — never map unknown → HuggingFace (wrong face icon).
-     * Missing entry → monogram letter (correct fallback).
+     * Full OpenRouter author → local brand icon (no letter-only if we have a logo).
+     * Community HF fine-tunes share huggingface.png intentionally.
      */
     const PROVIDER_ICON_FILE = {
-      // Big labs
       openai: 'openai.png',
       anthropic: 'anthropic.png',
       google: 'gemini.png',
@@ -222,19 +221,10 @@
       upstage: 'upstage.png',
       liquid: 'liquid.png',
       '01-ai': 'yi.png',
-      // Only real Hugging Face org / community fine-tunes on HF
-      huggingface: 'huggingface.png',
-      // Hosting / infra brands we have
-      nebius: 'nebius.png',
-      siliconflow: 'siliconflow.png',
-      chutes: 'chutes.png',
-      'black-forest-labs': 'black-forest-labs.png',
-      'stability-ai': 'stability-ai.png',
-      fal: 'fal-ai.png',
-      'fal-ai': 'fal-ai.png',
-      voyage: 'voyage-ai.png',
-      jina: 'jina-ai.png',
-      // Own monograms (no correct brand asset)
+      inflection: 'inflection.png',
+      writer: 'writer.png',
+      mancer: 'mancer.png',
+      // Research / startups
       'aion-labs': 'aion-labs.png',
       poolside: 'poolside.png',
       sakana: 'sakana.png',
@@ -247,8 +237,28 @@
       deepcogito: 'deepcogito.png',
       perceptron: 'perceptron.png',
       relace: 'relace.png',
-      xiaomi: 'xiaomi-mimo.png',
-      // Coding tools (if appear as author)
+      'arcee-ai': 'arcee.png',
+      arcee: 'arcee.png',
+      xiaomi: 'xiaomi.png',
+      // Hosting / image
+      huggingface: 'huggingface.png',
+      nebius: 'nebius.png',
+      siliconflow: 'siliconflow.png',
+      chutes: 'chutes.png',
+      'black-forest-labs': 'black-forest-labs.png',
+      'stability-ai': 'stability-ai.png',
+      fal: 'fal-ai.png',
+      'fal-ai': 'fal-ai.png',
+      voyage: 'voyage-ai.png',
+      jina: 'jina-ai.png',
+      // HF community orgs (models hosted on Hugging Face)
+      'anthracite-org': 'anthracite.png',
+      cognitivecomputations: 'cognitivecomputations.png',
+      gryphe: 'gryphe.png',
+      sao10k: 'sao10k.png',
+      thedrummer: 'thedrummer.png',
+      undi95: 'undi95.png',
+      // Coding agents
       iflow: 'iflow.png',
       qoder: 'qoder.png',
       blackbox: 'blackbox.png',
@@ -264,7 +274,7 @@
       ollama: 'ollama.png',
     };
 
-    /** Optional CDN only for same curated brands (never random). */
+    /** Optional CDN for same curated brands */
     const PROVIDER_LOBE = {
       openai: 'openai',
       anthropic: 'anthropic',
@@ -297,6 +307,15 @@
       liquid: 'liquid',
       '01-ai': 'yi',
       stepfun: 'stepfun',
+      inflection: 'inflection',
+      'aion-labs': 'aionlabs',
+      morph: 'morph',
+      inception: 'inception',
+      kwaipilot: 'kwaipilot',
+      allenai: 'ai2',
+      deepcogito: 'deepcogito',
+      relace: 'relace',
+      'arcee-ai': 'arcee',
     };
 
     const PROV_COLORS = [
@@ -314,7 +333,7 @@
       const p = providerKey(provider);
       const srcs = [];
       const file = PROVIDER_ICON_FILE[p];
-      if (file) srcs.push('/assets/providers/' + file + '?v=5');
+      if (file) srcs.push('/assets/providers/' + file + '?v=7');
       const lobe = PROVIDER_LOBE[p];
       if (lobe) {
         srcs.push('https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@latest/packages/static-png/light/' + lobe + '.png');
