@@ -38,146 +38,106 @@
   </header>
 
   <main class="shell settings-page">
-    <section class="hero settings-hero">
+    <header class="settings-head">
       <div>
-        <h2>Settings</h2>
-        <p>App preferences, cost behavior, and local paths. Model rates live on the <a href="/model">Model</a> page.</p>
+        <h1 class="settings-title">Settings</h1>
+        <p class="settings-sub">Local preferences for theme, timezone, and cost estimates.</p>
       </div>
-    </section>
+      <a class="settings-link" href="/model">Model rates &rarr;</a>
+    </header>
 
     <div class="settings-grid">
-      <!-- Appearance -->
+      <!-- Preferences -->
       <section class="u-card settings-card">
-        <h3 class="settings-card-title">Appearance</h3>
-        <p class="settings-card-desc">Theme is stored in this browser only.</p>
-        <div class="settings-row">
-          <span>Color theme</span>
-          <button type="button" class="btn btn-with-icon" id="settingsThemeBtn">Toggle theme</button>
-        </div>
-        <div class="settings-row muted-row">
-          <span>Current</span>
-          <code id="themeLabel">&mdash;</code>
-        </div>
-      </section>
+        <h2 class="settings-card-title">Preferences</h2>
 
-      <!-- Cost behavior -->
-      <section class="u-card settings-card">
-        <h3 class="settings-card-title">Cost calculation</h3>
-        <p class="settings-card-desc">How estimated USD is computed from token usage.</p>
-        <label class="settings-toggle-row">
-          <div>
-            <strong>Prefer router cost</strong>
-            <span class="settings-card-desc">Use 9router/xlabrouter reported cost when &gt; 0. Turn off to always use the rate table.</span>
+        <div class="settings-field">
+          <div class="settings-field-label">
+            <span>Theme</span>
+            <small>Browser only</small>
+          </div>
+          <button type="button" class="btn btn-sm settings-theme-btn" id="settingsThemeBtn">Light</button>
+        </div>
+
+        <div class="settings-field">
+          <div class="settings-field-label">
+            <span>Timezone</span>
+            <small>Calendar day for <em>Today</em></small>
+          </div>
+          <select id="timezoneSelect" class="settings-select" aria-label="Timezone"></select>
+        </div>
+        <p class="settings-hint" id="todayStartsLabel">Today starts &mdash;</p>
+
+        <label class="settings-switch">
+          <div class="settings-field-label">
+            <span>Prefer router cost</span>
+            <small>Use 9router / xlabrouter cost when &gt; 0</small>
           </div>
           <input type="checkbox" id="preferRouterCost" />
         </label>
-        <div class="settings-row">
-          <span>Currency</span>
-          <code id="currencyLabel">USD</code>
+
+        <div class="settings-field settings-field-static">
+          <div class="settings-field-label">
+            <span>Currency</span>
+          </div>
+          <code class="settings-pill" id="currencyLabel">USD</code>
         </div>
-        <div class="settings-actions">
-          <button type="button" class="btn btn-primary" id="saveCostSettings">Save</button>
-          <span class="pricing-status" id="costSettingsStatus"></span>
+
+        <div class="settings-footer-row">
+          <button type="button" class="btn btn-primary btn-sm" id="savePrefs">Save</button>
+          <span class="settings-status" id="prefsStatus" aria-live="polite"></span>
         </div>
       </section>
 
-      <!-- Timezone (Today / Yesterday boundary) -->
+      <!-- System -->
       <section class="u-card settings-card">
-        <h3 class="settings-card-title">Timezone</h3>
-        <p class="settings-card-desc">
-          Calendar day for Dashboard <strong>Today</strong> / Agents period filters.
-          Does not change stored event timestamps (UTC).
-        </p>
-        <div class="settings-row">
-          <label for="timezoneSelect">Timezone</label>
-          <select id="timezoneSelect" class="or-select settings-select" aria-label="Timezone"></select>
-        </div>
-        <div class="settings-row muted-row">
-          <span>Today starts at</span>
-          <code id="todayStartsLabel">&mdash;</code>
-        </div>
-        <div class="settings-row muted-row">
-          <span>Browser local</span>
-          <code id="browserTzLabel">&mdash;</code>
-        </div>
-        <div class="settings-actions">
-          <button type="button" class="btn btn-primary" id="saveTimezone">Save timezone</button>
-          <span class="pricing-status" id="timezoneStatus"></span>
-        </div>
-      </section>
+        <h2 class="settings-card-title">System</h2>
 
-      <!-- Model pricing shortcut -->
-      <section class="u-card settings-card">
-        <h3 class="settings-card-title">Model pricing</h3>
-        <p class="settings-card-desc">Input / output rates per 1M tokens for each model.</p>
-        <a class="btn btn-primary btn-with-icon" id="gotoPricing" href="/model">Open Model page</a>
-      </section>
+        <div class="settings-stats" id="systemStats">
+          <div class="settings-stat">
+            <span class="settings-stat-label">Version</span>
+            <strong id="versionLabel">&mdash;</strong>
+          </div>
+          <div class="settings-stat">
+            <span class="settings-stat-label">Events</span>
+            <strong id="eventsLabel">&mdash;</strong>
+          </div>
+          <div class="settings-stat">
+            <span class="settings-stat-label">Scan</span>
+            <strong id="scanningLabel">&mdash;</strong>
+          </div>
+          <div class="settings-stat">
+            <span class="settings-stat-label">Pricing rev</span>
+            <strong id="pricingRevLabel">&mdash;</strong>
+          </div>
+        </div>
 
-      <!-- Paths -->
-      <section class="u-card settings-card">
-        <h3 class="settings-card-title">Local paths</h3>
-        <p class="settings-card-desc">Where XLab Token stores config on this machine.</p>
-        <div class="settings-kv">
-          <span>Config file</span>
-          <code id="configPath">&mdash;</code>
+        <div class="settings-meta-list">
+          <div class="settings-meta">
+            <span>Config</span>
+            <code id="configPath" title="">&mdash;</code>
+          </div>
+          <div class="settings-meta">
+            <span>Runtime</span>
+            <code id="runtimeLabel">&mdash;</code>
+          </div>
+          <div class="settings-meta">
+            <span>Browser TZ</span>
+            <code id="browserTzLabel">&mdash;</code>
+          </div>
         </div>
-        <div class="settings-kv">
-          <span>Platform</span>
-          <code id="platformLabel">&mdash;</code>
-        </div>
-        <div class="settings-kv">
-          <span>Node</span>
-          <code id="nodeLabel">&mdash;</code>
-        </div>
-      </section>
 
-      <!-- Server -->
-      <section class="u-card settings-card">
-        <h3 class="settings-card-title">Server</h3>
-        <p class="settings-card-desc">Live status of the local API process.</p>
-        <div class="settings-kv">
-          <span>Version</span>
-          <code id="versionLabel">&mdash;</code>
-        </div>
-        <div class="settings-kv">
-          <span>Events cached</span>
-          <code id="eventsLabel">&mdash;</code>
-        </div>
-        <div class="settings-kv">
-          <span>Scanning</span>
-          <code id="scanningLabel">&mdash;</code>
-        </div>
-        <div class="settings-kv">
-          <span>Pricing revision</span>
-          <code id="pricingRevLabel">&mdash;</code>
-        </div>
-        <div class="settings-actions">
-          <button type="button" class="btn btn-with-icon" id="rescanBtn">Rescan now</button>
-          <span class="pricing-status" id="rescanStatus"></span>
-        </div>
-      </section>
-
-      <!-- About -->
-      <section class="u-card settings-card">
-        <h3 class="settings-card-title">About</h3>
-        <p class="settings-card-desc">
-          XLab Token is a local-first usage &amp; cost tracker. Data stays on this machine; costs are estimates, not invoices.
-        </p>
-        <div class="settings-kv">
-          <span>UI</span>
-          <code>http://127.0.0.1:3737/</code>
-        </div>
-        <div class="settings-kv">
-          <span>API health</span>
-          <code>/api/health</code>
+        <div class="settings-footer-row">
+          <button type="button" class="btn btn-sm btn-with-icon" id="rescanBtn">Rescan</button>
+          <span class="settings-status" id="rescanStatus" aria-live="polite"></span>
         </div>
       </section>
     </div>
 
-    <footer>
-      <div>Settings &middot; local preferences</div>
-      <div>localhost only &middot; estimated cost, not billing</div>
-    </footer>
+    <p class="settings-footnote">
+      Local-only estimates &middot; not billing invoices &middot;
+      <a href="/">Dashboard</a>
+    </p>
   </main>
 
   <script>
@@ -187,7 +147,6 @@
       moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
       sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
       refresh: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
-      pricing: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
     };
 
     function applyTheme(mode) {
@@ -196,50 +155,34 @@
       const btn = $('themeBtn');
       btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
       btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
-      $('themeLabel').textContent = mode === 'dark' ? 'Dark' : 'Light';
-      $('settingsThemeBtn').innerHTML = (mode === 'dark' ? ICONS.sun : ICONS.moon) + '<span>Toggle theme</span>';
+      const label = mode === 'dark' ? 'Dark' : 'Light';
+      const icon = mode === 'dark' ? ICONS.sun : ICONS.moon;
+      $('settingsThemeBtn').innerHTML = icon + '<span>' + label + '</span>';
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
     $('settingsThemeBtn').onclick = () => $('themeBtn').click();
-    $('gotoPricing').innerHTML = ICONS.pricing + '<span>Open Model page</span>';
-    $('rescanBtn').innerHTML = ICONS.refresh + '<span>Rescan now</span>';
-
-    async function loadHealth() {
-      try {
-        const h = await fetch('/api/health').then((r) => r.json());
-        const n = h.agentsDetected?.length || 0;
-        $('meta').textContent = `v${h.version} \u00B7 ${n} agents \u00B7 ${h.eventCount || 0} events`;
-        $('versionLabel').textContent = h.version || '\u2014';
-        $('eventsLabel').textContent = String(h.eventCount ?? '\u2014');
-        $('scanningLabel').textContent = h.scanning ? 'yes' : 'no';
-        $('pricingRevLabel').textContent = String(h.pricingRevision ?? '\u2014');
-        $('platformLabel').textContent = `${h.platform || '\u2014'} / ${h.arch || '\u2014'}`;
-        $('nodeLabel').textContent = h.node || '\u2014';
-      } catch {
-        $('meta').innerHTML = '<span class="err">API offline</span>';
-      }
-    }
+    $('rescanBtn').innerHTML = ICONS.refresh + '<span>Rescan</span>';
 
     const TIMEZONES = [
-      { value: 'local', label: 'Machine local (default)' },
+      { value: 'local', label: 'Machine local' },
       { value: 'UTC', label: 'UTC' },
-      { value: 'Asia/Ho_Chi_Minh', label: 'Asia/Ho_Chi_Minh (Vietnam, UTC+7)' },
-      { value: 'Asia/Bangkok', label: 'Asia/Bangkok (UTC+7)' },
-      { value: 'Asia/Singapore', label: 'Asia/Singapore (UTC+8)' },
-      { value: 'Asia/Tokyo', label: 'Asia/Tokyo (UTC+9)' },
-      { value: 'Asia/Shanghai', label: 'Asia/Shanghai (UTC+8)' },
-      { value: 'Asia/Seoul', label: 'Asia/Seoul (UTC+9)' },
-      { value: 'Asia/Kolkata', label: 'Asia/Kolkata (UTC+5:30)' },
-      { value: 'Europe/London', label: 'Europe/London' },
-      { value: 'Europe/Paris', label: 'Europe/Paris' },
-      { value: 'Europe/Berlin', label: 'Europe/Berlin' },
-      { value: 'America/New_York', label: 'America/New_York' },
-      { value: 'America/Los_Angeles', label: 'America/Los_Angeles' },
-      { value: 'America/Chicago', label: 'America/Chicago' },
-      { value: 'Australia/Sydney', label: 'Australia/Sydney' },
+      { value: 'Asia/Ho_Chi_Minh', label: 'Vietnam (Ho Chi Minh)' },
+      { value: 'Asia/Bangkok', label: 'Bangkok' },
+      { value: 'Asia/Singapore', label: 'Singapore' },
+      { value: 'Asia/Tokyo', label: 'Tokyo' },
+      { value: 'Asia/Shanghai', label: 'Shanghai' },
+      { value: 'Asia/Seoul', label: 'Seoul' },
+      { value: 'Asia/Kolkata', label: 'Kolkata' },
+      { value: 'Europe/London', label: 'London' },
+      { value: 'Europe/Paris', label: 'Paris' },
+      { value: 'Europe/Berlin', label: 'Berlin' },
+      { value: 'America/New_York', label: 'New York' },
+      { value: 'America/Los_Angeles', label: 'Los Angeles' },
+      { value: 'America/Chicago', label: 'Chicago' },
+      { value: 'Australia/Sydney', label: 'Sydney' },
     ];
 
     function fillTimezoneSelect(selected) {
@@ -253,30 +196,57 @@
       if (cur && !known.has(cur)) {
         const opt = document.createElement('option');
         opt.value = cur;
-        opt.textContent = cur + ' (custom)';
+        opt.textContent = cur;
         opt.selected = true;
         sel.appendChild(opt);
       }
     }
 
-    function formatTodayStart(iso) {
-      if (!iso) return '\u2014';
+    function formatTodayStart(iso, tz) {
+      if (!iso) return 'Today starts \u2014';
       try {
         const d = new Date(iso);
-        return d.toLocaleString(undefined, {
-          year: 'numeric', month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit', second: '2-digit',
+        const zone = !tz || tz === 'local' ? undefined : tz;
+        const nice = d.toLocaleString(undefined, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone: zone,
           timeZoneName: 'short',
-        }) + ' \u00B7 ' + iso;
+        });
+        return 'Today starts ' + nice;
       } catch {
-        return iso;
+        return 'Today starts ' + iso;
+      }
+    }
+
+    async function loadHealth() {
+      try {
+        const h = await fetch('/api/health').then((r) => r.json());
+        const n = h.agentsDetected?.length || 0;
+        $('meta').textContent = `v${h.version} \u00B7 ${n} agents \u00B7 ${h.eventCount || 0} events`;
+        $('versionLabel').textContent = h.version || '\u2014';
+        $('eventsLabel').textContent = Number(h.eventCount || 0).toLocaleString();
+        $('scanningLabel').textContent = h.scanning ? 'running' : 'idle';
+        $('scanningLabel').classList.toggle('is-busy', Boolean(h.scanning));
+        $('pricingRevLabel').textContent = String(h.pricingRevision ?? '\u2014');
+        $('runtimeLabel').textContent = `${h.platform || '\u2014'} \u00B7 ${h.node || '\u2014'}`;
+        if (h.todayStartsAt) {
+          $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt, h.timezone);
+        }
+      } catch {
+        $('meta').innerHTML = '<span class="err">API offline</span>';
       }
     }
 
     async function loadConfigUi() {
       try {
         const c = await fetch('/api/config').then((r) => r.json());
-        $('configPath').textContent = c.configPath || '\u2014';
+        const pathEl = $('configPath');
+        pathEl.textContent = c.configPath || '\u2014';
+        pathEl.title = c.configPath || '';
         $('currencyLabel').textContent = c.pricing?.currency || 'USD';
         $('preferRouterCost').checked = c.pricing?.preferRouterCost !== false;
         fillTimezoneSelect(c.timezone || 'local');
@@ -285,59 +255,35 @@
         } catch {
           $('browserTzLabel').textContent = 'local';
         }
-        // todayStartsAt from health (uses same server logic)
-        try {
-          const h = await fetch('/api/health').then((r) => r.json());
-          $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt);
-        } catch {
-          $('todayStartsLabel').textContent = '\u2014';
-        }
+        await loadHealth();
       } catch {
-        $('configPath').textContent = '(failed to load)';
+        $('configPath').textContent = '(unavailable)';
       }
     }
 
-    $('saveCostSettings').onclick = async () => {
-      $('saveCostSettings').disabled = true;
-      $('costSettingsStatus').textContent = 'Saving\u2026';
-      try {
-        await fetch('/api/config', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pricing: {
-              preferRouterCost: $('preferRouterCost').checked,
-            },
-          }),
-        }).then((r) => r.json());
-        $('costSettingsStatus').textContent = 'Saved \u00B7 costs will use new rules on next reprice/rescan';
-        await loadConfigUi();
-      } catch {
-        $('costSettingsStatus').textContent = 'Save failed';
-      } finally {
-        $('saveCostSettings').disabled = false;
-      }
-    };
-
-    $('saveTimezone').onclick = async () => {
-      $('saveTimezone').disabled = true;
-      $('timezoneStatus').textContent = 'Saving\u2026';
+    $('savePrefs').onclick = async () => {
+      const btn = $('savePrefs');
+      btn.disabled = true;
+      $('prefsStatus').textContent = 'Saving\u2026';
       try {
         const tz = $('timezoneSelect').value || 'local';
         const r = await fetch('/api/config', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ timezone: tz }),
+          body: JSON.stringify({
+            timezone: tz,
+            pricing: { preferRouterCost: $('preferRouterCost').checked },
+          }),
         }).then((x) => x.json());
-        $('timezoneStatus').textContent = 'Saved \u00B7 Today boundary updated';
+        $('prefsStatus').textContent = 'Saved';
         if (r.todayStartsAt) {
-          $('todayStartsLabel').textContent = formatTodayStart(r.todayStartsAt);
+          $('todayStartsLabel').textContent = formatTodayStart(r.todayStartsAt, r.timezone || tz);
         }
-        await loadConfigUi();
+        setTimeout(() => { $('prefsStatus').textContent = ''; }, 2200);
       } catch {
-        $('timezoneStatus').textContent = 'Save failed';
+        $('prefsStatus').textContent = 'Failed';
       } finally {
-        $('saveTimezone').disabled = false;
+        btn.disabled = false;
       }
     };
 
@@ -345,17 +291,29 @@
       $('rescanBtn').disabled = true;
       $('rescanStatus').textContent = 'Scanning\u2026';
       try {
-        const r = await fetch('/api/scan', { method: 'POST' }).then((x) => x.json());
-        $('rescanStatus').textContent = `Done \u00B7 ${r.eventsIngested ?? 0} events (${r.durationMs ?? 0}ms)`;
-        await loadHealth();
+        const r = await fetch('/api/scan?async=1', { method: 'POST' }).then((x) => x.json());
+        $('rescanStatus').textContent = r.accepted ? 'Started\u2026' : 'Done';
+        // Poll briefly for completion
+        let n = 0;
+        const tick = async () => {
+          n += 1;
+          await loadHealth();
+          const scanning = $('scanningLabel').textContent === 'running';
+          if (scanning && n < 40) {
+            setTimeout(tick, 800);
+          } else {
+            $('rescanStatus').textContent = scanning ? 'Still scanning\u2026' : 'Up to date';
+            setTimeout(() => { $('rescanStatus').textContent = ''; }, 2500);
+            $('rescanBtn').disabled = false;
+          }
+        };
+        setTimeout(tick, 600);
       } catch {
-        $('rescanStatus').textContent = 'Scan failed';
-      } finally {
+        $('rescanStatus').textContent = 'Failed';
         $('rescanBtn').disabled = false;
       }
     };
 
-    loadHealth();
     loadConfigUi();
     setInterval(loadHealth, 10000);
   </script>
