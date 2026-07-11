@@ -226,6 +226,149 @@ export function agentPathSpecs(): AgentPathSpec[] {
         path.join(home, "Library", "Application Support", "Zed"),
       ]),
     },
+    {
+      id: "codebuff",
+      label: "Codebuff",
+      roots: unique([
+        expandHome(process.env.CODEBUFF_DATA_DIR || path.join(xdgConfig, "manicode")),
+        path.join(xdgConfig, "manicode"),
+        path.join(xdgConfig, "manicode-dev"),
+        path.join(xdgConfig, "manicode-staging"),
+        path.join(home, ".config", "manicode"),
+        path.join(home, ".codebuff"),
+      ]),
+    },
+    {
+      id: "mux",
+      label: "Mux",
+      roots: unique([
+        path.join(home, ".mux"),
+        path.join(xdgData, "mux"),
+        path.join(appData, "mux"),
+      ]),
+    },
+    {
+      id: "crush",
+      label: "Crush",
+      roots: unique([
+        path.join(xdgData, "crush"),
+        path.join(home, ".local", "share", "crush"),
+        path.join(home, ".crush"),
+        path.join(appData, "crush"),
+      ]),
+    },
+    {
+      id: "kiro",
+      label: "Kiro",
+      roots: unique([
+        path.join(home, ".kiro"),
+        path.join(xdgData, "kiro-cli"),
+        path.join(appData, "kiro-cli"),
+        path.join(appData, "Kiro"),
+        path.join(localApp, "Kiro"),
+        path.join(home, "Library", "Application Support", "kiro-cli"),
+        path.join(home, "Library", "Application Support", "Kiro"),
+        path.join(appData, "Code", "User", "globalStorage", "kiro.kiroagent"),
+        path.join(appData, "Cursor", "User", "globalStorage", "kiro.kiroagent"),
+      ]),
+    },
+    {
+      id: "gjc",
+      label: "Gajae-Code",
+      roots: unique([
+        expandHome(process.env.GJC_CODING_AGENT_DIR || path.join(home, ".gjc")),
+        expandHome(process.env.GJC_CONFIG_DIR || path.join(home, ".gjc")),
+        path.join(home, ".gjc"),
+        path.join(xdgData, "gjc"),
+      ]),
+    },
+    {
+      id: "jcode",
+      label: "Jcode",
+      roots: unique([
+        expandHome(process.env.JCODE_HOME || path.join(home, ".jcode")),
+        path.join(home, ".jcode"),
+        path.join(xdgData, "jcode"),
+      ]),
+    },
+    {
+      id: "commandcode",
+      label: "Command Code",
+      roots: unique([
+        path.join(home, ".commandcode"),
+        path.join(xdgData, "commandcode"),
+        path.join(appData, "commandcode"),
+      ]),
+    },
+    {
+      id: "junie",
+      label: "JetBrains Junie",
+      roots: unique([
+        path.join(home, ".junie"),
+        path.join(xdgData, "junie"),
+        path.join(appData, "JetBrains", "Junie"),
+        path.join(localApp, "JetBrains"),
+      ]),
+    },
+    {
+      id: "zcode",
+      label: "ZCode",
+      roots: unique([
+        path.join(home, ".zcode"),
+        path.join(xdgData, "zcode"),
+        path.join(appData, "zcode"),
+      ]),
+    },
+    {
+      id: "opencodereview",
+      label: "OpenCodeReview",
+      roots: unique([
+        path.join(home, ".opencodereview"),
+        path.join(xdgData, "opencodereview"),
+        path.join(appData, "opencodereview"),
+      ]),
+    },
+    {
+      id: "codebuddy",
+      label: "CodeBuddy",
+      roots: unique([
+        path.join(home, ".codebuddy"),
+        path.join(xdgData, "codebuddy"),
+        path.join(appData, "CodeBuddy"),
+        path.join(appData, "Code", "User", "globalStorage", "tencent-cloud.codebuddy"),
+      ]),
+    },
+    {
+      id: "workbuddy",
+      label: "WorkBuddy",
+      roots: unique([
+        path.join(home, ".workbuddy"),
+        path.join(xdgData, "workbuddy"),
+        path.join(appData, "WorkBuddy"),
+      ]),
+    },
+    {
+      id: "aider",
+      label: "Aider",
+      roots: unique([
+        path.join(home, ".aider"),
+        path.join(xdgConfig, "aider"),
+        path.join(xdgData, "aider"),
+        path.join(appData, "aider"),
+      ]),
+    },
+    {
+      id: "continue",
+      label: "Continue.dev",
+      roots: unique([
+        path.join(home, ".continue"),
+        path.join(xdgConfig, "continue"),
+        path.join(xdgData, "continue"),
+        path.join(appData, "Continue"),
+        path.join(appData, "Code", "User", "globalStorage", "continue.continue"),
+        path.join(appData, "Cursor", "User", "globalStorage", "continue.continue"),
+      ]),
+    },
   ];
 }
 

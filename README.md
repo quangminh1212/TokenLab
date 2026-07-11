@@ -144,6 +144,20 @@ XLab Token scans **local agent usage artifacts**, normalizes them into one schem
 | Warp AI | `warp` | Warp app data | Yes |
 | Trae | `trae` | Trae app data | Yes |
 | Zed Agent | `zed` | Zed threads data | Yes |
+| Codebuff | `codebuff` | `~/.config/manicode` | Yes |
+| Mux | `mux` | `~/.mux/sessions` | Yes |
+| Crush | `crush` | XDG crush data | Yes |
+| Kiro | `kiro` | `~/.kiro` + IDE globalStorage | Yes |
+| Gajae-Code | `gjc` | `~/.gjc/agent/sessions` | Yes |
+| Jcode | `jcode` | `~/.jcode/sessions` | Yes |
+| Command Code | `commandcode` | `~/.commandcode/projects` | Yes |
+| JetBrains Junie | `junie` | `~/.junie/sessions` | Yes |
+| ZCode | `zcode` | `~/.zcode/projects` | Yes |
+| OpenCodeReview | `opencodereview` | `~/.opencodereview/sessions` | Yes |
+| CodeBuddy | `codebuddy` | `~/.codebuddy/projects` | Yes |
+| WorkBuddy | `workbuddy` | `~/.workbuddy/projects` | Yes |
+| Aider | `aider` | `~/.aider` analytics / history | Yes |
+| Continue.dev | `continue` | `~/.continue` + VS Code storage | Yes |
 
 > XLab Token only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
 

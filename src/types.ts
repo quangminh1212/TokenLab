@@ -22,6 +22,20 @@ export type AgentId =
   | "warp"
   | "trae"
   | "zed"
+  | "codebuff"
+  | "mux"
+  | "crush"
+  | "kiro"
+  | "gjc"
+  | "jcode"
+  | "commandcode"
+  | "junie"
+  | "zcode"
+  | "opencodereview"
+  | "codebuddy"
+  | "workbuddy"
+  | "aider"
+  | "continue"
   | "custom";
 
 export interface UsageEvent {
