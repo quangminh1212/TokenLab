@@ -145,9 +145,10 @@
 
         <div class="settings-row settings-row-stack">
           <div class="settings-row-text">
-            <span class="settings-label">GitHub Gist</span>
+            <span class="settings-label">GitHub Gist (full usage)</span>
             <span class="settings-help">
-              Secret gist of <strong>settings</strong> (full project is usually too large for Gist).
+              Secret gist with <strong>all project usage</strong>: settings, custom rates,
+              scanned events (daily-first), and compact daily mirrors.
               Classic PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>.
             </span>
           </div>
@@ -165,7 +166,7 @@
               <span>Remember token in local config</span>
             </label>
             <div class="settings-inline-actions">
-              <button type="button" class="btn btn-primary" id="backupGistBtn">Backup to Gist</button>
+              <button type="button" class="btn btn-primary" id="backupGistBtn">Backup full usage to Gist</button>
               <span class="settings-status" id="backupGistStatus" aria-live="polite"></span>
             </div>
             <p class="settings-help" id="gistLinkRow" hidden>
@@ -466,7 +467,7 @@
       const btn = $('backupGistBtn');
       const st = $('backupGistStatus');
       btn.disabled = true;
-      st.textContent = 'Uploading\u2026';
+      st.textContent = 'Uploading full usage\u2026';
       try {
         const token = ($('gistToken').value || '').trim();
         const res = await fetch('/api/backup/gist', {
@@ -476,14 +477,16 @@
             token: token || undefined,
             saveToken: $('gistSaveToken').checked,
             public: false,
+            scope: 'full',
           }),
         }).then((r) => r.json());
         if (res.error) throw new Error(res.error.message || 'Gist backup failed');
         const g = res.gist || {};
-        st.textContent = g.updated ? 'Gist updated' : 'Gist created';
+        const n = res.eventCount || 0;
+        st.textContent = (g.updated ? 'Updated' : 'Created') + ' \u00B7 ' + n + ' events';
         showGistLink(g.htmlUrl, res.exportedAt);
         if ($('gistSaveToken').checked) $('gistToken').value = '';
-        setTimeout(() => { st.textContent = ''; }, 2800);
+        setTimeout(() => { st.textContent = ''; }, 4000);
       } catch (e) {
         st.textContent = e instanceof Error ? e.message : 'Failed';
       } finally {

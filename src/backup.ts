@@ -404,12 +404,57 @@ function githubToken(fromBody?: string | null): string | null {
   return t || null;
 }
 
-/** Gist practical soft limit for API content size */
-const GIST_SOFT_MAX_BYTES = 900_000; // ~0.9 MB text
+/** GitHub Gist hard-ish limit; keep headroom under 100MB API max */
+const GIST_MAX_BYTES = 50 * 1024 * 1024;
+
+/** Compact usage rows for Gist (drop long source paths). */
+function compactEventsForGist(events: UsageEvent[]): UsageEvent[] {
+  return events.map((e) => ({
+    id: e.id,
+    agent: e.agent,
+    model: e.model,
+    timestamp: e.timestamp,
+    inputTokens: e.inputTokens,
+    outputTokens: e.outputTokens,
+    cacheReadTokens: e.cacheReadTokens,
+    cacheWriteTokens: e.cacheWriteTokens,
+    totalTokens: e.totalTokens,
+    estimatedCost: e.estimatedCost,
+    currency: e.currency || "USD",
+    pricingStatus: e.pricingStatus,
+    workspace: e.workspace ?? null,
+    sourcePath: e.sourcePath?.startsWith("backup") ? e.sourcePath : "scan",
+    estimated: e.estimated,
+  }));
+}
 
 /**
- * Create or update a secret GitHub Gist.
- * Default scope is settings (small). Full is only uploaded if it fits Gist size.
+ * Full-project backup tuned for Gist: config + all usage events + compact daily mirrors.
+ * OpenRouter catalog is omitted (can re-fetch); request-level jsonl never included.
+ */
+export async function buildGistFullBackup(events: UsageEvent[]): Promise<XlabBackup> {
+  const full = await buildFullBackup({
+    events,
+    includeMirrors: true,
+    note: "XLab Token full usage backup (daily-first events + settings + compact mirrors)",
+  });
+  full.events = compactEventsForGist(full.events || []);
+  // Catalog is re-fetchable and large — drop from Gist to leave room for usage
+  delete full.openrouter;
+  full.meta = {
+    ...full.meta,
+    eventCount: full.events.length,
+    openrouterModelCount: 0,
+    note:
+      (full.meta?.note || "") +
+      " · openrouter catalog omitted (refresh from network after restore)",
+  };
+  return full;
+}
+
+/**
+ * Create or update a secret GitHub Gist with **full project usage**
+ * (settings + custom rates + all scanned usage events + compact daily mirrors).
  */
 export async function uploadBackupToGist(opts: {
   token?: string | null;
@@ -417,7 +462,7 @@ export async function uploadBackupToGist(opts: {
   public?: boolean;
   eventCountHint?: number;
   saveToken?: boolean;
-  /** Prefer settings-only for Gist unless explicitly full and small enough */
+  /** @deprecated Gist always uploads full usage when events are provided */
   scope?: BackupScope;
   events?: UsageEvent[];
 }): Promise<{ backup: XlabBackup; gist: GistUploadResult; scope: BackupScope }> {
@@ -428,27 +473,49 @@ export async function uploadBackupToGist(opts: {
     );
   }
 
+  // Always prefer full usage on Gist when we have the event cache
   let backup: XlabBackup;
-  let scope: BackupScope = opts.scope === "full" ? "full" : "settings";
-  if (scope === "full" && opts.events) {
-    backup = await buildFullBackup({ events: opts.events, includeMirrors: false });
-    const size = Buffer.byteLength(JSON.stringify(backup), "utf8");
-    if (size > GIST_SOFT_MAX_BYTES) {
-      // Fall back to settings-only for Gist
-      backup = buildSettingsBackup({
-        eventCountHint: opts.events.length,
-        note: `Settings only (full export was ${Math.round(size / 1024)}KB — use Download for full project)`,
-      });
-      scope = "settings";
-    }
+  let scope: BackupScope = "full";
+  if (opts.events && opts.events.length >= 0) {
+    backup = await buildGistFullBackup(opts.events);
+    scope = "full";
   } else {
-    backup = buildSettingsBackup({ eventCountHint: opts.eventCountHint });
+    backup = buildSettingsBackup({
+      eventCountHint: opts.eventCountHint,
+      note: "Settings only — no usage cache available at upload time; Rescan then backup again",
+    });
     scope = "settings";
   }
 
-  const content = JSON.stringify(backup, null, 2);
+  // Compact JSON (no pretty-print) to maximize room for usage rows
+  let content = JSON.stringify(backup);
+  let size = Buffer.byteLength(content, "utf8");
+
+  // If still huge: drop mirrors, keep all events
+  if (size > GIST_MAX_BYTES && backup.mirrors && Object.keys(backup.mirrors).length) {
+    backup = {
+      ...backup,
+      mirrors: undefined,
+      meta: {
+        ...backup.meta,
+        mirrorFileCount: 0,
+        mirrorBytes: 0,
+        note: (backup.meta?.note || "") + " · mirrors omitted (size)",
+      },
+    };
+    content = JSON.stringify(backup);
+    size = Buffer.byteLength(content, "utf8");
+  }
+
+  if (size > GIST_MAX_BYTES) {
+    throw new Error(
+      `Full usage backup is ${Math.round(size / 1024 / 1024)}MB (limit ~${Math.round(GIST_MAX_BYTES / 1024 / 1024)}MB). ` +
+        `Use Export full download instead, or reduce history.`,
+    );
+  }
+
   const filename = "xlab-token-backup.json";
-  const description = `XLab Token ${scope} backup · ${backup.exportedAt} · v${backup.appVersion}`;
+  const description = `XLab Token full usage · ${backup.events?.length || 0} events · ${backup.exportedAt} · v${backup.appVersion}`;
 
   const prevId =
     (opts.gistId && String(opts.gistId).trim()) ||
