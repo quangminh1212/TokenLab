@@ -38,10 +38,10 @@
   </header>
 
   <main class="shell model-page">
-    <div class="usage-toolbar">
+    <div class="usage-toolbar model-toolbar-top">
       <div>
         <h1 class="page-title">Models</h1>
-        <p class="page-sub">OpenRouter catalog · USD / 1M tokens · custom rates override</p>
+        <p class="page-sub">OpenRouter · $/1M tokens</p>
       </div>
       <div class="usage-actions">
         <span class="pricing-status muted" id="pricingStatus">—</span>
@@ -50,12 +50,10 @@
       </div>
     </div>
 
-    <section class="u-card model-or-panel">
-      <!-- OpenRouter-style search + filters -->
+    <section class="model-or-panel">
       <div class="or-search-bar">
         <svg class="or-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-        <input id="priceSearch" class="or-search-input" type="search" placeholder="Filter models (e.g. claude sonnet free)…" autocomplete="off" autofocus />
-        <kbd class="or-search-hint">space = AND</kbd>
+        <input id="priceSearch" class="or-search-input" type="search" placeholder="Search models…" autocomplete="off" autofocus />
       </div>
 
       <div class="or-filters">
@@ -79,7 +77,7 @@
       </div>
 
       <div class="or-list" id="modelList">
-        <div class="empty">Loading OpenRouter models…</div>
+        <div class="empty">Loading models…</div>
       </div>
 
       <div class="model-add-row">
@@ -88,7 +86,6 @@
         <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
         <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
       </div>
-      <p class="model-path muted">Config · <code id="pricingPath">…</code></p>
     </section>
 
     <footer>
@@ -176,6 +173,113 @@
       return v.toFixed(2);
     }
 
+    /** Map OpenRouter provider slug → brand domain for favicon. */
+    const PROVIDER_DOMAIN = {
+      openai: 'openai.com',
+      anthropic: 'anthropic.com',
+      google: 'ai.google.dev',
+      'x-ai': 'x.ai',
+      'meta-llama': 'meta.com',
+      mistralai: 'mistral.ai',
+      deepseek: 'deepseek.com',
+      qwen: 'qwen.ai',
+      'qwen3': 'qwen.ai',
+      moonshotai: 'moonshot.cn',
+      cohere: 'cohere.com',
+      nvidia: 'nvidia.com',
+      perplexity: 'perplexity.ai',
+      amazon: 'amazon.com',
+      'amazon-bedrock': 'aws.amazon.com',
+      microsoft: 'microsoft.com',
+      azure: 'azure.microsoft.com',
+      together: 'together.ai',
+      fireworks: 'fireworks.ai',
+      groq: 'groq.com',
+      cerebras: 'cerebras.ai',
+      deepinfra: 'deepinfra.com',
+      hyperbolic: 'hyperbolic.xyz',
+      sambanova: 'sambanova.ai',
+      ai21: 'ai21.com',
+      inflect: 'inflection.ai',
+      inflection: 'inflection.ai',
+      nousresearch: 'nousresearch.com',
+      openrouter: 'openrouter.ai',
+      liquid: 'liquid.ai',
+      minimax: 'minimaxi.com',
+      'z-ai': 'zhipuai.cn',
+      zhipu: 'zhipuai.cn',
+      '01-ai': '01.ai',
+      thruline: 'thruline.ai',
+      inception: 'inceptionlabs.ai',
+      tencent: 'tencent.com',
+      baidu: 'baidu.com',
+      bytedance: 'bytedance.com',
+      alibaba: 'alibaba.com',
+      stepfun: 'stepfun.com',
+      'aion-labs': 'aionlabs.ai',
+      poolside: 'poolside.ai',
+      sakana: 'sakana.ai',
+      'nex-agi': 'nex-agi.com',
+      reka: 'reka.ai',
+      writer: 'writer.com',
+      morph: 'morphllm.com',
+      alpine: 'alpinemd.com',
+      arcee: 'arcee.ai',
+      cognitivecomputations: 'erichartford.com',
+      gryphe: 'huggingface.co',
+      undi95: 'huggingface.co',
+      sao10k: 'huggingface.co',
+      neversleep: 'huggingface.co',
+      sophosympatheia: 'huggingface.co',
+      aetherwiing: 'huggingface.co',
+      nothingiisreal: 'huggingface.co',
+      anthracite: 'huggingface.co',
+      raifle: 'huggingface.co',
+      thedrummer: 'huggingface.co',
+      eva: 'huggingface.co',
+      agentica: 'huggingface.co',
+      alfredpros: 'huggingface.co',
+      mancer: 'mancer.tech',
+      pyjai: 'huggingface.co',
+      integuru: 'huggingface.co',
+      scb10x: 'scb10x.com',
+      thudm: 'chatglm.cn',
+      tngtech: 'tngtech.com',
+      'eleutherai': 'eleuther.ai',
+      'princeton-nlp': 'princeton.edu',
+      'microsoft/phi': 'microsoft.com',
+      ibm: 'ibm.com',
+      databricks: 'databricks.com',
+      snowflake: 'snowflake.com',
+      upstage: 'upstage.ai',
+      '01ai': '01.ai',
+      kai: 'huggingface.co',
+      'google-vertex': 'cloud.google.com',
+      'google-ai-studio': 'aistudio.google.com',
+    };
+
+    function providerDomain(provider) {
+      const p = String(provider || '').toLowerCase().trim();
+      if (!p) return 'openrouter.ai';
+      if (PROVIDER_DOMAIN[p]) return PROVIDER_DOMAIN[p];
+      // heuristic: x-ai → x.ai, foo-bar → foobar.com fallback openrouter
+      if (p.includes('.')) return p;
+      const bare = p.replace(/-/g, '');
+      return bare + '.com';
+    }
+
+    function providerIconHtml(provider) {
+      const p = String(provider || 'openrouter').trim() || 'openrouter';
+      const domain = providerDomain(p);
+      const letter = escapeHtml((p[0] || '?').toUpperCase());
+      const src = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=64';
+      return `<span class="or-prov" title="${escapeHtml(p)}">
+        <img class="or-prov-img" src="${src}" alt="" width="28" height="28" loading="lazy" decoding="async"
+          onerror="this.style.display='none';this.nextElementSibling.hidden=false;" />
+        <span class="or-prov-fallback" hidden aria-hidden="true">${letter}</span>
+      </span>`;
+    }
+
     /** OpenRouter-style multi-token AND search on id, name, provider, slug */
     function matchesQuery(m, q) {
       if (!q) return true;
@@ -249,28 +353,28 @@
         const id = escapeHtml(m.id);
         const free = Number(rates.input) === 0 && Number(rates.output) === 0;
         const src = rates.source;
-        return `<article class="or-card ${src === 'custom' || src === 'draft' ? 'is-custom' : ''} ${free ? 'is-free' : ''}" data-id="${id}">
+        const displayName = escapeHtml((m.name || m.id || '').replace(/^[^:]+:\s*/, ''));
+        return `<article class="or-row ${src === 'custom' || src === 'draft' ? 'is-custom' : ''} ${free ? 'is-free' : ''}" data-id="${id}">
+          ${providerIconHtml(m.provider)}
           <div class="or-card-main">
             <div class="or-card-title-row">
-              <h3 class="or-card-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</h3>
+              <h3 class="or-card-name" title="${escapeHtml(m.name)}">${displayName}</h3>
               ${free ? '<span class="or-badge free">Free</span>' : ''}
               ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
             </div>
             <div class="or-card-meta">
               <code class="or-id">${id}</code>
               <span class="or-dot">·</span>
-              <span>${escapeHtml(m.provider)}</span>
-              <span class="or-dot">·</span>
-              <span>${fmtCtx(m.contextLength)} ctx</span>
+              <span>${fmtCtx(m.contextLength)}</span>
             </div>
           </div>
           <div class="or-card-rates">
             <label class="or-rate">
-              <span>In $/1M</span>
+              <span>In</span>
               <input class="price-input" data-field="in" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.input)}" />
             </label>
             <label class="or-rate">
-              <span>Out $/1M</span>
+              <span>Out</span>
               <input class="price-input" data-field="out" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.output)}" />
             </label>
           </div>
@@ -335,7 +439,7 @@
     }
 
     function collectDraftFromDom() {
-      $('modelList').querySelectorAll('.or-card[data-id]').forEach((card) => {
+      $('modelList').querySelectorAll('.or-row[data-id]').forEach((card) => {
         const model = (card.getAttribute('data-id') || '').toLowerCase();
         if (!model) return;
         pricingDraft[model] = {
@@ -404,7 +508,7 @@
       if (!inp) return;
       const model = (inp.getAttribute('data-model') || '').toLowerCase();
       if (!model) return;
-      const card = inp.closest('.or-card');
+      const card = inp.closest('.or-row');
       pricingDraft[model] = {
         inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
         outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
