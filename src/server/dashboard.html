@@ -32,6 +32,7 @@
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading…</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
+        <button class="icon-btn settings-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings" aria-haspopup="dialog" aria-controls="settingsOverlay">⚙</button>
       </div>
     </div>
   </header>
@@ -102,48 +103,66 @@
       </div>
     </section>
 
-    <!-- Custom model pricing -->
-    <section class="u-card pricing-card" id="pricingCard">
-      <div class="u-card-head pricing-head">
-        <span class="u-card-title">Model pricing</span>
-        <div class="pricing-actions">
-          <button type="button" class="btn" id="pricingReload">Reload</button>
-          <button type="button" class="btn btn-primary" id="pricingSave">Save rates</button>
-        </div>
-      </div>
-      <p class="pricing-hint">
-        USD / 1M tokens. Custom rates override the bundled table. Router-reported cost &gt; 0 is kept unless you set a custom rate for that model.
-        Config: <code id="pricingPath">…</code>
-      </p>
-      <div class="table-scroll">
-        <table class="usage-table pricing-table" id="pricingTable">
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th class="num">Source</th>
-              <th class="num">Input $/1M</th>
-              <th class="num">Output $/1M</th>
-            </tr>
-          </thead>
-          <tbody id="pricingBody">
-            <tr><td colspan="4"><div class="empty">Loading rates…</div></td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="pricing-add">
-        <input type="text" id="priceModel" placeholder="model name (e.g. big-pickle)" />
-        <input type="number" id="priceIn" step="0.001" min="0" placeholder="input $/1M" />
-        <input type="number" id="priceOut" step="0.001" min="0" placeholder="output $/1M" />
-        <button type="button" class="btn" id="priceAdd">Add / update row</button>
-      </div>
-      <p class="pricing-status" id="pricingStatus"></p>
-    </section>
-
     <footer>
       <div>Layout inspired by <strong>9router Usage</strong> · accent XLab teal</div>
       <div>localhost only · estimated cost, not billing</div>
     </footer>
   </main>
+
+  <!-- Settings panel (right header) -->
+  <div class="settings-overlay hidden" id="settingsOverlay" role="presentation">
+    <div class="settings-backdrop" id="settingsBackdrop" aria-hidden="true"></div>
+    <aside class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="settings-panel-head">
+        <h2 id="settingsTitle">Settings</h2>
+        <button type="button" class="icon-btn" id="settingsClose" title="Close" aria-label="Close settings">✕</button>
+      </div>
+      <div class="settings-panel-body">
+        <section class="settings-section">
+          <h3>Appearance</h3>
+          <div class="settings-row">
+            <span>Theme</span>
+            <button type="button" class="btn" id="settingsThemeBtn">Toggle light / dark</button>
+          </div>
+        </section>
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <h3>Model pricing</h3>
+            <div class="pricing-actions">
+              <button type="button" class="btn" id="pricingReload">Reload</button>
+              <button type="button" class="btn btn-primary" id="pricingSave">Save rates</button>
+            </div>
+          </div>
+          <p class="pricing-hint">
+            USD / 1M tokens. Custom rates override the bundled table. Router cost &gt; 0 is kept unless the model has a custom rate.
+            Config: <code id="pricingPath">…</code>
+          </p>
+          <div class="table-scroll settings-table-wrap">
+            <table class="usage-table pricing-table" id="pricingTable">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th class="num">Source</th>
+                  <th class="num">Input $/1M</th>
+                  <th class="num">Output $/1M</th>
+                </tr>
+              </thead>
+              <tbody id="pricingBody">
+                <tr><td colspan="4"><div class="empty">Loading rates…</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pricing-add">
+            <input type="text" id="priceModel" placeholder="model name (e.g. big-pickle)" />
+            <input type="number" id="priceIn" step="0.001" min="0" placeholder="input $/1M" />
+            <input type="number" id="priceOut" step="0.001" min="0" placeholder="output $/1M" />
+            <button type="button" class="btn" id="priceAdd">Add / update</button>
+          </div>
+          <p class="pricing-status" id="pricingStatus"></p>
+        </section>
+      </div>
+    </aside>
+  </div>
 
   <script>
     const $ = (id) => document.getElementById(id);
@@ -181,9 +200,29 @@
       $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
-    $('themeBtn').onclick = () => {
+    function toggleTheme() {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
-    };
+    }
+    $('themeBtn').onclick = toggleTheme;
+    $('settingsThemeBtn').onclick = toggleTheme;
+
+    function openSettings() {
+      $('settingsOverlay').classList.remove('hidden');
+      document.body.classList.add('settings-open');
+      void loadPricing();
+      $('settingsClose')?.focus?.();
+    }
+    function closeSettings() {
+      $('settingsOverlay').classList.add('hidden');
+      document.body.classList.remove('settings-open');
+    }
+    $('settingsBtn').onclick = openSettings;
+    $('settingsClose').onclick = closeSettings;
+    $('settingsBackdrop').onclick = closeSettings;
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !$('settingsOverlay').classList.contains('hidden')) closeSettings();
+    });
+    if (location.hash === '#settings') openSettings();
 
     const state = {
       period: '7d',

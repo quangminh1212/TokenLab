@@ -32,6 +32,7 @@
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading…</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
+        <button class="icon-btn settings-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings">⚙</button>
       </div>
     </div>
   </header>
@@ -192,6 +193,10 @@
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    };
+    // Settings lives on Dashboard (pricing editor + theme)
+    $('settingsBtn').onclick = () => {
+      location.href = '/#settings';
     };
 
     function colorFor(id) {
