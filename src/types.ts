@@ -46,6 +46,8 @@ export type AgentId =
   | "forge"
   | "void"
   | "amazon-q"
+  | "9router"
+  | "xlabrouter"
   | "custom";
 
 export interface UsageEvent {

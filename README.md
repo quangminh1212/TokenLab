@@ -184,8 +184,22 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | Forge | `forge` | `~/.forge` | Yes |
 | Void | `void` | Void app data | Yes |
 | Amazon Q | `amazon-q` | `~/.aws/amazonq` / VS Code storage | Yes |
+| **9Router** | `9router` | `~/.9router` / `db/data.sqlite` / `usage-history.jsonl` (VPS mirror OK) | Yes |
+| **XLab Router** | `xlabrouter` | `~/.xlabrouter` / `%APPDATA%/xlabrouter` / `db.json` | Yes |
 
 > XLab Token only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
+
+#### 9Router / XLab Router data paths
+
+| Source | Typical location |
+|--------|------------------|
+| Local 9Router | `~/.9router` (Linux/macOS) · `%APPDATA%\\9router` (Windows) |
+| Local XLab Router | `~/.xlabrouter` · `%APPDATA%\\xlabrouter` |
+| VPS install (my.bnix.one) | `/root/.9router` · `/root/.xlabrouter` |
+| Local mirror (optional) | `%APPDATA%\\xlab-token\\mirrors\\{9router,xlabrouter}` · `C:\\Dev\\VPS\\my.bnix.one\\{9router,xlabrouter}\\data` |
+| Env overrides | `XLAB_TOKEN_9ROUTER_DIR` · `XLAB_TOKEN_XLABROUTER_DIR` · `NINEROUTER_HOME` · `XLABROUTER_HOME` |
+
+Parsers read `usageHistory` (SQLite), `usage.json` history, `db.json` → `usageData.history`, or exported `usage-history.jsonl`. Router-reported `cost` is preferred when present.
 
 Parsers ship incrementally; `xlab-token doctors` reports which agents are detected and which parsers are active.
 

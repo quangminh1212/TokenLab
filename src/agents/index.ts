@@ -47,6 +47,8 @@ import { agent as mimocode } from "./mimocode/index.js";
 import { agent as codewhale } from "./codewhale/index.js";
 import { agent as ollama } from "./ollama/index.js";
 import { agent as devin } from "./devin/index.js";
+import { agent as nine_router } from "./9router/index.js";
+import { agent as xlab_router } from "./xlabrouter/index.js";
 import type { AgentModule, AgentPathSpec } from "./shared/types.js";
 
 export type { AgentModule, AgentPathSpec } from "./shared/types.js";
@@ -100,6 +102,8 @@ export const AGENTS: AgentModule[] = [
   forge,
   void_agent,
   amazon_q,
+  nine_router,
+  xlab_router,
 ];
 
 export const PARSERS: Record<AgentId, AgentModule["parse"] | null> = {
@@ -126,7 +130,9 @@ export async function scanAll(enabled?: Partial<Record<AgentId, boolean>>): Prom
     }
     if (roots.length === 0) continue;
     try {
-      all.push(...(await mod.parse(roots)));
+      // Avoid push(...hugeArray) — spread arg list overflows the stack at ~100k+ events
+      const batch = await mod.parse(roots);
+      for (const e of batch) all.push(e);
     } catch (err) {
       console.error("[xlab-token] parser " + mod.id + " failed:", err instanceof Error ? err.message : err);
     }
