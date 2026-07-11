@@ -519,17 +519,46 @@ packages/
 
 ---
 
+## Implementation status (v0.1.0)
+
+Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (see [`ATTRIBUTION.md`](./ATTRIBUTION.md)):
+
+| Area | Status |
+|------|--------|
+| Multi-agent local scanners | **Done** — Claude Code, Codex, Cursor, Windsurf, Grok, Gemini, OpenCode |
+| Token + cost aggregation | **Done** — `stats` / `cost` / `/api/stats` / `/api/cost` |
+| Bundled offline pricing | **Done** — LiteLLM-style rates in `src/pricing.ts` |
+| Localhost dashboard | **Done** — `xlab-token serve` → `http://127.0.0.1:3737` |
+| Agent detection (`doctors`) | **Done** |
+| Grok session estimate | **Done** — real usage if present, else text-length estimate |
+| Cursor SQLite (`state.vscdb`) | Planned (JSON/JSONL caches supported now) |
+| Copilot deep parser | Path detect only |
+| SQLite persistent store | Planned (in-memory scan each run for v0.1) |
+| LiteLLM live price refresh | Planned |
+
+### Dev commands
+
+```bash
+npm install
+npm run build
+npm test
+npx tsx src/cli.ts doctors
+npx tsx src/cli.ts stats --since 7d
+npx tsx src/cli.ts cost --since 7d
+npx tsx src/cli.ts serve --port 3737
+```
+
 ## Roadmap
 
-- [ ] Core scanner + SQLite (tokens + cost rollups)
-- [ ] P0 parsers: **Cursor, Grok, Windsurf, Codex, Claude Code**
-- [ ] Cost engine + bundled model price table
-- [ ] Dashboard: token totals, spend totals, agent/model charts
-- [ ] API: `/api/stats`, `/api/cost`, `/api/agents`, `/api/events`
-- [ ] CLI: `stats`, `cost`, `export`, `doctors`
-- [ ] P1 parsers: Copilot, OpenCode, Cline, Gemini, …
+- [x] Core scanner + cost engine (TypeScript)
+- [x] P0 parsers: Cursor, Grok, Windsurf, Codex, Claude Code (+ Gemini, OpenCode)
+- [x] Bundled model price table
+- [x] Dashboard + HTTP API
+- [x] CLI: `stats`, `cost`, `scan`, `doctors`, `serve`
+- [ ] Deeper Cursor SQLite + Copilot parsers
+- [ ] Persistent SQLite store / incremental scan
+- [ ] Optional LiteLLM price refresh
 - [ ] Plugin API for custom agents
-- [ ] Optional encrypted local DB
 
 ---
 
