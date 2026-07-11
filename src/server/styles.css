@@ -1168,138 +1168,164 @@ a.btn {
   .settings-kv { grid-template-columns: 1fr; }
 }
 
-/* ========== Model page (OpenRouter-style catalog) ========== */
+/* ========== Model page — airy list + provider icons ========== */
 .model-page .page-title {
   margin: 0;
-  font-size: 1.25rem;
-  font-weight: 800;
+  font-size: 1.2rem;
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
 .model-page .page-sub {
-  margin: 0.2rem 0 0;
-  font-size: 0.85rem;
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
   color: var(--muted);
 }
-.model-or-panel { overflow: hidden; }
+.model-toolbar-top { margin-bottom: 0.75rem; }
+.model-or-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  overflow: hidden;
+}
 .or-search-bar {
   position: relative;
   display: flex;
   align-items: center;
-  padding: 0.9rem 1rem 0.55rem;
-  gap: 0.5rem;
+  padding: 0.85rem 1rem 0.5rem;
 }
 .or-search-icon {
   position: absolute;
   left: 1.55rem;
-  width: 1.05rem;
-  height: 1.05rem;
+  width: 1rem;
+  height: 1rem;
   stroke: var(--muted);
   fill: none;
   stroke-width: 2;
   pointer-events: none;
+  opacity: 0.75;
 }
 .or-search-input {
   flex: 1;
   width: 100%;
-  padding: 0.7rem 5.5rem 0.7rem 2.4rem;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: var(--bg);
+  padding: 0.65rem 1rem 0.65rem 2.35rem;
+  border: 1px solid transparent;
+  border-radius: 0.65rem;
+  background: var(--bg-soft, var(--bg));
   color: var(--text);
   font: inherit;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  transition: border-color .12s, box-shadow .12s, background .12s;
 }
 .or-search-input:focus {
   outline: none;
-  border-color: var(--xlab);
+  background: var(--bg);
+  border-color: color-mix(in srgb, var(--xlab) 40%, var(--border));
   box-shadow: 0 0 0 3px var(--ring);
-}
-.or-search-hint {
-  position: absolute;
-  right: 1.5rem;
-  font-size: 0.68rem;
-  font-weight: 600;
-  color: var(--muted);
-  background: var(--panel-soft);
-  border: 1px solid var(--border-soft);
-  border-radius: 0.35rem;
-  padding: 0.15rem 0.4rem;
-  pointer-events: none;
 }
 .or-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.55rem;
+  gap: 0.45rem;
   align-items: center;
-  padding: 0.35rem 1rem 0.85rem;
+  padding: 0.25rem 1rem 0.75rem;
   border-bottom: 1px solid var(--border-soft);
 }
 .or-filter-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 .or-chip {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-secondary);
+  border: none;
+  background: transparent;
+  color: var(--muted);
   border-radius: 999px;
-  padding: 0.35rem 0.75rem;
+  padding: 0.3rem 0.7rem;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color .12s, background .12s, color .12s;
+  transition: background .12s, color .12s;
 }
-.or-chip:hover { border-color: color-mix(in srgb, var(--xlab) 40%, var(--border)); }
+.or-chip:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
 .or-chip.active {
-  border-color: color-mix(in srgb, var(--xlab) 50%, var(--border));
-  background: color-mix(in srgb, var(--xlab) 14%, var(--bg));
+  background: color-mix(in srgb, var(--xlab) 14%, transparent);
   color: var(--xlab-600);
 }
 html.dark .or-chip.active { color: var(--xlab-400); }
 .or-select {
-  padding: 0.35rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--bg);
-  color: var(--text);
+  padding: 0.3rem 0.5rem;
+  border: none;
+  border-radius: 0.45rem;
+  background: var(--bg-soft, var(--bg));
+  color: var(--text-secondary);
   font: inherit;
-  font-size: 0.8rem;
-  min-height: 34px;
+  font-size: 0.78rem;
+  min-height: 32px;
+  cursor: pointer;
 }
 .or-count {
   margin-left: auto;
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
 }
 .or-list {
-  max-height: min(62vh, 640px);
+  max-height: min(64vh, 680px);
   overflow: auto;
-  padding: 0.35rem 0.5rem;
+  padding: 0.15rem 0;
 }
-.or-card {
+/* Single clean row — provider icon | name | rates */
+.or-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1rem;
-  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 0.75rem;
   align-items: center;
-  padding: 0.75rem 0.85rem;
-  margin: 0.25rem 0.35rem;
+  padding: 0.7rem 1.1rem;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  transition: background .1s ease;
+}
+.or-row:last-child { border-bottom: none; }
+.or-row:hover {
+  background: color-mix(in srgb, var(--xlab) 5%, transparent);
+}
+.or-row.is-custom {
+  background: color-mix(in srgb, var(--xlab) 4%, transparent);
+}
+.or-prov {
+  position: relative;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.55rem;
+  overflow: hidden;
+  background: var(--bg-soft, var(--panel-soft));
   border: 1px solid var(--border-soft);
-  border-radius: 0.75rem;
-  background: var(--panel);
-  transition: border-color .12s, background .12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.or-card:hover {
-  border-color: color-mix(in srgb, var(--xlab) 35%, var(--border));
-  background: color-mix(in srgb, var(--xlab) 4%, var(--panel));
+.or-prov-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 0.2rem;
+  display: block;
 }
-.or-card.is-custom {
-  border-color: color-mix(in srgb, var(--xlab) 30%, var(--border));
-  background: color-mix(in srgb, var(--xlab) 6%, var(--panel));
+.or-prov-fallback {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--muted);
+  line-height: 1;
 }
-.or-card-main { min-width: 0; flex: 1 1 14rem; }
+.or-card-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .or-card-title-row {
   display: flex;
   flex-wrap: wrap;
@@ -1308,39 +1334,45 @@ html.dark .or-chip.active { color: var(--xlab-400); }
 }
 .or-card-name {
   margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  line-height: 1.25;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(52vw, 28rem);
 }
 .or-card-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.25rem;
-  font-size: 0.78rem;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .or-id {
-  font-size: 0.75rem;
-  background: var(--panel-soft);
-  border: 1px solid var(--border-soft);
-  border-radius: 0.3rem;
-  padding: 0.08rem 0.35rem;
-  color: var(--text-secondary);
-  max-width: 100%;
+  font-size: 0.72rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  max-width: min(48vw, 26rem);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
 }
-.or-dot { opacity: 0.5; }
+.or-dot { opacity: 0.4; }
 .or-badge {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   border-radius: 999px;
-  padding: 0.12rem 0.45rem;
+  padding: 0.1rem 0.4rem;
 }
 .or-badge.free {
   color: var(--success);
@@ -1348,97 +1380,101 @@ html.dark .or-chip.active { color: var(--xlab-400); }
 }
 .or-badge.custom {
   color: var(--xlab-600);
-  background: color-mix(in srgb, var(--xlab) 14%, transparent);
+  background: color-mix(in srgb, var(--xlab) 12%, transparent);
 }
 html.dark .or-badge.custom { color: var(--xlab-400); }
 .or-card-rates {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: flex-end;
+  flex-shrink: 0;
+  gap: 0.45rem;
+  align-items: center;
 }
 .or-rate {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  font-size: 0.68rem;
+  gap: 0.12rem;
+  font-size: 0.62rem;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 .or-rate .price-input,
-.or-card .price-input {
-  width: 6.5rem;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 0.45rem;
-  background: var(--bg);
+.or-row .price-input {
+  width: 5.75rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: var(--bg-soft, var(--bg));
   color: var(--text);
-  font-size: 0.875rem;
+  font-size: 0.84rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
   text-transform: none;
   letter-spacing: normal;
+  transition: border-color .12s, box-shadow .12s, background .12s;
 }
-.or-card .price-input:focus {
+.or-row .price-input:hover {
+  border-color: var(--border);
+}
+.or-row .price-input:focus {
   outline: none;
+  background: var(--bg);
   border-color: var(--xlab);
   box-shadow: 0 0 0 3px var(--ring);
 }
 .or-more {
   text-align: center;
-  padding: 0.75rem;
-  font-size: 0.82rem;
+  padding: 0.85rem;
+  font-size: 0.8rem;
 }
 .model-add-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.45rem;
   align-items: center;
-  padding: 0.85rem 1rem;
+  padding: 0.75rem 1rem;
   border-top: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--bg-soft) 40%, transparent);
 }
 .model-add-row input[type="text"],
 .model-add-row input[type="number"] {
-  padding: 0.45rem 0.65rem;
-  border: 1px solid var(--border);
-  border-radius: 0.45rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
   background: var(--bg);
   color: var(--text);
   font: inherit;
-  font-size: 0.875rem;
-  min-height: 38px;
+  font-size: 0.85rem;
+  min-height: 36px;
 }
 .model-add-row input[type="text"] { flex: 1 1 10rem; min-width: 8rem; }
-.model-add-row input[type="number"] { width: 7rem; }
+.model-add-row input[type="number"] { width: 6.5rem; }
 .model-add-row input:focus {
   outline: none;
   border-color: var(--xlab);
   box-shadow: 0 0 0 3px var(--ring);
 }
-.model-path {
-  margin: 0;
-  padding: 0 1rem 0.85rem;
-  font-size: 0.75rem;
-}
-.model-path code {
-  font-size: 0.72rem;
-  word-break: break-all;
-}
 .pricing-status {
   margin: 0;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 500;
   color: var(--text-secondary);
 }
 .pricing-status.muted { color: var(--muted); }
 
-@media (max-width: 640px) {
-  .or-search-hint { display: none; }
-  .or-search-input { padding-right: 0.85rem; }
+@media (max-width: 720px) {
+  .or-row {
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+  .or-card-rates {
+    width: 100%;
+    padding-left: 2.75rem;
+  }
   .or-count { width: 100%; margin-left: 0; }
+  .or-card-name { max-width: 70vw; }
 }
 
 /* Prefer reduced motion */
