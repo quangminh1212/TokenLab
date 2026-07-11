@@ -242,14 +242,19 @@ export function applyPricing(
 
 /**
  * Recompute costs after rate table / custom rate changes.
- * Events with a custom rate for their model always use the table.
- * Others keep a previous positive cost when preferRouterCost is on.
+ * - forceTable: ignore sticky router costs — always use bundled + custom rates
+ * - default: custom-rated models use table; others keep previous positive cost
  */
-export function repriceEvents(events: UsageEvent[]): UsageEvent[] {
+export function repriceEvents(
+  events: UsageEvent[],
+  opts: { forceTable?: boolean } = {},
+): UsageEvent[] {
   const custom = customRates();
+  const forceTable = opts.forceTable === true;
   return events.map((e) => {
     const norm = (normalizeModelName(e.model) || e.model || "").trim().toLowerCase();
     const hasCustom = Boolean(norm && custom[norm]);
+    const useTable = forceTable || hasCustom || (e.estimatedCost ?? 0) <= 0;
     return applyPricing({
       id: e.id,
       agent: e.agent,
@@ -262,10 +267,7 @@ export function repriceEvents(events: UsageEvent[]): UsageEvent[] {
       workspace: e.workspace,
       sourcePath: e.sourcePath,
       estimated: e.estimated,
-      routerCost:
-        hasCustom || (e.estimatedCost ?? 0) <= 0
-          ? null
-          : e.estimatedCost,
+      routerCost: useTable ? null : e.estimatedCost,
     });
   });
 }

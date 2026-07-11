@@ -27,6 +27,29 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
   let cache: UsageEvent[] = [];
   let scanning = false;
+  /** Bumps when pricing rates change so UIs can refresh costs in realtime. */
+  let pricingRevision = 1;
+  let pricingUpdatedAt = Date.now();
+  const pricingListeners = new Set<ServerResponse>();
+
+  function bumpPricing(reason = "update"): void {
+    pricingRevision += 1;
+    pricingUpdatedAt = Date.now();
+    const payload = `data: ${JSON.stringify({
+      type: "pricing",
+      revision: pricingRevision,
+      updatedAt: pricingUpdatedAt,
+      reason,
+      eventCount: cache.length,
+    })}\n\n`;
+    for (const res of pricingListeners) {
+      try {
+        res.write(payload);
+      } catch {
+        pricingListeners.delete(res);
+      }
+    }
+  }
 
   async function rescan(): Promise<number> {
     if (scanning) return cache.length;
@@ -71,6 +94,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         agentsDetected: agents.filter((a) => a.detected).map((a) => a.id),
         eventCount: cache.length,
+        pricingRevision,
+        pricingUpdatedAt,
       });
     }
 
@@ -130,13 +155,48 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         customRates: cfg.pricing?.customRates || {},
         catalog: listPricingCatalog(models as string[]),
         seenModels: models.sort((a, b) => a.localeCompare(b)),
+        pricingRevision,
+        pricingUpdatedAt,
       });
+    }
+
+    // Server-Sent Events: live pricing revision pushes for multi-tab / dashboard
+    if (req.method === "GET" && pathname === "/api/pricing/stream") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      });
+      res.write(
+        `data: ${JSON.stringify({
+          type: "hello",
+          revision: pricingRevision,
+          updatedAt: pricingUpdatedAt,
+          eventCount: cache.length,
+        })}\n\n`,
+      );
+      pricingListeners.add(res);
+      const keepAlive = setInterval(() => {
+        try {
+          res.write(`: ping ${Date.now()}\n\n`);
+        } catch {
+          clearInterval(keepAlive);
+          pricingListeners.delete(res);
+        }
+      }, 15000);
+      keepAlive.unref?.();
+      req.on("close", () => {
+        clearInterval(keepAlive);
+        pricingListeners.delete(res);
+      });
+      return;
     }
 
     if (req.method === "PUT" && pathname === "/api/pricing") {
       const body = await readJsonBody(req);
       const ratesIn = (body?.customRates || body?.rates || {}) as Record<string, Partial<ModelRate>>;
       const replace = body?.replace === true;
+      const live = body?.live === true;
       const normalized: Record<string, ModelRate> = {};
       for (const [rawKey, rawVal] of Object.entries(ratesIn)) {
         const key = (normalizeModelName(rawKey) || rawKey).trim().toLowerCase();
@@ -158,11 +218,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         };
       }
       const cfg = await setCustomRates(normalized, replace);
-      cache = repriceEvents(cache);
+      // Force table reprice so new rates apply immediately to all events
+      cache = repriceEvents(cache, { forceTable: true });
+      bumpPricing(live ? "live" : "save");
+      const totals = aggregate(cache, "agent", "cost", null, null).totals;
       return json(res, 200, {
         ok: true,
+        live: Boolean(live),
         customRates: cfg.pricing?.customRates || {},
         eventCount: cache.length,
+        pricingRevision,
+        pricingUpdatedAt,
+        totals: {
+          estimatedCost: totals.estimatedCost,
+          totalTokens: totals.totalTokens,
+          eventCount: totals.eventCount,
+        },
       });
     }
 

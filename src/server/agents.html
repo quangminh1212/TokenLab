@@ -410,6 +410,22 @@
     };
     load();
     setInterval(load, 30000);
+
+    // Refresh cost badges when Settings updates rates (realtime)
+    let pricingRevision = 0;
+    try {
+      const es = new EventSource('/api/pricing/stream');
+      es.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'hello') pricingRevision = msg.revision || 0;
+          if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
+            pricingRevision = msg.revision;
+            void load();
+          }
+        } catch { /* ignore */ }
+      };
+    } catch { /* ignore */ }
   </script>
 </body>
 </html>
