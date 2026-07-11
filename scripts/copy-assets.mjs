@@ -7,10 +7,16 @@ const serverSrc = path.join(root, "src", "server");
 const serverDist = path.join(root, "dist", "server");
 mkdirSync(serverDist, { recursive: true });
 
-const dashboardFrom = path.join(serverSrc, "dashboard.html");
-const dashboardTo = path.join(serverDist, "dashboard.html");
-cpSync(dashboardFrom, dashboardTo);
-console.log("copied dashboard.html -> dist/server/");
+const files = ["dashboard.html", "agents.html", "styles.css"];
+for (const name of files) {
+  const from = path.join(serverSrc, name);
+  if (!existsSync(from)) {
+    console.warn("skip missing", name);
+    continue;
+  }
+  cpSync(from, path.join(serverDist, name));
+  console.log(`copied ${name} -> dist/server/`);
+}
 
 const assetsFrom = path.join(serverSrc, "assets");
 const assetsTo = path.join(serverDist, "assets");
