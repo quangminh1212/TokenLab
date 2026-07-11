@@ -1,6 +1,9 @@
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { num, pathExists, readText, stableId, walkFiles } from "../util.js";
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { num, pathExists, readText, stableId, walkFiles } from "../../util.js";
 
 // Gemini CLI: ~/.gemini/tmp/<project>/chats/session-*.json
 export async function parseGemini(roots: string[]): Promise<UsageEvent[]> {
@@ -68,3 +71,17 @@ export async function parseGemini(roots: string[]): Promise<UsageEvent[]> {
 
   return events;
 }
+
+
+export const agent: AgentModule = {
+  id: "gemini",
+  label: "Gemini CLI",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      expandHome(process.env.GEMINI_CLI_HOME || path.join(home, ".gemini")),
+      path.join(home, ".gemini"),
+    ]);
+  },
+  parse: parseGemini,
+};

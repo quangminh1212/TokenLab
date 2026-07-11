@@ -1,7 +1,10 @@
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
 import path from "node:path";
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../util.js";
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
 
 /**
  * Cursor: prefer JSON/JSONL usage caches under Application Support.
@@ -101,3 +104,19 @@ function pushFromObject(events: UsageEvent[], row: unknown, file: string, idx: n
     }),
   );
 }
+
+
+export const agent: AgentModule = {
+  id: "cursor",
+  label: "Cursor",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      path.join(appData, "Cursor"),
+      path.join(home, ".cursor"),
+      path.join(localApp, "Cursor"),
+      path.join(xdgConfig, "Cursor"),
+    ]);
+  },
+  parse: parseCursor,
+};

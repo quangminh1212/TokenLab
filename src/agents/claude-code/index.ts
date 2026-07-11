@@ -1,7 +1,10 @@
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
 import path from "node:path";
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../util.js";
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
 
 // Claude Code: ~/.claude/projects/<project>/<session>.jsonl
 // Assistant messages often include usage: { input_tokens, output_tokens, cache_* }
@@ -86,3 +89,20 @@ export async function parseClaudeCode(roots: string[]): Promise<UsageEvent[]> {
 
   return events;
 }
+
+
+export const agent: AgentModule = {
+  id: "claude-code",
+  label: "Claude Code",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      expandHome(process.env.CLAUDE_CONFIG_DIR || path.join(home, ".claude")),
+      ...(process.env.CLAUDE_CONFIG_DIRS
+        ? process.env.CLAUDE_CONFIG_DIRS.split(path.delimiter).map(expandHome)
+        : []),
+      path.join(home, ".config", "claude"),
+    ]);
+  },
+  parse: parseClaudeCode,
+};

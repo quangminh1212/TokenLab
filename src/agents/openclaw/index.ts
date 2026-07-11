@@ -1,8 +1,11 @@
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
 import path from "node:path";
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../util.js";
-import { extractModel, extractTimestamp, extractTokenBuckets } from "./usage-fields.js";
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
 
 /**
  * OpenClaw (+ legacy clawdbot / moltbot / moldbot):
@@ -150,3 +153,23 @@ function collectPathRefs(data: unknown, baseDir: string): string[] {
   visit(data);
   return [...new Set(out)];
 }
+
+
+export const agent: AgentModule = {
+  id: "openclaw",
+  label: "OpenClaw",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      path.join(home, ".openclaw"),
+      path.join(home, ".clawdbot"),
+      path.join(home, ".moltbot"),
+      path.join(home, ".moldbot"),
+      path.join(appData, "openclaw"),
+      path.join(localApp, "openclaw"),
+      path.join(xdgData, "openclaw"),
+      path.join(xdgConfig, "openclaw"),
+    ]);
+  },
+  parse: parseOpenClaw,
+};

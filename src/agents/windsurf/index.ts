@@ -1,7 +1,10 @@
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
 import path from "node:path";
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../util.js";
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
 
 /**
  * Windsurf / Codeium: cascade transcripts and usage-like JSON under app data.
@@ -88,3 +91,19 @@ export async function parseWindsurf(roots: string[]): Promise<UsageEvent[]> {
 
   return events;
 }
+
+
+export const agent: AgentModule = {
+  id: "windsurf",
+  label: "Windsurf",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      path.join(appData, "Windsurf"),
+      path.join(home, ".codeium", "windsurf"),
+      path.join(home, ".windsurf"),
+      path.join(localApp, "Windsurf"),
+    ]);
+  },
+  parse: parseWindsurf,
+};
