@@ -6,65 +6,66 @@ import { num, pathExists, readText, stableId } from "../../util.js";
 /**
  * Shared parser for 9router / xlabrouter local data.
  *
- * Sources (in priority order per root):
- *  1. db/data.sqlite → usageHistory (current production schema)
- *  2. usage.json → { history: [...] }
- *  3. db.json → usageData.history (+ dailySummary gap-fill)
- *  4. usage-history.jsonl / request-details.jsonl exports
- *  5. usage-daily.json / usageData.json exports (xlabrouter DATA_DIR mirrors)
+ * Sources:
+ *  1. SQLite usageHistory + usageDaily (9router production)
+ *  2. usage.json / db.json usageData.history
+ *  3. usage-history.jsonl / request-details.jsonl exports
+ *  4. dailySummary / usage-daily.json (xlabrouter DATA_DIR + mirrors)
  *
- * History row shape (either source):
- *  { provider, model, tokens: { prompt_tokens, completion_tokens, cached_tokens? },
- *    timestamp, cost?, connectionId?, endpoint?, apiKey? }
- *  or flat columns: promptTokens, completionTokens, cost, tokens (JSON string)
+ * Reconciliation (per calendar day, avoid double-count):
+ *  - If event-level rows cover ≥95% of that day's daily.requests → keep events
+ *  - Else if daily rollup exists → use daily synthetic events (drop sparse events)
+ *  - Else keep whatever event-level rows exist
  *
- * xlabrouter often keeps only a short rolling `history` (e.g. 200 rows) while
- * `dailySummary` holds full multi-day totals — we gap-fill missing days from daily.
+ * Why: 9router usageHistory is capped (~134k) while usageDaily holds full day
+ * totals (~218k req). xlabrouter history is a short rolling window (~200) while
+ * dailySummary holds full multi-day totals (~433k req).
  */
 export async function parseRouterUsage(
   roots: string[],
   agent: AgentId,
 ): Promise<UsageEvent[]> {
-  const events: UsageEvent[] = [];
+  const eventLevel: UsageEvent[] = [];
   const seen = new Set<string>();
-  const dailyBuckets: Array<{ source: string; daily: Record<string, unknown> }> = [];
+  const dailyMaps: Array<{ source: string; daily: Record<string, unknown> }> = [];
 
-  const pushAll = (batch: UsageEvent[]) => {
+  const pushEvents = (batch: UsageEvent[]) => {
     for (const e of batch) {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
-      events.push(e);
+      eventLevel.push(e);
     }
   };
 
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
-    // 1) SQLite (preferred when present)
+    // 1) SQLite history + daily
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
-      if (await pathExists(dbPath)) {
-        pushAll(await parseSqliteUsage(dbPath, agent));
-      }
+      if (!(await pathExists(dbPath))) continue;
+      pushEvents(await parseSqliteUsage(dbPath, agent));
+      const daily = await parseSqliteDaily(dbPath);
+      if (daily) dailyMaps.push({ source: dbPath + "#usageDaily", daily });
     }
 
     // 2) usage.json
     const usagePath = path.join(root, "usage.json");
     if (await pathExists(usagePath)) {
-      pushAll(await parseUsageJsonFile(usagePath, agent));
+      pushEvents(await parseUsageJsonFile(usagePath, agent));
       const daily = await readDailySummaryFromJsonFile(usagePath);
-      if (daily) dailyBuckets.push({ source: usagePath, daily });
+      if (daily) dailyMaps.push({ source: usagePath, daily });
     }
 
     // 3) db.json → usageData
     const dbJsonPath = path.join(root, "db.json");
     if (await pathExists(dbJsonPath)) {
-      pushAll(await parseDbJsonUsage(dbJsonPath, agent));
+      pushEvents(await parseDbJsonUsage(dbJsonPath, agent));
       const daily = await readDailySummaryFromDbJson(dbJsonPath);
-      if (daily) dailyBuckets.push({ source: dbJsonPath, daily });
+      if (daily) dailyMaps.push({ source: dbJsonPath, daily });
     }
 
-    // 4) exported history / request-details dumps (VPS mirror)
+    // 4) exported history / request-details
     for (const name of [
       "usage-history.jsonl",
       "usage-history.json",
@@ -74,38 +75,87 @@ export async function parseRouterUsage(
     ]) {
       const p = path.join(root, name);
       if (!(await pathExists(p))) continue;
-      pushAll(await parseHistoryExport(p, agent));
+      pushEvents(await parseHistoryExport(p, agent));
     }
 
-    // 5) usageData.json export + usage-daily.json
+    // 5) usageData.json + usage-daily.json mirrors
     const usageDataPath = path.join(root, "usageData.json");
     if (await pathExists(usageDataPath)) {
-      pushAll(await parseUsageJsonFile(usageDataPath, agent));
+      pushEvents(await parseUsageJsonFile(usageDataPath, agent));
       const daily = await readDailySummaryFromJsonFile(usageDataPath);
-      if (daily) dailyBuckets.push({ source: usageDataPath, daily });
+      if (daily) dailyMaps.push({ source: usageDataPath, daily });
     }
     const dailyPath = path.join(root, "usage-daily.json");
     if (await pathExists(dailyPath)) {
       const daily = await readDailySummaryStandalone(dailyPath);
-      if (daily) dailyBuckets.push({ source: dailyPath, daily });
+      if (daily) dailyMaps.push({ source: dailyPath, daily });
     }
   }
 
-  // Gap-fill: days present in dailySummary but missing (or sparse) in event-level history
-  const daysWithEvents = new Set<string>();
-  const eventCountByDay = new Map<string, number>();
-  for (const e of events) {
+  return reconcileEventsAndDaily(eventLevel, dailyMaps, agent);
+}
+
+/** Merge event-level + daily rollups without double-counting the same calendar day. */
+function reconcileEventsAndDaily(
+  eventLevel: UsageEvent[],
+  dailyMaps: Array<{ source: string; daily: Record<string, unknown> }>,
+  agent: AgentId,
+): UsageEvent[] {
+  // Merge all daily maps (later sources override same dateKey if richer)
+  const mergedDaily = new Map<string, { source: string; day: Record<string, unknown> }>();
+  for (const { source, daily } of dailyMaps) {
+    for (const [dateKey, raw] of Object.entries(daily)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
+      if (!raw || typeof raw !== "object") continue;
+      const day = raw as Record<string, unknown>;
+      const prev = mergedDaily.get(dateKey);
+      const prevReq = prev ? num(prev.day.requests) : -1;
+      const nextReq = num(day.requests);
+      if (!prev || nextReq >= prevReq) {
+        mergedDaily.set(dateKey, { source, day });
+      }
+    }
+  }
+
+  const eventsByDay = new Map<string, UsageEvent[]>();
+  const noDay: UsageEvent[] = [];
+  for (const e of eventLevel) {
     const day = (e.timestamp || "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-    daysWithEvents.add(day);
-    eventCountByDay.set(day, (eventCountByDay.get(day) || 0) + 1);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      noDay.push(e);
+      continue;
+    }
+    const list = eventsByDay.get(day) || [];
+    list.push(e);
+    eventsByDay.set(day, list);
   }
 
-  for (const { source, daily } of dailyBuckets) {
-    pushAll(expandDailySummary(daily, agent, source, daysWithEvents, eventCountByDay));
+  const out: UsageEvent[] = [...noDay];
+  const allDays = new Set<string>([...eventsByDay.keys(), ...mergedDaily.keys()]);
+
+  for (const dateKey of [...allDays].sort()) {
+    const dayEvents = eventsByDay.get(dateKey) || [];
+    const daily = mergedDaily.get(dateKey);
+    const dailyReq = daily ? num(daily.day.requests) : 0;
+    const eventCount = dayEvents.length;
+
+    // Prefer event-level when it covers nearly all daily requests
+    if (eventCount > 0 && (dailyReq <= 0 || eventCount >= dailyReq * 0.95)) {
+      out.push(...dayEvents);
+      continue;
+    }
+
+    // Prefer complete daily rollup when history is missing/sparse
+    if (daily) {
+      out.push(...expandOneDay(dateKey, daily.day, agent, daily.source));
+      continue;
+    }
+
+    // No daily — keep whatever events we have
+    out.push(...dayEvents);
   }
 
-  return events;
+  return out;
 }
 
 async function parseSqliteUsage(dbPath: string, agent: AgentId): Promise<UsageEvent[]> {
@@ -147,6 +197,34 @@ async function parseSqliteUsage(dbPath: string, agent: AgentId): Promise<UsageEv
     // node:sqlite unavailable or locked
   }
   return events;
+}
+
+/** Read usageDaily table → dateKey map of day payloads. */
+async function parseSqliteDaily(dbPath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const rows = db
+        .prepare(`SELECT dateKey, data FROM usageDaily`)
+        .all() as Array<{ dateKey: string; data: string }>;
+      const daily: Record<string, unknown> = {};
+      for (const row of rows) {
+        if (!row?.dateKey) continue;
+        try {
+          const parsed = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+          if (parsed && typeof parsed === "object") daily[row.dateKey] = parsed;
+        } catch {
+          // skip bad day
+        }
+      }
+      return Object.keys(daily).length ? daily : null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
 }
 
 async function parseUsageJsonFile(file: string, agent: AgentId): Promise<UsageEvent[]> {
@@ -223,89 +301,82 @@ async function readDailySummaryStandalone(file: string): Promise<Record<string, 
   return null;
 }
 
-/**
- * Expand dailySummary into synthetic UsageEvents (one per model per day).
- * Skips days that already have dense event-level history (>= 50% of daily.requests).
- */
-function expandDailySummary(
-  daily: Record<string, unknown>,
+/** Expand one dailySummary / usageDaily day into synthetic UsageEvents. */
+function expandOneDay(
+  dateKey: string,
+  day: Record<string, unknown>,
   agent: AgentId,
   source: string,
-  daysWithEvents: Set<string>,
-  eventCountByDay: Map<string, number>,
 ): UsageEvent[] {
-  const out: UsageEvent[] = [];
-  for (const [dateKey, raw] of Object.entries(daily)) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
-    if (!raw || typeof raw !== "object") continue;
-    const day = raw as Record<string, unknown>;
-    const existing = eventCountByDay.get(dateKey) || 0;
-    // Prefer event-level rows when any exist for this day (avoids double-counting
-    // short rolling history against the same day's dailySummary rollup).
-    if (existing > 0) continue;
+  const dayInput = num(day.promptTokens ?? day.prompt_tokens);
+  const dayOutput = num(day.completionTokens ?? day.completion_tokens);
+  const dayCost = num(day.cost);
 
-    const byModel = day.byModel;
-    if (byModel && typeof byModel === "object" && !Array.isArray(byModel)) {
-      for (const [modelKey, mraw] of Object.entries(byModel as Record<string, unknown>)) {
-        if (!mraw || typeof mraw !== "object") continue;
-        const m = mraw as Record<string, unknown>;
-        const model =
-          (typeof m.rawModel === "string" && m.rawModel) ||
-          modelKey.split("|")[0] ||
-          modelKey;
-        const provider = typeof m.provider === "string" ? m.provider : null;
-        const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
-        const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
-        const cost = num(m.cost);
-        if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
-        const e = rowToEvent(
-          {
-            id: `daily:${dateKey}:${modelKey}`,
-            timestamp: `${dateKey}T12:00:00.000Z`,
-            model,
-            provider,
-            promptTokens: inputTokens,
-            completionTokens: outputTokens,
-            cost,
-            tokens: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
-          },
-          agent,
-          source,
-          `daily-${dateKey}-${modelKey}`,
-        );
-        if (e) {
-          e.estimated = true;
-          out.push(e);
-        }
+  const byModel = day.byModel;
+  if (byModel && typeof byModel === "object" && !Array.isArray(byModel)) {
+    const out: UsageEvent[] = [];
+    let modelCost = 0;
+    let modelTokens = 0;
+    for (const [modelKey, mraw] of Object.entries(byModel as Record<string, unknown>)) {
+      if (!mraw || typeof mraw !== "object") continue;
+      const m = mraw as Record<string, unknown>;
+      const model =
+        (typeof m.rawModel === "string" && m.rawModel) ||
+        modelKey.split("|")[0] ||
+        modelKey;
+      const provider = typeof m.provider === "string" ? m.provider : null;
+      const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
+      const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
+      const cost = num(m.cost);
+      if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
+      modelCost += cost;
+      modelTokens += inputTokens + outputTokens;
+      const e = rowToEvent(
+        {
+          id: `daily:${dateKey}:${modelKey}`,
+          timestamp: `${dateKey}T12:00:00.000Z`,
+          model,
+          provider,
+          promptTokens: inputTokens,
+          completionTokens: outputTokens,
+          cost,
+          tokens: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
+        },
+        agent,
+        source,
+        `daily-${dateKey}-${modelKey}`,
+      );
+      if (e) {
+        e.estimated = true;
+        out.push(e);
       }
-      continue;
     }
-
-    // Fallback: single rollup for the day
-    const inputTokens = num(day.promptTokens ?? day.prompt_tokens);
-    const outputTokens = num(day.completionTokens ?? day.completion_tokens);
-    const cost = num(day.cost);
-    if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
-    const e = rowToEvent(
-      {
-        id: `daily:${dateKey}:all`,
-        timestamp: `${dateKey}T12:00:00.000Z`,
-        model: "mixed",
-        promptTokens: inputTokens,
-        completionTokens: outputTokens,
-        cost,
-        tokens: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
-      },
-      agent,
-      source,
-      `daily-${dateKey}`,
-    );
-    if (e) {
-      e.estimated = true;
-      out.push(e);
-    }
+    // byModel is often incomplete vs day totals — only keep it when it covers ≥98%
+    const dayTok = dayInput + dayOutput;
+    const costOk = dayCost <= 0 || modelCost >= dayCost * 0.98;
+    const tokOk = dayTok <= 0 || modelTokens >= dayTok * 0.98;
+    if (out.length && costOk && tokOk) return out;
   }
-  return out;
+
+  // Authoritative day rollup (full prompt/completion/cost for the calendar day)
+  if (dayInput + dayOutput <= 0 && dayCost <= 0) return [];
+  const e = rowToEvent(
+    {
+      id: `daily:${dateKey}:all`,
+      timestamp: `${dateKey}T12:00:00.000Z`,
+      model: "mixed",
+      promptTokens: dayInput,
+      completionTokens: dayOutput,
+      cost: dayCost,
+      tokens: { prompt_tokens: dayInput, completion_tokens: dayOutput },
+    },
+    agent,
+    source,
+    `daily-${dateKey}`,
+  );
+  if (!e) return [];
+  e.estimated = true;
+  return [e];
 }
 
 async function parseHistoryExport(file: string, agent: AgentId): Promise<UsageEvent[]> {

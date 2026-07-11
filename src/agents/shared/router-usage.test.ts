@@ -47,7 +47,7 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("expands dailySummary when history is sparse", async () => {
+  it("reconciles sparse history against dailySummary", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-xlabrouter-"));
@@ -106,13 +106,15 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "xlabrouter");
-      // history keeps 06-29; daily fills 06-28 only
+      // 06-28 from daily; 06-29 sparse history (1 < 95% of 200) → use daily rollup
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-28")));
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-29")));
       const d28 = events.find((e) => e.timestamp.startsWith("2026-06-28"));
       assert.equal(d28?.inputTokens, 50000);
       assert.equal(d28?.estimatedCost, 12.5);
-      // only one 06-29 event (history), not history+daily
+      const d29 = events.find((e) => e.timestamp.startsWith("2026-06-29"));
+      assert.equal(d29?.inputTokens, 90000);
+      assert.equal(d29?.estimatedCost, 20);
       assert.equal(events.filter((e) => e.timestamp.startsWith("2026-06-29")).length, 1);
     } finally {
       await rm(dir, { recursive: true, force: true });
