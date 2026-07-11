@@ -443,7 +443,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         const data = await readFile(file);
         res.writeHead(200, {
           "Content-Type": contentTypeFor(path.basename(file)),
-          "Cache-Control": "public, max-age=3600",
+          // Short cache so agent icons update after replace (browser was sticky on 1h)
+          "Cache-Control": "public, max-age=60, must-revalidate",
         });
         res.end(data);
         return;
