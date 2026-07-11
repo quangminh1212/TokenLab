@@ -165,10 +165,39 @@
     .icon-btn {
       padding: 0.45rem; line-height: 1; border-radius: 999px;
       color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.25rem;
+      height: 2.25rem;
     }
     .icon-btn:hover {
       color: var(--xlab); background: color-mix(in srgb, var(--xlab) 10%, transparent);
       border-color: transparent; box-shadow: none;
+    }
+    .ui-icon {
+      width: 1.15rem;
+      height: 1.15rem;
+      display: block;
+      flex-shrink: 0;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.85;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .btn-with-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+    }
+    .btn-with-icon .ui-icon {
+      width: 1rem;
+      height: 1rem;
+    }
+    .btn-primary .ui-icon {
+      stroke: #fff;
     }
     .btn:hover { border-color: var(--xlab); color: var(--xlab); }
     .btn:active, .icon-btn:active { transform: translateY(1px); }
