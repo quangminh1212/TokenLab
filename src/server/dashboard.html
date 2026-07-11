@@ -164,6 +164,24 @@
       return state.period || '';
     }
 
+    /** Parse relative (7d/24h) or ISO since — mirrors server parseSince. */
+    function parseSinceMs(since) {
+      if (!since) return null;
+      const m = String(since).match(/^(\d+)([smhd])$/i);
+      if (m) {
+        const n = Number(m[1]);
+        const unit = m[2].toLowerCase();
+        const ms =
+          unit === 's' ? n * 1000 :
+          unit === 'm' ? n * 60_000 :
+          unit === 'h' ? n * 3_600_000 :
+          n * 86_400_000;
+        return Date.now() - ms;
+      }
+      const t = new Date(since).getTime();
+      return Number.isNaN(t) ? null : t;
+    }
+
     /** Match aggregate.ts hour key: UTC `YYYY-MM-DDTHH:00` */
     function hourKeyFromDate(d) {
       return d.toISOString().slice(0, 13) + ':00';
@@ -424,11 +442,16 @@
       if (since) { qStats.set('since', since); qSeries.set('since', since); }
 
       try {
+        // Pass since to /api/events so server filters with parseSince (7d/24h/…),
+        // not new Date("7d") which is Invalid Date and drops every event.
+        const qEvents = new URLSearchParams({ limit: '40' });
+        if (since) qEvents.set('since', since);
+
         const [stats, seriesStats, health, eventsRes] = await Promise.all([
           fetch('/api/stats?' + qStats).then((r) => r.json()),
           fetch('/api/stats?' + qSeries).then((r) => r.json()),
           fetch('/api/health').then((r) => r.json()),
-          fetch('/api/events?limit=40').then((r) => r.json()),
+          fetch('/api/events?' + qEvents).then((r) => r.json()),
         ]);
 
         state.totals = stats.totals || {};
@@ -449,11 +472,19 @@
         renderChart();
         renderTable();
 
-        let recent = eventsRes.events || [];
-        if (since) {
-          const t0 = new Date(since).getTime();
-          recent = recent.filter((e) => new Date(e.timestamp).getTime() >= t0);
+        let recent = Array.isArray(eventsRes.events) ? eventsRes.events : [];
+        // Client-side safety net if an older server build lacks since support
+        const t0 = parseSinceMs(since);
+        if (t0 != null) {
+          recent = recent.filter((e) => {
+            const t = new Date(e.timestamp).getTime();
+            return !Number.isNaN(t) && t >= t0;
+          });
         }
+        // Ensure newest-first even if response order varies
+        recent = recent
+          .slice()
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         renderRecent(recent.slice(0, 25));
       } catch {
         $('meta').innerHTML = '<span class="err">Failed to load API</span>';

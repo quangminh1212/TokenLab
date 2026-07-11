@@ -94,9 +94,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if (req.method === "GET" && pathname === "/api/events") {
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") || 100)));
       const agent = url.searchParams.get("agent");
-      let list = cache;
+      const since = url.searchParams.get("since");
+      const until = url.searchParams.get("until");
+      let list = filterByPeriod(cache, since, until);
       if (agent) list = list.filter((e) => e.agent === agent);
-      return json(res, 200, { events: list.slice(-limit).reverse(), count: list.length });
+      // Newest first by timestamp (scan order is not chronological)
+      list = list
+        .slice()
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, limit);
+      return json(res, 200, { events: list, count: list.length });
     }
 
     if (req.method === "GET" && pathname === "/api/agents") {
