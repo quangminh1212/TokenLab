@@ -224,7 +224,78 @@
       }
     }
 
-    $('pricingBody').addEventListener('change', (e) => {
+    function collectDraftFromTable() {
+      $('pricingBody').querySelectorAll('tr[data-model]').forEach((tr) => {
+        const model = (tr.getAttribute('data-model') || '').toLowerCase();
+        if (!model) return;
+        pricingDraft[model] = {
+          inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
+          outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
+        };
+      });
+    }
+
+    function moneyLive(n) {
+      const v = Number(n) || 0;
+      const fixed = Math.abs(v).toFixed(2);
+      const [intPart, decPart] = fixed.split('.');
+      const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      return (v < 0 ? '-$' : '$') + grouped + ',' + decPart;
+    }
+
+    let liveTimer = null;
+    let liveSaving = false;
+    let liveQueued = false;
+
+    async function pushRatesLive(opts = {}) {
+      const { manual = false } = opts;
+      if (liveSaving) {
+        liveQueued = true;
+        return;
+      }
+      collectDraftFromTable();
+      const customRates = { ...(pricingMeta.customRates || {}), ...pricingDraft };
+      liveSaving = true;
+      if (manual) $('pricingSave').disabled = true;
+      $('pricingStatus').textContent = manual ? 'Saving…' : 'Updating live…';
+      try {
+        const res = await fetch('/api/pricing', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customRates, replace: true, live: !manual }),
+        }).then((r) => r.json());
+        pricingDraft = {};
+        pricingMeta.customRates = res.customRates || {};
+        const cost = res.totals?.estimatedCost;
+        const rev = res.pricingRevision != null ? ` · rev ${res.pricingRevision}` : '';
+        const costTxt = cost != null ? ` · total ${moneyLive(cost)}` : '';
+        $('pricingStatus').textContent = manual
+          ? `Saved ${Object.keys(res.customRates || {}).length} rates${costTxt}${rev}`
+          : `Live · ${Object.keys(res.customRates || {}).length} rates applied${costTxt}${rev}`;
+        // Refresh catalog sources without wiping filters
+        const data = await fetch('/api/pricing').then((r) => r.json());
+        pricingMeta = data;
+        renderPricing();
+      } catch {
+        $('pricingStatus').textContent = manual ? 'Save failed' : 'Live update failed';
+      } finally {
+        liveSaving = false;
+        if (manual) $('pricingSave').disabled = false;
+        if (liveQueued) {
+          liveQueued = false;
+          void pushRatesLive({ manual: false });
+        }
+      }
+    }
+
+    function scheduleLivePush() {
+      if (liveTimer) clearTimeout(liveTimer);
+      liveTimer = setTimeout(() => {
+        void pushRatesLive({ manual: false });
+      }, 450);
+    }
+
+    $('pricingBody').addEventListener('input', (e) => {
       const inp = e.target.closest('.price-input');
       if (!inp) return;
       const model = (inp.getAttribute('data-model') || '').toLowerCase();
@@ -234,6 +305,14 @@
         inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
         outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
       };
+      $('pricingStatus').textContent = 'Typing… live update soon';
+      scheduleLivePush();
+    });
+
+    $('pricingBody').addEventListener('change', (e) => {
+      const inp = e.target.closest('.price-input');
+      if (!inp) return;
+      scheduleLivePush();
     });
 
     $('priceSearch').oninput = renderPricing;
@@ -251,41 +330,19 @@
       $('priceIn').value = '';
       $('priceOut').value = '';
       renderPricing();
-      $('pricingStatus').textContent = `Draft: ${model} (not saved yet)`;
+      scheduleLivePush();
     };
 
     $('pricingReload').onclick = async () => {
+      if (liveTimer) clearTimeout(liveTimer);
       pricingDraft = {};
       await loadPricing();
       $('pricingStatus').textContent = 'Reloaded from config';
     };
 
     $('pricingSave').onclick = async () => {
-      $('pricingBody').querySelectorAll('tr[data-model]').forEach((tr) => {
-        const model = (tr.getAttribute('data-model') || '').toLowerCase();
-        if (!model) return;
-        pricingDraft[model] = {
-          inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
-          outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
-        };
-      });
-      const customRates = { ...(pricingMeta.customRates || {}), ...pricingDraft };
-      $('pricingSave').disabled = true;
-      $('pricingStatus').textContent = 'Saving…';
-      try {
-        const res = await fetch('/api/pricing', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customRates, replace: true }),
-        }).then((r) => r.json());
-        pricingDraft = {};
-        await loadPricing();
-        $('pricingStatus').textContent = `Saved ${Object.keys(res.customRates || {}).length} custom rates · costs recalculated`;
-      } catch {
-        $('pricingStatus').textContent = 'Save failed';
-      } finally {
-        $('pricingSave').disabled = false;
-      }
+      if (liveTimer) clearTimeout(liveTimer);
+      await pushRatesLive({ manual: true });
     };
 
     loadMeta();

@@ -572,6 +572,47 @@
 
     load();
     setInterval(load, 30000);
+
+    // Realtime cost refresh when Settings updates model rates
+    let pricingRevision = 0;
+    function watchPricingStream() {
+      try {
+        const es = new EventSource('/api/pricing/stream');
+        es.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'hello') {
+              pricingRevision = msg.revision || 0;
+              return;
+            }
+            if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
+              pricingRevision = msg.revision;
+              void load();
+            }
+          } catch {
+            // ignore parse errors
+          }
+        };
+        es.onerror = () => {
+          // reconnect is automatic for EventSource; fallback poll
+        };
+      } catch {
+        // EventSource unavailable
+      }
+      // Fallback poll (multi-tab / proxies that buffer SSE)
+      setInterval(async () => {
+        try {
+          const h = await fetch('/api/health').then((r) => r.json());
+          if (h.pricingRevision && h.pricingRevision !== pricingRevision) {
+            pricingRevision = h.pricingRevision;
+            void load();
+          }
+        } catch {
+          // offline
+        }
+      }, 3000);
+    }
+    watchPricingStream();
   </script>
 </body>
 </html>
