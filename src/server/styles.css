@@ -1168,7 +1168,7 @@ a.btn {
   .settings-kv { grid-template-columns: 1fr; }
 }
 
-/* ========== Model rates page (simple) ========== */
+/* ========== Model page (OpenRouter-style catalog) ========== */
 .model-page .page-title {
   margin: 0;
   font-size: 1.25rem;
@@ -1180,48 +1180,196 @@ a.btn {
   font-size: 0.85rem;
   color: var(--muted);
 }
-.model-toolbar {
+.model-or-panel { overflow: hidden; }
+.or-search-bar {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
   align-items: center;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--border-soft);
+  padding: 0.9rem 1rem 0.55rem;
+  gap: 0.5rem;
 }
-.model-search {
-  flex: 1 1 12rem;
-  min-width: 10rem;
-  max-width: 22rem;
-  padding: 0.5rem 0.75rem;
+.or-search-icon {
+  position: absolute;
+  left: 1.55rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  stroke: var(--muted);
+  fill: none;
+  stroke-width: 2;
+  pointer-events: none;
+}
+.or-search-input {
+  flex: 1;
+  width: 100%;
+  padding: 0.7rem 5.5rem 0.7rem 2.4rem;
   border: 1px solid var(--border);
-  border-radius: 0.55rem;
+  border-radius: 0.75rem;
   background: var(--bg);
   color: var(--text);
   font: inherit;
-  font-size: 0.875rem;
+  font-size: 0.95rem;
 }
-.model-search:focus {
+.or-search-input:focus {
   outline: none;
   border-color: var(--xlab);
   box-shadow: 0 0 0 3px var(--ring);
 }
-.model-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.82rem;
+.or-search-hint {
+  position: absolute;
+  right: 1.5rem;
+  font-size: 0.68rem;
   font-weight: 600;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 0.35rem;
+  padding: 0.15rem 0.4rem;
+  pointer-events: none;
+}
+.or-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.35rem 1rem 0.85rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+.or-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.or-chip {
+  border: 1px solid var(--border);
+  background: var(--bg);
   color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
   cursor: pointer;
-  user-select: none;
+  transition: border-color .12s, background .12s, color .12s;
 }
-.model-check input {
-  accent-color: var(--xlab);
+.or-chip:hover { border-color: color-mix(in srgb, var(--xlab) 40%, var(--border)); }
+.or-chip.active {
+  border-color: color-mix(in srgb, var(--xlab) 50%, var(--border));
+  background: color-mix(in srgb, var(--xlab) 14%, var(--bg));
+  color: var(--xlab-600);
+}
+html.dark .or-chip.active { color: var(--xlab-400); }
+.or-select {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  min-height: 34px;
+}
+.or-count {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.or-list {
+  max-height: min(62vh, 640px);
+  overflow: auto;
+  padding: 0.35rem 0.5rem;
+}
+.or-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0.85rem;
+  margin: 0.25rem 0.35rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+  background: var(--panel);
+  transition: border-color .12s, background .12s;
+}
+.or-card:hover {
+  border-color: color-mix(in srgb, var(--xlab) 35%, var(--border));
+  background: color-mix(in srgb, var(--xlab) 4%, var(--panel));
+}
+.or-card.is-custom {
+  border-color: color-mix(in srgb, var(--xlab) 30%, var(--border));
+  background: color-mix(in srgb, var(--xlab) 6%, var(--panel));
+}
+.or-card-main { min-width: 0; flex: 1 1 14rem; }
+.or-card-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.or-card-name {
   margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
 }
-.usage-table .price-input {
-  width: 6.5rem;
+.or-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.or-id {
+  font-size: 0.75rem;
+  background: var(--panel-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 0.3rem;
+  padding: 0.08rem 0.35rem;
+  color: var(--text-secondary);
   max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.or-dot { opacity: 0.5; }
+.or-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+}
+.or-badge.free {
+  color: var(--success);
+  background: var(--success-soft);
+}
+.or-badge.custom {
+  color: var(--xlab-600);
+  background: color-mix(in srgb, var(--xlab) 14%, transparent);
+}
+html.dark .or-badge.custom { color: var(--xlab-400); }
+.or-card-rates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+.or-rate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.or-rate .price-input,
+.or-card .price-input {
+  width: 6.5rem;
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 0.45rem;
@@ -1231,11 +1379,18 @@ a.btn {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
+  text-transform: none;
+  letter-spacing: normal;
 }
-.usage-table .price-input:focus {
+.or-card .price-input:focus {
   outline: none;
   border-color: var(--xlab);
   box-shadow: 0 0 0 3px var(--ring);
+}
+.or-more {
+  text-align: center;
+  padding: 0.75rem;
+  font-size: 0.82rem;
 }
 .model-add-row {
   display: flex;
@@ -1279,6 +1434,12 @@ a.btn {
   color: var(--text-secondary);
 }
 .pricing-status.muted { color: var(--muted); }
+
+@media (max-width: 640px) {
+  .or-search-hint { display: none; }
+  .or-search-input { padding-right: 0.85rem; }
+  .or-count { width: 100%; margin-left: 0; }
+}
 
 /* Prefer reduced motion */
 @media (prefers-reduced-motion: reduce) {

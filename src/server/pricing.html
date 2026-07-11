@@ -40,39 +40,50 @@
   <main class="shell model-page">
     <div class="usage-toolbar">
       <div>
-        <h1 class="page-title">Model</h1>
-        <p class="page-sub">USD / 1M tokens · custom rates override defaults</p>
+        <h1 class="page-title">Models</h1>
+        <p class="page-sub">OpenRouter catalog · USD / 1M tokens · custom rates override</p>
       </div>
       <div class="usage-actions">
         <span class="pricing-status muted" id="pricingStatus">—</span>
-        <button class="btn btn-with-icon" id="pricingReload" type="button">Reload</button>
+        <button class="btn btn-with-icon" id="pricingReload" type="button">Refresh</button>
         <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save</button>
       </div>
     </div>
 
-    <section class="u-card table-card">
-      <div class="model-toolbar">
-        <input class="model-search" id="priceSearch" type="search" placeholder="Search model…" autocomplete="off" />
-        <label class="model-check"><input type="checkbox" id="priceOnlySeen" /> Seen only</label>
-        <label class="model-check"><input type="checkbox" id="priceOnlyCustom" /> Custom only</label>
+    <section class="u-card model-or-panel">
+      <!-- OpenRouter-style search + filters -->
+      <div class="or-search-bar">
+        <svg class="or-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+        <input id="priceSearch" class="or-search-input" type="search" placeholder="Filter models (e.g. claude sonnet free)…" autocomplete="off" autofocus />
+        <kbd class="or-search-hint">space = AND</kbd>
       </div>
-      <div class="table-scroll">
-        <table class="usage-table" id="pricingTable">
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Source</th>
-              <th class="num">Input $/1M</th>
-              <th class="num">Output $/1M</th>
-            </tr>
-          </thead>
-          <tbody id="pricingBody">
-            <tr><td colspan="4"><div class="empty">Loading…</div></td></tr>
-          </tbody>
-        </table>
+
+      <div class="or-filters">
+        <div class="or-filter-group" role="group" aria-label="Quick filters">
+          <button type="button" class="or-chip active" data-filter="all">All</button>
+          <button type="button" class="or-chip" data-filter="free">Free</button>
+          <button type="button" class="or-chip" data-filter="seen">Seen</button>
+          <button type="button" class="or-chip" data-filter="custom">Custom</button>
+        </div>
+        <select id="providerFilter" class="or-select" aria-label="Provider">
+          <option value="">All providers</option>
+        </select>
+        <select id="sortFilter" class="or-select" aria-label="Sort">
+          <option value="newest">Newest</option>
+          <option value="name">Name</option>
+          <option value="price-asc">Price ↑</option>
+          <option value="price-desc">Price ↓</option>
+          <option value="context">Context</option>
+        </select>
+        <span class="or-count muted" id="resultCount">—</span>
       </div>
+
+      <div class="or-list" id="modelList">
+        <div class="empty">Loading OpenRouter models…</div>
+      </div>
+
       <div class="model-add-row">
-        <input type="text" id="priceModel" placeholder="Model name" />
+        <input type="text" id="priceModel" placeholder="Custom model id" />
         <input type="number" id="priceIn" step="0.001" min="0" placeholder="In $/1M" />
         <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
         <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
@@ -81,7 +92,7 @@
     </section>
 
     <footer>
-      <div>Model rates · apply to all agents</div>
+      <div>Rates from OpenRouter · editable overrides apply to all agents</div>
       <div>localhost only · estimated cost, not billing</div>
     </footer>
   </main>
@@ -113,12 +124,7 @@
         const last = parts[parts.length - 1] || m;
         if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
       }
-      m = m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
-      const lower = m.toLowerCase();
-      if (lower.startsWith('deep-seek')) m = 'deepseek' + m.slice('deep-seek'.length);
-      if (lower.startsWith('deep_seek')) m = 'deepseek' + m.slice('deep_seek'.length);
-      if (lower === 'digigo') m = 'Digigo';
-      return m;
+      return m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
     }
 
     const ICONS = {
@@ -137,7 +143,7 @@
       btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
-    $('pricingReload').innerHTML = ICONS.reload + '<span>Reload</span>';
+    $('pricingReload').innerHTML = ICONS.reload + '<span>Refresh</span>';
     $('pricingSave').innerHTML = ICONS.save + '<span>Save</span>';
     $('priceAdd').innerHTML = ICONS.plus + '<span>Add</span>';
     $('themeBtn').onclick = () => {
@@ -145,108 +151,196 @@
     };
 
     let pricingDraft = {};
-    let pricingMeta = { catalog: [], seenModels: [], customRates: {} };
-    let scanPollTimer = 0;
+    let openrouter = [];
+    let seenSet = new Set();
+    let customRates = {};
+    let quickFilter = 'all';
+    let renderTimer = 0;
 
     function setStatus(text) {
       $('pricingStatus').textContent = text;
     }
 
-    function renderPricing() {
-      const q = ($('priceSearch').value || '').trim().toLowerCase();
-      const onlyCustom = $('priceOnlyCustom').checked;
-      let onlySeen = $('priceOnlySeen').checked;
-      const seenList = pricingMeta.seenModels || [];
-      const seenSet = new Set(seenList.map((m) => String(m).toLowerCase()));
-      // Avoid empty white table when cache has no usage yet
-      if (onlySeen && seenSet.size === 0) onlySeen = false;
-      const custom = pricingMeta.customRates || {};
-      const catMap = new Map((pricingMeta.catalog || []).map((c) => [String(c.model).toLowerCase(), c]));
+    function fmtCtx(n) {
+      const v = Number(n) || 0;
+      if (v >= 1e6) return (v / 1e6).toFixed(v % 1e6 === 0 ? 0 : 1) + 'M';
+      if (v >= 1e3) return Math.round(v / 1e3) + 'K';
+      return String(v || '—');
+    }
 
-      let models = [
-        ...new Set([
-          ...seenList,
-          ...Object.keys(custom),
-          ...Object.keys(pricingDraft),
-          ...(pricingMeta.catalog || []).map((c) => c.model),
-        ]),
-      ].filter(Boolean);
+    function fmtPrice(n) {
+      const v = Number(n) || 0;
+      if (v === 0) return '0';
+      if (v < 0.01) return v.toFixed(4);
+      if (v < 1) return v.toFixed(3);
+      return v.toFixed(2);
+    }
 
-      models = models.filter((model) => {
-        const key = model.toLowerCase();
-        if (q && !key.includes(q)) return false;
-        if (onlyCustom && !custom[key] && !pricingDraft[key]) return false;
-        if (onlySeen && !seenSet.has(key) && !pricingDraft[key]) return false;
+    /** OpenRouter-style multi-token AND search on id, name, provider, slug */
+    function matchesQuery(m, q) {
+      if (!q) return true;
+      const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+      if (!tokens.length) return true;
+      const hay = [m.id, m.name, m.provider, m.slug, m.modality].join(' ').toLowerCase();
+      return tokens.every((t) => hay.includes(t));
+    }
+
+    function effectiveRates(m) {
+      const id = (m.id || '').toLowerCase();
+      const slug = (m.slug || '').toLowerCase();
+      const draft = pricingDraft[id] || pricingDraft[slug];
+      const cust = customRates[id] || customRates[slug];
+      return {
+        input: draft?.inputPer1M ?? cust?.inputPer1M ?? m.inputPer1M ?? 0,
+        output: draft?.outputPer1M ?? cust?.outputPer1M ?? m.outputPer1M ?? 0,
+        source: draft ? 'draft' : cust ? 'custom' : (m.source || 'openrouter'),
+      };
+    }
+
+    function filteredModels() {
+      const q = ($('priceSearch').value || '').trim();
+      const provider = $('providerFilter').value || '';
+      const sort = $('sortFilter').value || 'newest';
+      let list = openrouter.filter((m) => {
+        if (!matchesQuery(m, q)) return false;
+        if (provider && m.provider !== provider) return false;
+        const rates = effectiveRates(m);
+        const isCustom = rates.source === 'custom' || rates.source === 'draft';
+        const isSeen = seenSet.has((m.slug || '').toLowerCase()) || seenSet.has((m.id || '').toLowerCase())
+          || [...seenSet].some((s) => s.includes((m.slug || '').toLowerCase()));
+        if (quickFilter === 'free') {
+          const isFree = (Number(rates.input) === 0 && Number(rates.output) === 0) || m.free;
+          if (!isFree) return false;
+        }
+        if (quickFilter === 'seen' && !isSeen) return false;
+        if (quickFilter === 'custom' && !isCustom) return false;
         return true;
       });
 
-      models.sort((a, b) => {
-        const as = seenSet.has(a.toLowerCase()) ? 0 : 1;
-        const bs = seenSet.has(b.toLowerCase()) ? 0 : 1;
-        if (as !== bs) return as - bs;
-        return a.localeCompare(b);
+      list = list.slice().sort((a, b) => {
+        const ra = effectiveRates(a);
+        const rb = effectiveRates(b);
+        if (sort === 'name') return a.name.localeCompare(b.name);
+        if (sort === 'price-asc') return (ra.input + ra.output) - (rb.input + rb.output);
+        if (sort === 'price-desc') return (rb.input + rb.output) - (ra.input + ra.output);
+        if (sort === 'context') return (b.contextLength || 0) - (a.contextLength || 0);
+        // newest
+        return (b.created || 0) - (a.created || 0) || a.name.localeCompare(b.name);
       });
+      return list;
+    }
 
-      if (!models.length) {
-        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">No models. Scan usage or add a rate below.</div></td></tr>';
+    function renderList() {
+      const list = filteredModels();
+      $('resultCount').textContent = list.length + ' / ' + openrouter.length;
+      if (!list.length) {
+        $('modelList').innerHTML = '<div class="empty">No models match filters.</div>';
         return;
       }
+      // Cap DOM for performance; search narrows list quickly
+      const MAX = 200;
+      const slice = list.slice(0, MAX);
+      const more = list.length > MAX
+        ? `<div class="or-more muted">Showing ${MAX} of ${list.length} — refine search</div>`
+        : '';
 
-      $('pricingBody').innerHTML = models.map((model) => {
-        const cat = catMap.get(model.toLowerCase()) || {};
-        const draft = pricingDraft[model.toLowerCase()];
-        const cust = custom[model.toLowerCase()];
-        const src = draft ? 'draft' : cust ? 'custom' : (cat.source || 'bundled');
-        const input = draft?.inputPer1M ?? cust?.inputPer1M ?? cat.inputPer1M ?? 0;
-        const output = draft?.outputPer1M ?? cust?.outputPer1M ?? cat.outputPer1M ?? 0;
-        const safe = escapeHtml(model);
-        return `<tr data-model="${safe}">
-          <td><code title="${safe}">${safe}</code></td>
-          <td class="muted">${escapeHtml(src)}</td>
-          <td class="num"><input class="price-input" data-field="in" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(input)}" /></td>
-          <td class="num"><input class="price-input" data-field="out" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(output)}" /></td>
-        </tr>`;
-      }).join('');
+      $('modelList').innerHTML = slice.map((m) => {
+        const rates = effectiveRates(m);
+        const id = escapeHtml(m.id);
+        const free = Number(rates.input) === 0 && Number(rates.output) === 0;
+        const src = rates.source;
+        return `<article class="or-card ${src === 'custom' || src === 'draft' ? 'is-custom' : ''} ${free ? 'is-free' : ''}" data-id="${id}">
+          <div class="or-card-main">
+            <div class="or-card-title-row">
+              <h3 class="or-card-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</h3>
+              ${free ? '<span class="or-badge free">Free</span>' : ''}
+              ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
+            </div>
+            <div class="or-card-meta">
+              <code class="or-id">${id}</code>
+              <span class="or-dot">·</span>
+              <span>${escapeHtml(m.provider)}</span>
+              <span class="or-dot">·</span>
+              <span>${fmtCtx(m.contextLength)} ctx</span>
+            </div>
+          </div>
+          <div class="or-card-rates">
+            <label class="or-rate">
+              <span>In $/1M</span>
+              <input class="price-input" data-field="in" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.input)}" />
+            </label>
+            <label class="or-rate">
+              <span>Out $/1M</span>
+              <input class="price-input" data-field="out" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.output)}" />
+            </label>
+          </div>
+        </article>`;
+      }).join('') + more;
+    }
+
+    function scheduleRender() {
+      if (renderTimer) clearTimeout(renderTimer);
+      renderTimer = setTimeout(() => {
+        renderTimer = 0;
+        renderList();
+      }, 80);
+    }
+
+    function fillProviders() {
+      const set = new Set(openrouter.map((m) => m.provider).filter(Boolean));
+      const sel = $('providerFilter');
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All providers</option>' +
+        [...set].sort().map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+      if (cur && set.has(cur)) sel.value = cur;
     }
 
     async function loadMeta() {
       try {
         const health = await fetch('/api/health').then((r) => r.json());
         const n = health.agentsDetected?.length || 0;
-        const scanHint = health.scanning ? ' · scanning…' : '';
-        $('meta').textContent = `v${health.version} · ${n} agents · ${health.eventCount || 0} events${scanHint}`;
-        if (health.scanning || (health.eventCount || 0) === 0 && (health.scanRevision || 0) === 0) {
-          if (scanPollTimer) clearTimeout(scanPollTimer);
-          scanPollTimer = setTimeout(() => {
-            void loadMeta();
-            void loadPricing();
-          }, 1200);
-        }
+        $('meta').textContent = `v${health.version} · ${n} agents · ${health.eventCount || 0} events`;
       } catch {
         $('meta').innerHTML = '<span class="err">API offline</span>';
       }
     }
 
-    async function loadPricing() {
+    async function loadPricing(opts = {}) {
+      const refresh = opts.refresh === true;
+      setStatus(refresh ? 'Fetching OpenRouter…' : 'Loading…');
       try {
-        const data = await fetch('/api/pricing').then((r) => r.json());
-        pricingMeta = data;
+        const q = refresh ? '?refreshOpenRouter=1' : '';
+        const data = await fetch('/api/pricing' + q).then((r) => r.json());
+        openrouter = Array.isArray(data.openrouter) ? data.openrouter : [];
+        customRates = data.customRates || {};
+        seenSet = new Set((data.seenModels || []).map((m) => String(m).toLowerCase()));
+        // Also add short names from seen
+        for (const s of [...seenSet]) {
+          if (s.includes('/')) seenSet.add(s.slice(s.lastIndexOf('/') + 1));
+        }
         $('pricingPath').textContent = data.configPath || 'config.json';
-        renderPricing();
-        setStatus(`${(data.catalog || []).length} models · ${Object.keys(data.customRates || {}).length} custom`);
+        fillProviders();
+        renderList();
+        const when = data.openrouterFetchedAt
+          ? new Date(data.openrouterFetchedAt).toLocaleString()
+          : '—';
+        setStatus(`${openrouter.length} OpenRouter · ${Object.keys(customRates).length} custom · ${when}`);
+        if (!openrouter.length) {
+          $('modelList').innerHTML = '<div class="empty">No OpenRouter models yet. Click Refresh.</div>';
+        }
       } catch {
         setStatus('Load failed');
-        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">Failed to load rates</div></td></tr>';
+        $('modelList').innerHTML = '<div class="empty">Failed to load models</div>';
       }
     }
 
-    function collectDraftFromTable() {
-      $('pricingBody').querySelectorAll('tr[data-model]').forEach((tr) => {
-        const model = (tr.getAttribute('data-model') || '').toLowerCase();
+    function collectDraftFromDom() {
+      $('modelList').querySelectorAll('.or-card[data-id]').forEach((card) => {
+        const model = (card.getAttribute('data-id') || '').toLowerCase();
         if (!model) return;
         pricingDraft[model] = {
-          inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
-          outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
+          inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
+          outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
         };
       });
     }
@@ -261,8 +355,8 @@
         liveQueued = true;
         return;
       }
-      collectDraftFromTable();
-      const customRates = { ...(pricingMeta.customRates || {}), ...pricingDraft };
+      collectDraftFromDom();
+      const custom = { ...customRates, ...pricingDraft };
       liveSaving = true;
       if (manual) $('pricingSave').disabled = true;
       setStatus(manual ? 'Saving…' : 'Updating…');
@@ -270,16 +364,24 @@
         const res = await fetch('/api/pricing', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customRates, replace: true, live: !manual }),
+          body: JSON.stringify({ customRates: custom, replace: true, live: !manual }),
         }).then((r) => r.json());
         pricingDraft = {};
-        pricingMeta.customRates = res.customRates || {};
+        customRates = res.customRates || {};
         setStatus(manual
-          ? `Saved · ${Object.keys(res.customRates || {}).length} custom`
-          : `Live · ${Object.keys(res.customRates || {}).length} custom`);
-        const data = await fetch('/api/pricing').then((r) => r.json());
-        pricingMeta = data;
-        renderPricing();
+          ? `Saved · ${Object.keys(customRates).length} custom`
+          : `Live · ${Object.keys(customRates).length} custom`);
+        // patch openrouter sources without full refetch
+        openrouter = openrouter.map((m) => {
+          const c = customRates[m.id.toLowerCase()] || customRates[(m.slug || '').toLowerCase()];
+          return {
+            ...m,
+            source: c ? 'custom' : 'openrouter',
+            inputPer1M: c?.inputPer1M ?? m.inputPer1M,
+            outputPer1M: c?.outputPer1M ?? m.outputPer1M,
+          };
+        });
+        renderList();
       } catch {
         setStatus(manual ? 'Save failed' : 'Update failed');
       } finally {
@@ -294,68 +396,79 @@
 
     function scheduleLivePush() {
       if (liveTimer) clearTimeout(liveTimer);
-      liveTimer = setTimeout(() => void pushRatesLive({ manual: false }), 450);
+      liveTimer = setTimeout(() => void pushRatesLive({ manual: false }), 500);
     }
 
-    $('pricingBody').addEventListener('input', (e) => {
+    $('modelList').addEventListener('input', (e) => {
       const inp = e.target.closest('.price-input');
       if (!inp) return;
       const model = (inp.getAttribute('data-model') || '').toLowerCase();
       if (!model) return;
-      const tr = inp.closest('tr');
+      const card = inp.closest('.or-card');
       pricingDraft[model] = {
-        inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
-        outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
+        inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
+        outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
       };
       setStatus('Typing…');
       scheduleLivePush();
     });
-    $('pricingBody').addEventListener('change', (e) => {
-      if (e.target.closest('.price-input')) scheduleLivePush();
-    });
 
-    $('priceSearch').oninput = renderPricing;
-    $('priceOnlyCustom').onchange = renderPricing;
-    $('priceOnlySeen').onchange = renderPricing;
+    $('priceSearch').oninput = scheduleRender;
+    $('providerFilter').onchange = renderList;
+    $('sortFilter').onchange = renderList;
+
+    document.querySelector('.or-filter-group').onclick = (e) => {
+      const btn = e.target.closest('.or-chip');
+      if (!btn) return;
+      quickFilter = btn.getAttribute('data-filter') || 'all';
+      document.querySelectorAll('.or-chip').forEach((b) => b.classList.toggle('active', b === btn));
+      renderList();
+    };
 
     $('priceAdd').onclick = () => {
-      const model = normalizeModelName($('priceModel').value) || $('priceModel').value.trim();
+      const raw = ($('priceModel').value || '').trim();
+      const model = raw.includes('/') ? raw : (normalizeModelName(raw) || raw);
       if (!model) return;
-      pricingDraft[model.toLowerCase()] = {
+      const key = model.toLowerCase();
+      pricingDraft[key] = {
         inputPer1M: Number($('priceIn').value) || 0,
         outputPer1M: Number($('priceOut').value) || 0,
       };
+      // Ensure visible in list
+      if (!openrouter.some((m) => m.id.toLowerCase() === key || (m.slug || '').toLowerCase() === key)) {
+        openrouter.unshift({
+          id: model,
+          name: model,
+          provider: model.includes('/') ? model.split('/')[0] : 'custom',
+          slug: model.includes('/') ? model.split('/').pop() : model,
+          contextLength: 0,
+          modality: 'text->text',
+          free: false,
+          source: 'draft',
+          inputPer1M: pricingDraft[key].inputPer1M,
+          outputPer1M: pricingDraft[key].outputPer1M,
+        });
+      }
       $('priceModel').value = '';
       $('priceIn').value = '';
       $('priceOut').value = '';
-      renderPricing();
+      renderList();
       scheduleLivePush();
     };
 
     $('pricingReload').onclick = async () => {
       if (liveTimer) clearTimeout(liveTimer);
       pricingDraft = {};
-      await loadPricing();
-      setStatus('Reloaded');
+      try {
+        await fetch('/api/models/refresh', { method: 'POST' });
+      } catch { /* ignore */ }
+      await loadPricing({ refresh: true });
     };
 
     $('pricingSave').onclick = async () => {
       if (liveTimer) clearTimeout(liveTimer);
       await pushRatesLive({ manual: true });
     };
-
-    try {
-      const es = new EventSource('/api/pricing/stream');
-      es.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === 'scan' && msg.reason === 'complete') {
-            void loadMeta();
-            void loadPricing();
-          }
-        } catch { /* ignore */ }
-      };
-    } catch { /* ignore */ }
 
     loadMeta();
     loadPricing();

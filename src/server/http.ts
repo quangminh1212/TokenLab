@@ -5,6 +5,12 @@ import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
 import { detectAgents, scanAll } from "../agents/index.js";
 import { loadConfig, saveConfig, setCustomRates, configPath } from "../config.js";
+import {
+  fetchOpenRouterModels,
+  getOpenRouterFetchedAt,
+  getOpenRouterModelsSync,
+  loadOpenRouterCacheFromDisk,
+} from "../openrouter-models.js";
 import { listPricingCatalog, repriceEvents } from "../pricing.js";
 import type { GroupBy, ModelRate, UsageEvent } from "../types.js";
 import { filterByPeriod, normalizeModelName } from "../util.js";
@@ -196,16 +202,68 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if (req.method === "GET" && pathname === "/api/pricing") {
       const models = [...new Set(cache.map((e) => normalizeModelName(e.model) || e.model || "").filter(Boolean))];
       const cfg = await loadConfig();
+      const forceOr = url.searchParams.get("refreshOpenRouter") === "1";
+      if (forceOr || getOpenRouterModelsSync().length === 0) {
+        try {
+          await fetchOpenRouterModels({ force: forceOr });
+        } catch {
+          // keep empty / stale; UI can show offline
+        }
+      }
+      const openrouter = getOpenRouterModelsSync();
+      const custom = cfg.pricing?.customRates || {};
+      // Merge OpenRouter rows with effective rates (custom overrides)
+      const openrouterCatalog = openrouter.map((m) => {
+        const cKey = m.id.toLowerCase();
+        const sKey = m.slug.toLowerCase();
+        const cust = custom[cKey] || custom[sKey];
+        return {
+          id: m.id,
+          name: m.name,
+          provider: m.provider,
+          slug: m.slug,
+          contextLength: m.contextLength,
+          modality: m.modality,
+          free: m.free,
+          source: cust ? ("custom" as const) : ("openrouter" as const),
+          inputPer1M: cust?.inputPer1M ?? m.inputPer1M,
+          outputPer1M: cust?.outputPer1M ?? m.outputPer1M,
+          cacheReadPer1M: cust?.cacheReadPer1M ?? m.cacheReadPer1M,
+          cacheWritePer1M: cust?.cacheWritePer1M ?? m.cacheWritePer1M,
+          created: m.created,
+        };
+      });
       return json(res, 200, {
         configPath: configPath(),
         currency: cfg.pricing?.currency || "USD",
         preferRouterCost: cfg.pricing?.preferRouterCost !== false,
-        customRates: cfg.pricing?.customRates || {},
+        customRates: custom,
         catalog: listPricingCatalog(models as string[]),
+        openrouter: openrouterCatalog,
+        openrouterCount: openrouterCatalog.length,
+        openrouterFetchedAt: getOpenRouterFetchedAt(),
         seenModels: models.sort((a, b) => a.localeCompare(b)),
         pricingRevision,
         pricingUpdatedAt,
       });
+    }
+
+    if (req.method === "POST" && pathname === "/api/models/refresh") {
+      try {
+        const models = await fetchOpenRouterModels({ force: true });
+        return json(res, 200, {
+          ok: true,
+          count: models.length,
+          fetchedAt: getOpenRouterFetchedAt(),
+        });
+      } catch (err) {
+        return json(res, 502, {
+          error: {
+            code: "OPENROUTER_FETCH",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
     }
 
     // Server-Sent Events: pricing + scan completion for multi-tab / dashboard
@@ -399,6 +457,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
   // Bind immediately (retry on EADDRINUSE — common with tsx watch on Windows)
   await listenWithRetry(server, port, host, 40, 150);
+
+  // Warm OpenRouter model catalog (disk then network) so Model page is never empty
+  void loadOpenRouterCacheFromDisk()
+    .then(() => fetchOpenRouterModels({ force: false }))
+    .then((list) => {
+      console.log(`[xlab-token] OpenRouter models ready: ${list.length}`);
+    })
+    .catch((err) => {
+      console.warn(
+        "[xlab-token] OpenRouter models fetch failed:",
+        err instanceof Error ? err.message : err,
+      );
+    });
 
   // Initial scan + periodic refresh in background
   void rescan().catch((err) => {

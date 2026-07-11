@@ -1,5 +1,6 @@
 import type { ModelRate, UsageEvent } from "./types.js";
 import { getConfigSync } from "./config.js";
+import { lookupOpenRouterRate } from "./openrouter-models.js";
 import { normalizeModelName } from "./util.js";
 
 /** Bundled offline rates (USD per 1M tokens). Public / LiteLLM-style snapshots. */
@@ -145,12 +146,17 @@ export function resolveModelKey(model: string | null | undefined): string | null
 export function getRateForModel(model: string | null | undefined): {
   key: string | null;
   rate: ModelRate;
-  source: "custom" | "bundled" | "default";
+  source: "custom" | "bundled" | "openrouter" | "default";
 } {
   const raw = (normalizeModelName(model) || model || "").trim().toLowerCase();
   const custom = customRates();
   if (raw && custom[raw]) {
     return { key: raw, rate: custom[raw], source: "custom" };
+  }
+  // Custom keyed by full OpenRouter id
+  if (model) {
+    const full = String(model).trim().toLowerCase();
+    if (full && custom[full]) return { key: full, rate: custom[full], source: "custom" };
   }
   const key = resolveModelKey(model);
   if (key && custom[key.toLowerCase()]) {
@@ -158,6 +164,17 @@ export function getRateForModel(model: string | null | undefined): {
   }
   if (key && BUNDLED_RATES[key]) {
     return { key, rate: BUNDLED_RATES[key], source: "bundled" };
+  }
+  // OpenRouter live catalog (full id / slug match)
+  const or = lookupOpenRouterRate(model) || (raw ? lookupOpenRouterRate(raw) : null);
+  if (or) {
+    if (custom[or.key.toLowerCase()]) {
+      return { key: or.key, rate: custom[or.key.toLowerCase()], source: "custom" };
+    }
+    if (custom[or.entry.slug.toLowerCase()]) {
+      return { key: or.entry.slug, rate: custom[or.entry.slug.toLowerCase()], source: "custom" };
+    }
+    return { key: or.key, rate: or.rate, source: "openrouter" };
   }
   return { key: key || "default", rate: BUNDLED_RATES.default, source: "default" };
 }
@@ -275,7 +292,7 @@ export function repriceEvents(
 export function listPricingCatalog(models: string[] = []): Array<{
   model: string;
   key: string | null;
-  source: "custom" | "bundled" | "default";
+  source: "custom" | "bundled" | "openrouter" | "default";
   inputPer1M: number;
   outputPer1M: number;
   cacheReadPer1M?: number;
