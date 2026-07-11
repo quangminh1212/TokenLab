@@ -74,9 +74,42 @@ async function listFilesRecursive(dir: string, base = dir): Promise<string[]> {
   return out;
 }
 
-/** Soft cap for mirror inclusion in JSON export (GitHub Gist / browser). */
-const MIRROR_MAX_TOTAL_BYTES = 25 * 1024 * 1024; // 25 MB
-const MIRROR_MAX_FILE_BYTES = 8 * 1024 * 1024; // skip single files > 8 MB
+/**
+ * Mirror export: daily / aggregate only (international practice).
+ * Never ship multi‑MB per-request histories (usage-history.jsonl, etc.).
+ */
+const MIRROR_MAX_TOTAL_BYTES = 8 * 1024 * 1024; // 8 MB total
+const MIRROR_MAX_FILE_BYTES = 2 * 1024 * 1024; // 2 MB per file
+
+/** Basename allow-list for compact aggregate mirrors */
+const MIRROR_ALLOW_NAMES = new Set([
+  "usage-daily.json",
+  "usagedaily.json",
+  "dailysummary.json",
+  "db.json",
+  "usage.json",
+  "usagedata.json",
+  "config.json",
+  "ok.json",
+]);
+
+function isRequestLevelMirror(rel: string): boolean {
+  const base = rel.split("/").pop()?.toLowerCase() || "";
+  if (base.endsWith(".jsonl")) return true;
+  if (base.includes("usage-history") || base.includes("usagehistory")) return true;
+  if (base.includes("request-detail") || base.includes("requestdetail")) return true;
+  if (base.includes("history") && base.endsWith(".jsonl")) return true;
+  return false;
+}
+
+function isAllowedMirror(rel: string): boolean {
+  if (isRequestLevelMirror(rel)) return false;
+  const base = rel.split("/").pop()?.toLowerCase() || "";
+  if (MIRROR_ALLOW_NAMES.has(base)) return true;
+  // small json aggregates only
+  if (base.endsWith(".json") && !base.includes("history")) return true;
+  return false;
+}
 
 async function collectMirrors(): Promise<{
   files: Record<string, string>;
@@ -90,11 +123,15 @@ async function collectMirrors(): Promise<{
   let bytes = 0;
   const rels = await listFilesRecursive(root);
   for (const rel of rels.sort()) {
+    if (!isAllowedMirror(rel)) {
+      skipped.push(`${rel} (request-level or disallowed)`);
+      continue;
+    }
     const full = path.join(root, ...rel.split("/"));
     try {
       const st = await stat(full);
       if (st.size > MIRROR_MAX_FILE_BYTES) {
-        skipped.push(`${rel} (${Math.round(st.size / 1024 / 1024)}MB)`);
+        skipped.push(`${rel} (${Math.round(st.size / 1024)}KB > cap)`);
         continue;
       }
       if (bytes + st.size > MIRROR_MAX_TOTAL_BYTES) {

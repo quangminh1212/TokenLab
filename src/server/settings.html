@@ -110,15 +110,15 @@
         <div class="settings-section-head">
           <h2>Backup &amp; restore</h2>
           <p>
-            Export / import project data: settings, custom rates, scanned usage events,
-            OpenRouter catalog, and local router mirrors (when size allows).
+            Export / import project data: settings, custom rates, daily-aggregated usage events,
+            OpenRouter catalog, and compact mirrors (<code>usage-daily.json</code> — not per-request logs).
           </p>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
             <span class="settings-label">Export full project</span>
-            <span class="settings-help">Config + rates + events + OpenRouter cache + mirrors (may be large).</span>
+            <span class="settings-help">Config + rates + aggregated events + OpenRouter + daily mirrors (no request jsonl).</span>
           </div>
           <button type="button" class="btn btn-primary" id="backupDownloadFull">Export full</button>
         </div>

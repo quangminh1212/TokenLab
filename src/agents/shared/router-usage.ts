@@ -6,20 +6,14 @@ import { normalizeModelName, num, pathExists, readText, stableId } from "../../u
 /**
  * Shared parser for 9router / xlabrouter local data.
  *
- * Sources:
- *  1. SQLite usageHistory + usageDaily (9router production)
- *  2. usage.json / db.json usageData.history
- *  3. usage-history.jsonl / request-details.jsonl exports
- *  4. dailySummary / usage-daily.json (xlabrouter DATA_DIR + mirrors)
+ * International-style storage preference (aggregate, not per-request):
+ *  1. usage-daily.json / usageDaily / dailySummary  ← primary
+ *  2. byModel within each day when complete
+ *  3. Per-request history (jsonl / usageHistory) only as fallback when no daily
  *
- * Reconciliation (per calendar day, avoid double-count):
- *  - If event-level rows cover ≥95% of that day's daily.requests → keep events
- *  - Else if daily rollup exists → use daily synthetic events (drop sparse events)
- *  - Else keep whatever event-level rows exist
- *
- * Why: 9router usageHistory is capped (~134k) while usageDaily holds full day
- * totals (~218k req). xlabrouter history is a short rolling window (~200) while
- * dailySummary holds full multi-day totals (~433k req).
+ * Why: request-level history (usage-history.jsonl) grows to tens of MB and is
+ * redundant once daily rollups exist. Daily totals are the source of truth for
+ * billing-style dashboards.
  */
 export async function parseRouterUsage(
   roots: string[],
@@ -40,68 +34,118 @@ export async function parseRouterUsage(
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
-    // 1) SQLite history + daily
+    let hasDailyForRoot = false;
+
+    // --- A) Daily rollups first (canonical) ---
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
       if (!(await pathExists(dbPath))) continue;
-      pushEvents(await parseSqliteUsage(dbPath, agent));
       const daily = await parseSqliteDaily(dbPath);
-      if (daily) dailyMaps.push({ source: dbPath + "#usageDaily", daily });
+      if (daily) {
+        dailyMaps.push({ source: dbPath + "#usageDaily", daily });
+        hasDailyForRoot = true;
+      }
     }
 
-    // 2) usage.json
     const usagePath = path.join(root, "usage.json");
     if (await pathExists(usagePath)) {
-      pushEvents(await parseUsageJsonFile(usagePath, agent));
       const daily = await readDailySummaryFromJsonFile(usagePath);
-      if (daily) dailyMaps.push({ source: usagePath, daily });
+      if (daily) {
+        dailyMaps.push({ source: usagePath, daily });
+        hasDailyForRoot = true;
+      }
     }
 
-    // 3) db.json → usageData
     const dbJsonPath = path.join(root, "db.json");
     if (await pathExists(dbJsonPath)) {
-      pushEvents(await parseDbJsonUsage(dbJsonPath, agent));
       const daily = await readDailySummaryFromDbJson(dbJsonPath);
-      if (daily) dailyMaps.push({ source: dbJsonPath, daily });
+      if (daily) {
+        dailyMaps.push({ source: dbJsonPath, daily });
+        hasDailyForRoot = true;
+      }
     }
 
-    // 4) exported history / request-details
-    for (const name of [
-      "usage-history.jsonl",
-      "usage-history.json",
-      "usageHistory.json",
-      "request-details.jsonl",
-      "request-details.json",
-    ]) {
-      const p = path.join(root, name);
-      if (!(await pathExists(p))) continue;
-      pushEvents(await parseHistoryExport(p, agent));
-    }
-
-    // 5) usageData.json + usage-daily.json mirrors
     const usageDataPath = path.join(root, "usageData.json");
     if (await pathExists(usageDataPath)) {
-      pushEvents(await parseUsageJsonFile(usageDataPath, agent));
       const daily = await readDailySummaryFromJsonFile(usageDataPath);
-      if (daily) dailyMaps.push({ source: usageDataPath, daily });
+      if (daily) {
+        dailyMaps.push({ source: usageDataPath, daily });
+        hasDailyForRoot = true;
+      }
     }
+
     const dailyPath = path.join(root, "usage-daily.json");
     if (await pathExists(dailyPath)) {
       const daily = await readDailySummaryStandalone(dailyPath);
-      if (daily) dailyMaps.push({ source: dailyPath, daily });
+      if (daily) {
+        dailyMaps.push({ source: dailyPath, daily });
+        hasDailyForRoot = true;
+      }
+    }
+
+    // --- B) Per-request history only if this root has NO daily data ---
+    // Skip multi‑MB usage-history.jsonl when daily rollups exist (international practice).
+    if (hasDailyForRoot) continue;
+
+    for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
+      const dbPath = path.join(root, dbRel);
+      if (!(await pathExists(dbPath))) continue;
+      // Cap SQLite history hard — emergency fallback only
+      pushEvents(await parseSqliteUsage(dbPath, agent, 5_000));
+    }
+
+    if (await pathExists(usagePath)) {
+      pushEvents(await parseUsageJsonFile(usagePath, agent));
+    }
+    if (await pathExists(dbJsonPath)) {
+      pushEvents(await parseDbJsonUsage(dbJsonPath, agent));
+    }
+    if (await pathExists(usageDataPath)) {
+      pushEvents(await parseUsageJsonFile(usageDataPath, agent));
+    }
+
+    // Prefer compact JSON history over multi‑MB jsonl when both exist
+    let loadedCompactHistory = false;
+    for (const name of ["usage-history.json", "usageHistory.json", "request-details.json"]) {
+      const p = path.join(root, name);
+      if (!(await pathExists(p))) continue;
+      pushEvents(await parseHistoryExport(p, agent));
+      loadedCompactHistory = true;
+    }
+    if (!loadedCompactHistory) {
+      for (const name of ["usage-history.jsonl", "request-details.jsonl"]) {
+        const p = path.join(root, name);
+        if (!(await pathExists(p))) continue;
+        // Last-resort: still avoid full 60MB+ when possible (parser reads all — skip huge files)
+        try {
+          const { stat } = await import("node:fs/promises");
+          const st = await stat(p);
+          if (st.size > 4 * 1024 * 1024) {
+            // >4MB request log without daily — skip; user should sync usage-daily.json
+            continue;
+          }
+        } catch {
+          // ignore stat errors
+        }
+        pushEvents(await parseHistoryExport(p, agent));
+      }
     }
   }
 
   return reconcileEventsAndDaily(eventLevel, dailyMaps, agent);
 }
 
-/** Merge event-level + daily rollups without double-counting the same calendar day. */
+/**
+ * Daily-first reconciliation:
+ *  - If a day has a rollup → use daily synthetic events only (ignore per-request for that day)
+ *  - Else keep per-request events for that day
+ */
 function reconcileEventsAndDaily(
   eventLevel: UsageEvent[],
   dailyMaps: Array<{ source: string; daily: Record<string, unknown> }>,
   agent: AgentId,
 ): UsageEvent[] {
-  // Merge all daily maps (later sources override same dateKey if richer)
+  // Merge all daily maps (richer request count wins)
   const mergedDaily = new Map<string, { source: string; day: Record<string, unknown> }>();
   for (const { source, daily } of dailyMaps) {
     for (const [dateKey, raw] of Object.entries(daily)) {
@@ -136,30 +180,26 @@ function reconcileEventsAndDaily(
   for (const dateKey of [...allDays].sort()) {
     const dayEvents = eventsByDay.get(dateKey) || [];
     const daily = mergedDaily.get(dateKey);
-    const dailyReq = daily ? num(daily.day.requests) : 0;
-    const eventCount = dayEvents.length;
 
-    // Prefer event-level when it covers nearly all daily requests
-    if (eventCount > 0 && (dailyReq <= 0 || eventCount >= dailyReq * 0.95)) {
-      out.push(...dayEvents);
-      continue;
-    }
-
-    // Prefer complete daily rollup when history is missing/sparse
+    // Canonical: daily rollup wins whenever present
     if (daily) {
       out.push(...expandOneDay(dateKey, daily.day, agent, daily.source));
       continue;
     }
 
-    // No daily — keep whatever events we have
     out.push(...dayEvents);
   }
 
   return out;
 }
 
-async function parseSqliteUsage(dbPath: string, agent: AgentId): Promise<UsageEvent[]> {
+async function parseSqliteUsage(
+  dbPath: string,
+  agent: AgentId,
+  limit = 5_000,
+): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
+  const lim = Math.max(100, Math.min(20_000, Math.floor(limit)));
   try {
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -172,14 +212,14 @@ async function parseSqliteUsage(dbPath: string, agent: AgentId): Promise<UsageEv
                     promptTokens, completionTokens, cost, status, tokens, meta
              FROM usageHistory
              ORDER BY id DESC
-             LIMIT 200000`,
+             LIMIT ${lim}`,
           )
           .all() as Array<Record<string, unknown>>;
       } catch {
         // older / alternate schema
         try {
           rows = db
-            .prepare(`SELECT * FROM usageHistory ORDER BY rowid DESC LIMIT 200000`)
+            .prepare(`SELECT * FROM usageHistory ORDER BY rowid DESC LIMIT ${lim}`)
             .all() as Array<Record<string, unknown>>;
         } catch {
           rows = [];
