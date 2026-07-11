@@ -1085,9 +1085,11 @@ a.icon-btn:hover {
   border-color: transparent;
 }
 .settings-page {
-  max-width: 46rem;
+  max-width: min(72rem, 100%);
   margin: 0 auto;
-  padding: 1.25rem 0 2.5rem;
+  padding: 1.25rem 1rem 2.5rem;
+  width: 100%;
+  box-sizing: border-box;
 }
 .settings-page-header {
   margin-bottom: 1.35rem;
@@ -1111,11 +1113,44 @@ a.icon-btn:hover {
   flex-direction: column;
   gap: 1rem;
 }
+/* 1 col mobile/tablet · 2 cols desktop full width */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+@media (min-width: 960px) {
+  .settings-page {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+  .settings-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 1.15rem;
+  }
+  /* Keep General + Cost on left stack, Backup + System on right when natural flow:
+     order in DOM: General, Cost, Backup, System → columns fill top-to-bottom then left-to-right
+     Use dense packing so shorter cards sit side by side cleanly */
+  .settings-grid {
+    grid-auto-flow: dense;
+  }
+}
+@media (min-width: 1200px) {
+  .settings-page {
+    max-width: 76rem;
+  }
+  .settings-section {
+    padding: 1.45rem 1.55rem 1.35rem;
+  }
+}
 .settings-section {
   padding: 1.35rem 1.4rem 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 0;
+  min-width: 0;
+  height: 100%;
 }
 .settings-section-head {
   margin-bottom: 1rem;
@@ -1303,7 +1338,7 @@ a.icon-btn:hover {
   flex-direction: column;
   gap: 0.55rem;
   width: 100%;
-  max-width: 28rem;
+  max-width: 100%;
 }
 .settings-input {
   width: 100%;
@@ -1349,15 +1384,32 @@ a.btn {
   text-decoration: none;
   width: fit-content;
 }
+@media (max-width: 959px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
 @media (max-width: 720px) {
-  .settings-page { padding: 0.85rem 0 2rem; }
+  .settings-page { padding: 0.85rem 0.75rem 2rem; }
+  .settings-page-header h1 { font-size: 1.3rem; }
   .settings-row {
     grid-template-columns: 1fr;
     gap: 0.55rem;
   }
-  .settings-select { width: 100%; max-width: none; }
+  .settings-select { width: 100%; max-width: none; min-width: 0; }
   .settings-kv-grid { grid-template-columns: 1fr 1fr; }
   .settings-inline-actions { justify-content: flex-start; }
+  .settings-actions-bar {
+    position: sticky;
+    bottom: 0;
+    padding: 0.75rem 0;
+    background: linear-gradient(to top, var(--bg, #fff) 70%, transparent);
+    z-index: 2;
+  }
+}
+@media (max-width: 420px) {
+  .settings-kv-grid { grid-template-columns: 1fr; }
+  .settings-section { padding: 1.1rem 1rem 1rem; }
 }
 
 /* ========== Model page - airy list + provider icons ========== */
