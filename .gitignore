@@ -49,3 +49,7 @@ self-host/
 
 .npmrc
 
+
+.tmp-*
+.tmp-serve.*
+
