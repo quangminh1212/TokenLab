@@ -14,8 +14,8 @@ test("priceTokens computes positive cost", () => {
   assert.equal(r.estimatedCost, 3);
 });
 
-test("unknown model returns null cost", () => {
-  const r = priceTokens("totally-unknown-model-xyz", 100, 100);
+test("unknown model falls back to default rates", () => {
+  const r = priceTokens("totally-unknown-model-xyz", 1_000_000, 0);
   assert.equal(r.pricingStatus, "unknown_model");
-  assert.equal(r.estimatedCost, null);
+  assert.ok(r.estimatedCost != null && r.estimatedCost > 0);
 });

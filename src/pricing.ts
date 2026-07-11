@@ -72,20 +72,22 @@ export function priceTokens(
   currency = "USD",
 ): Pick<UsageEvent, "estimatedCost" | "pricingStatus" | "currency"> {
   const key = resolveModelKey(model);
-  if (!key) {
-    return { estimatedCost: null, pricingStatus: "unknown_model", currency };
-  }
-  const rate = BUNDLED_RATES[key] ?? BUNDLED_RATES.default;
+  // Fall back to default mid-tier rates so spend is never blank when tokens exist
+  const rate = (key && BUNDLED_RATES[key]) || BUNDLED_RATES.default;
   const cost =
     (inputTokens * rate.inputPer1M +
       outputTokens * rate.outputPer1M +
       cacheReadTokens * (rate.cacheReadPer1M ?? rate.inputPer1M * 0.1) +
       cacheWriteTokens * (rate.cacheWritePer1M ?? rate.inputPer1M * 1.25)) /
     1_000_000;
-  if (cost === 0 && inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens === 0) {
+  if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens === 0) {
     return { estimatedCost: 0, pricingStatus: "zero_rate", currency };
   }
-  return { estimatedCost: cost, pricingStatus: "priced", currency };
+  return {
+    estimatedCost: cost,
+    pricingStatus: key ? "priced" : "unknown_model",
+    currency,
+  };
 }
 
 export function applyPricing(

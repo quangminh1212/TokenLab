@@ -7,6 +7,21 @@ export type AgentId =
   | "gemini"
   | "opencode"
   | "copilot"
+  | "hermes"
+  | "openclaw"
+  | "pi"
+  | "kimi"
+  | "qwen"
+  | "droid"
+  | "amp"
+  | "goose"
+  | "cline"
+  | "roocode"
+  | "kilocode"
+  | "antigravity"
+  | "warp"
+  | "trae"
+  | "zed"
   | "custom";
 
 export interface UsageEvent {
