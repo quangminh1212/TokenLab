@@ -28,73 +28,140 @@
         <a class="nav-link" href="/">Dashboard</a>
         <a class="nav-link" href="/agents">Agents</a>
         <a class="nav-link" href="/model">Model</a>
-        <a class="nav-link active" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
+        <a class="icon-btn settings-btn is-active" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings" aria-current="page"></a>
       </div>
     </div>
   </header>
 
   <main class="shell settings-page">
-    <div class="settings-panel u-card">
-      <div class="settings-panel-head">
-        <h1>Settings</h1>
-        <a href="/model">Model rates</a>
-      </div>
+    <header class="settings-page-header">
+      <h1>Settings</h1>
+      <p>Manage appearance, regional preferences, and cost estimation for this machine.</p>
+    </header>
 
-      <div class="settings-list">
-        <div class="settings-item">
-          <span class="settings-k">Theme</span>
-          <button type="button" class="btn btn-sm" id="settingsThemeBtn">Light</button>
+    <form class="settings-form" id="settingsForm" onsubmit="return false;">
+      <!-- General -->
+      <section class="settings-section u-card">
+        <div class="settings-section-head">
+          <h2>General</h2>
+          <p>Interface and calendar day used by Dashboard filters.</p>
         </div>
 
-        <div class="settings-item">
-          <span class="settings-k">Timezone</span>
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="settingsThemeBtn">Appearance</label>
+            <span class="settings-help">Stored in this browser only.</span>
+          </div>
+          <button type="button" class="btn" id="settingsThemeBtn">Light</button>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="timezoneSelect">Timezone</label>
+            <span class="settings-help">Defines the start of <strong>Today</strong> for usage stats.</span>
+            <span class="settings-help muted" id="todayStartsLabel"></span>
+          </div>
           <select id="timezoneSelect" class="settings-select" aria-label="Timezone"></select>
         </div>
-        <p class="settings-note" id="todayStartsLabel">Today &mdash;</p>
+      </section>
 
-        <label class="settings-item settings-item-toggle">
-          <span class="settings-k">Prefer router cost</span>
-          <input type="checkbox" id="preferRouterCost" />
-        </label>
-
-        <div class="settings-item">
-          <span class="settings-k">Currency</span>
-          <code class="settings-pill" id="currencyLabel">USD</code>
+      <!-- Cost -->
+      <section class="settings-section u-card">
+        <div class="settings-section-head">
+          <h2>Cost estimation</h2>
+          <p>How estimated USD is calculated from token usage. Not actual billing.</p>
         </div>
-      </div>
 
-      <div class="settings-bar">
-        <button type="button" class="btn btn-primary btn-sm" id="savePrefs">Save</button>
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="preferRouterCost">Prefer router cost</label>
+            <span class="settings-help">When available, use cost reported by 9router / xlabrouter if greater than zero.</span>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" id="preferRouterCost" />
+            <span class="settings-toggle-ui" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-label">Currency</span>
+            <span class="settings-help">Display currency for estimates.</span>
+          </div>
+          <code class="settings-value-pill" id="currencyLabel">USD</code>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-label">Model rates</span>
+            <span class="settings-help">Edit input / output rates per million tokens.</span>
+          </div>
+          <a class="btn" href="/model">Open models</a>
+        </div>
+      </section>
+
+      <!-- System -->
+      <section class="settings-section u-card">
+        <div class="settings-section-head">
+          <h2>System</h2>
+          <p>Local server status and configuration path.</p>
+        </div>
+
+        <div class="settings-kv-grid">
+          <div>
+            <span class="settings-kv-label">Version</span>
+            <strong id="versionLabel">&mdash;</strong>
+          </div>
+          <div>
+            <span class="settings-kv-label">Events cached</span>
+            <strong id="eventsLabel">&mdash;</strong>
+          </div>
+          <div>
+            <span class="settings-kv-label">Scan status</span>
+            <strong id="scanningLabel">&mdash;</strong>
+          </div>
+          <div>
+            <span class="settings-kv-label">Pricing revision</span>
+            <strong id="pricingRevLabel">&mdash;</strong>
+          </div>
+        </div>
+
+        <div class="settings-row settings-row-stack">
+          <div class="settings-row-text">
+            <span class="settings-label">Config file</span>
+            <code class="settings-path-code" id="configPath">&mdash;</code>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-label">Runtime</span>
+            <span class="settings-help" id="runtimeLabel">&mdash;</span>
+          </div>
+          <span class="settings-help" id="browserTzLabel">&mdash;</span>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-label">Rescan agents</span>
+            <span class="settings-help">Re-read local usage logs into the cache.</span>
+          </div>
+          <div class="settings-inline-actions">
+            <button type="button" class="btn btn-with-icon" id="rescanBtn">Rescan</button>
+            <span class="settings-status" id="rescanStatus" aria-live="polite"></span>
+          </div>
+        </div>
+      </section>
+
+      <div class="settings-actions-bar">
+        <button type="button" class="btn btn-primary" id="savePrefs">Save changes</button>
         <span class="settings-status" id="prefsStatus" aria-live="polite"></span>
       </div>
-
-      <div class="settings-divider"></div>
-
-      <div class="settings-chips">
-        <span><b id="versionLabel">&mdash;</b> ver</span>
-        <span><b id="eventsLabel">&mdash;</b> events</span>
-        <span><b id="scanningLabel">&mdash;</b></span>
-        <span>rev <b id="pricingRevLabel">&mdash;</b></span>
-      </div>
-
-      <div class="settings-path" title="">
-        <code id="configPath">&mdash;</code>
-      </div>
-      <div class="settings-path muted">
-        <code id="runtimeLabel">&mdash;</code>
-        <span class="dot">&middot;</span>
-        <code id="browserTzLabel">&mdash;</code>
-      </div>
-
-      <div class="settings-bar">
-        <button type="button" class="btn btn-sm btn-with-icon" id="rescanBtn">Rescan</button>
-        <span class="settings-status" id="rescanStatus" aria-live="polite"></span>
-      </div>
-    </div>
+    </form>
   </main>
 
   <script>
@@ -103,6 +170,7 @@
     const ICONS = {
       moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
       sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+      settings: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>',
       refresh: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
     };
 
@@ -121,25 +189,26 @@
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
     $('settingsThemeBtn').onclick = () => $('themeBtn').click();
+    $('settingsBtn').innerHTML = ICONS.settings;
     $('rescanBtn').innerHTML = ICONS.refresh + '<span>Rescan</span>';
 
     const TIMEZONES = [
-      { value: 'local', label: 'Local' },
+      { value: 'local', label: 'System default' },
       { value: 'UTC', label: 'UTC' },
-      { value: 'Asia/Ho_Chi_Minh', label: 'Vietnam (+7)' },
-      { value: 'Asia/Bangkok', label: 'Bangkok' },
-      { value: 'Asia/Singapore', label: 'Singapore' },
-      { value: 'Asia/Tokyo', label: 'Tokyo' },
-      { value: 'Asia/Shanghai', label: 'Shanghai' },
-      { value: 'Asia/Seoul', label: 'Seoul' },
-      { value: 'Asia/Kolkata', label: 'Kolkata' },
-      { value: 'Europe/London', label: 'London' },
-      { value: 'Europe/Paris', label: 'Paris' },
-      { value: 'Europe/Berlin', label: 'Berlin' },
-      { value: 'America/New_York', label: 'New York' },
-      { value: 'America/Los_Angeles', label: 'Los Angeles' },
-      { value: 'America/Chicago', label: 'Chicago' },
-      { value: 'Australia/Sydney', label: 'Sydney' },
+      { value: 'Asia/Ho_Chi_Minh', label: 'Asia/Ho Chi Minh (UTC+7)' },
+      { value: 'Asia/Bangkok', label: 'Asia/Bangkok' },
+      { value: 'Asia/Singapore', label: 'Asia/Singapore' },
+      { value: 'Asia/Tokyo', label: 'Asia/Tokyo' },
+      { value: 'Asia/Shanghai', label: 'Asia/Shanghai' },
+      { value: 'Asia/Seoul', label: 'Asia/Seoul' },
+      { value: 'Asia/Kolkata', label: 'Asia/Kolkata' },
+      { value: 'Europe/London', label: 'Europe/London' },
+      { value: 'Europe/Paris', label: 'Europe/Paris' },
+      { value: 'Europe/Berlin', label: 'Europe/Berlin' },
+      { value: 'America/New_York', label: 'America/New York' },
+      { value: 'America/Los_Angeles', label: 'America/Los Angeles' },
+      { value: 'America/Chicago', label: 'America/Chicago' },
+      { value: 'Australia/Sydney', label: 'Australia/Sydney' },
     ];
 
     function fillTimezoneSelect(selected) {
@@ -160,19 +229,22 @@
     }
 
     function formatTodayStart(iso, tz) {
-      if (!iso) return 'Today \u2014';
+      if (!iso) return '';
       try {
         const d = new Date(iso);
         const zone = !tz || tz === 'local' ? undefined : tz;
         const nice = d.toLocaleString(undefined, {
-          month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit',
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
           timeZone: zone,
           timeZoneName: 'short',
         });
-        return 'Today from ' + nice;
+        return 'Today starts at ' + nice;
       } catch {
-        return 'Today \u2014';
+        return '';
       }
     }
 
@@ -183,10 +255,10 @@
         $('meta').textContent = `v${h.version} \u00B7 ${n} agents \u00B7 ${h.eventCount || 0} events`;
         $('versionLabel').textContent = h.version || '\u2014';
         $('eventsLabel').textContent = Number(h.eventCount || 0).toLocaleString();
-        $('scanningLabel').textContent = h.scanning ? 'scanning' : 'idle';
+        $('scanningLabel').textContent = h.scanning ? 'Running' : 'Idle';
         $('scanningLabel').classList.toggle('is-busy', Boolean(h.scanning));
         $('pricingRevLabel').textContent = String(h.pricingRevision ?? '\u2014');
-        $('runtimeLabel').textContent = `${h.platform || '\u2014'} ${h.node || ''}`.trim();
+        $('runtimeLabel').textContent = `${h.platform || '\u2014'} \u00B7 ${h.node || '\u2014'}`;
         if (h.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt, h.timezone);
         }
@@ -200,14 +272,14 @@
         const c = await fetch('/api/config').then((r) => r.json());
         const pathEl = $('configPath');
         pathEl.textContent = c.configPath || '\u2014';
-        pathEl.parentElement.title = c.configPath || '';
+        pathEl.title = c.configPath || '';
         $('currencyLabel').textContent = c.pricing?.currency || 'USD';
         $('preferRouterCost').checked = c.pricing?.preferRouterCost !== false;
         fillTimezoneSelect(c.timezone || 'local');
         try {
-          $('browserTzLabel').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+          $('browserTzLabel').textContent = 'Browser: ' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local');
         } catch {
-          $('browserTzLabel').textContent = 'local';
+          $('browserTzLabel').textContent = 'Browser: local';
         }
         await loadHealth();
       } catch {
@@ -233,9 +305,9 @@
         if (r.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(r.todayStartsAt, r.timezone || tz);
         }
-        setTimeout(() => { $('prefsStatus').textContent = ''; }, 1800);
+        setTimeout(() => { $('prefsStatus').textContent = ''; }, 2200);
       } catch {
-        $('prefsStatus').textContent = 'Failed';
+        $('prefsStatus').textContent = 'Save failed';
       } finally {
         btn.disabled = false;
       }
@@ -243,20 +315,20 @@
 
     $('rescanBtn').onclick = async () => {
       $('rescanBtn').disabled = true;
-      $('rescanStatus').textContent = 'Scanning\u2026';
+      $('rescanStatus').textContent = 'Starting\u2026';
       try {
         const r = await fetch('/api/scan?async=1', { method: 'POST' }).then((x) => x.json());
-        $('rescanStatus').textContent = r.accepted ? 'Started\u2026' : 'Done';
+        $('rescanStatus').textContent = r.accepted ? 'Scanning\u2026' : 'Done';
         let n = 0;
         const tick = async () => {
           n += 1;
           await loadHealth();
-          const scanning = $('scanningLabel').textContent === 'scanning';
+          const scanning = $('scanningLabel').textContent === 'Running';
           if (scanning && n < 40) {
             setTimeout(tick, 800);
           } else {
-            $('rescanStatus').textContent = scanning ? 'Still scanning\u2026' : 'Done';
-            setTimeout(() => { $('rescanStatus').textContent = ''; }, 2000);
+            $('rescanStatus').textContent = scanning ? 'Still running\u2026' : 'Up to date';
+            setTimeout(() => { $('rescanStatus').textContent = ''; }, 2200);
             $('rescanBtn').disabled = false;
           }
         };
