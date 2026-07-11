@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
 import { detectAgents, scanAll } from "../agents/index.js";
-import { loadConfig, setCustomRates, configPath } from "../config.js";
+import { loadConfig, saveConfig, setCustomRates, configPath } from "../config.js";
 import { listPricingCatalog, repriceEvents } from "../pricing.js";
 import type { GroupBy, ModelRate, UsageEvent } from "../types.js";
 import { filterByPeriod, normalizeModelName } from "../util.js";
@@ -67,6 +67,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const dashboardPath = path.join(__dirname, "dashboard.html");
   const agentsPagePath = path.join(__dirname, "agents.html");
   const settingsPagePath = path.join(__dirname, "settings.html");
+  const pricingPagePath = path.join(__dirname, "pricing.html");
   const stylesPath = path.join(__dirname, "styles.css");
 
   const server = createServer(async (req, res) => {
@@ -252,15 +253,51 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       return;
     }
 
-    if (
-      !noUi &&
-      req.method === "GET" &&
-      (pathname === "/settings" || pathname === "/settings.html" || pathname === "/pricing")
-    ) {
+    if (!noUi && req.method === "GET" && (pathname === "/settings" || pathname === "/settings.html")) {
       const html = await readFile(settingsPagePath, "utf8");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
       return;
+    }
+
+    if (!noUi && req.method === "GET" && (pathname === "/pricing" || pathname === "/pricing.html")) {
+      const html = await readFile(pricingPagePath, "utf8");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/config") {
+      const cfg = await loadConfig();
+      return json(res, 200, {
+        ...cfg,
+        configPath: configPath(),
+      });
+    }
+
+    if (req.method === "PUT" && pathname === "/api/config") {
+      const body = await readJsonBody(req);
+      const prev = await loadConfig();
+      const next = await saveConfig({
+        ...prev,
+        ...body,
+        pricing: {
+          ...prev.pricing,
+          ...((body.pricing as object) || {}),
+          // never wipe custom rates via this endpoint unless explicitly provided
+          customRates:
+            body.pricing &&
+            typeof body.pricing === "object" &&
+            (body.pricing as { customRates?: unknown }).customRates &&
+            typeof (body.pricing as { customRates?: unknown }).customRates === "object"
+              ? ((body.pricing as { customRates: typeof prev.pricing.customRates }).customRates as typeof prev.pricing.customRates)
+              : prev.pricing?.customRates,
+        },
+      });
+      // Reprice when preferRouterCost flips
+      cache = repriceEvents(cache, { forceTable: next.pricing?.preferRouterCost === false });
+      bumpPricing("config");
+      return json(res, 200, { ok: true, ...next, configPath: configPath() });
     }
 
     if (!noUi && req.method === "GET" && pathname === "/styles.css") {
