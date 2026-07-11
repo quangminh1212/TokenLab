@@ -12,13 +12,17 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
   if (!usage || typeof usage !== "object") return null;
   const u = usage as Record<string, unknown>;
 
-  // Nested shapes: { usage: {...} }, { token_usage: {...} }, { tokens: {...} }
+  // Nested shapes: usage / token_usage / metrics (Devin) / metadata.metrics
+  const meta =
+    u.metadata && typeof u.metadata === "object" ? (u.metadata as Record<string, unknown>) : null;
   const nested =
     (u.usage && typeof u.usage === "object" ? (u.usage as Record<string, unknown>) : null) ||
     (u.token_usage && typeof u.token_usage === "object" ? (u.token_usage as Record<string, unknown>) : null) ||
     (u.tokenUsage && typeof u.tokenUsage === "object" ? (u.tokenUsage as Record<string, unknown>) : null) ||
     (u.tokens && typeof u.tokens === "object" ? (u.tokens as Record<string, unknown>) : null) ||
     (u.token_count && typeof u.token_count === "object" ? (u.token_count as Record<string, unknown>) : null) ||
+    (u.metrics && typeof u.metrics === "object" ? (u.metrics as Record<string, unknown>) : null) ||
+    (meta?.metrics && typeof meta.metrics === "object" ? (meta.metrics as Record<string, unknown>) : null) ||
     u;
 
   const inputTokens = num(

@@ -37,6 +37,16 @@ import { agent as codebuddy } from "./codebuddy/index.js";
 import { agent as workbuddy } from "./workbuddy/index.js";
 import { agent as aider } from "./aider/index.js";
 import { agent as agent_continue } from "./continue/index.js";
+import { agent as amazon_q } from "./amazon-q/index.js";
+import { agent as void_agent } from "./void/index.js";
+import { agent as forge } from "./forge/index.js";
+import { agent as blackbox } from "./blackbox/index.js";
+import { agent as iflow } from "./iflow/index.js";
+import { agent as qoder } from "./qoder/index.js";
+import { agent as mimocode } from "./mimocode/index.js";
+import { agent as codewhale } from "./codewhale/index.js";
+import { agent as ollama } from "./ollama/index.js";
+import { agent as devin } from "./devin/index.js";
 import type { AgentModule, AgentPathSpec } from "./shared/types.js";
 
 export type { AgentModule, AgentPathSpec } from "./shared/types.js";
@@ -80,6 +90,16 @@ export const AGENTS: AgentModule[] = [
   workbuddy,
   aider,
   agent_continue,
+  devin,
+  ollama,
+  codewhale,
+  mimocode,
+  qoder,
+  iflow,
+  blackbox,
+  forge,
+  void_agent,
+  amazon_q,
 ];
 
 export const PARSERS: Record<AgentId, AgentModule["parse"] | null> = {

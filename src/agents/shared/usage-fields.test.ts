@@ -26,3 +26,19 @@ test("extractTokenBuckets reads nested usage", () => {
 test("extractModel prefers modelId", () => {
   assert.equal(extractModel({ modelId: "grok-4.5" }), "grok-4.5");
 });
+
+test("extractTokenBuckets reads Devin-style metadata.metrics", () => {
+  const b = extractTokenBuckets({
+    role: "assistant",
+    metadata: {
+      metrics: {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_tokens: 50,
+      },
+    },
+  });
+  assert.equal(b?.inputTokens, 100);
+  assert.equal(b?.outputTokens, 20);
+  assert.equal(b?.cacheReadTokens, 50);
+});
