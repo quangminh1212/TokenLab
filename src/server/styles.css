@@ -656,35 +656,109 @@ html.dark {
 .chart-grid { stroke: var(--border); stroke-dasharray: 3 3; stroke-opacity: 0.7; }
 .chart-tick { fill: currentColor; fill-opacity: 0.55; font-size: 10px; font-family: inherit; }
 
-.recent-card { display: flex; flex-direction: column; max-height: 320px; }
-.recent-scroll { flex: 1; overflow: auto; padding: 0 0.5rem 0.5rem; }
-.recent-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
-.recent-table th {
-  position: sticky; top: 0; background: var(--panel);
-  text-align: left; padding: 0.45rem 0.35rem;
-  color: var(--muted); font-weight: 700; font-size: 0.68rem;
-  text-transform: uppercase; letter-spacing: 0.03em;
-  border-bottom: 1px solid var(--border);
+.recent-card {
+  display: flex; flex-direction: column;
+  max-height: 320px;
 }
-.recent-table td {
-  padding: 0.4rem 0.35rem; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  vertical-align: middle;
+.recent-scroll {
+  flex: 1; overflow: auto;
+  padding: 0.15rem 0.35rem 0.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent;
 }
-.recent-table tr:hover td { background: color-mix(in srgb, var(--xlab) 5%, transparent); }
-.recent-table .num { text-align: right; white-space: nowrap; }
-.recent-main {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-weight: 600; font-size: 0.72rem;
-  max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.recent-scroll::-webkit-scrollbar { width: 5px; }
+.recent-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 30%, transparent);
+  border-radius: 99px;
 }
-.recent-sub { color: var(--muted); font-size: 0.68rem; margin-top: 0.05rem; }
-.status-dot {
-  display: block; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--success);
+.recent-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Clean list — less visual noise than dense table */
+.recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.15rem 0.35rem 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
-.status-dot.warn { background: var(--warn); }
-.tok-in { color: var(--xlab); font-weight: 650; }
-.tok-out { color: var(--success); font-weight: 650; margin-left: 0.2rem; }
+.recent-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.45rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  transition: background 0.12s ease;
+}
+.recent-item:last-child { border-bottom: 0; }
+.recent-item:hover {
+  background: color-mix(in srgb, var(--bg-soft) 70%, transparent);
+  border-radius: 8px;
+}
+.recent-item-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+.recent-model {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recent-agent {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+}
+.recent-item-meta {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  text-align: right;
+}
+.recent-tokens {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+.recent-sep {
+  margin: 0 0.28rem;
+  color: var(--muted);
+  font-weight: 400;
+  opacity: 0.7;
+}
+.recent-when {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Soften recent card header */
+.recent-card .u-card-head {
+  background: transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  padding: 0.65rem 0.9rem 0.55rem;
+}
+.recent-card .u-card-title {
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
 
 /* Table toolbar + usage table */
 .table-toolbar {
@@ -890,8 +964,9 @@ html.dark {
   .usage-chart { height: 180px; }
   .chart-empty { min-height: 140px; font-size: 0.82rem; }
 
-  .recent-main { max-width: 110px; }
   .recent-card { max-height: 260px; }
+  .recent-item { padding: 0.5rem 0.35rem; gap: 0.5rem; }
+  .recent-model { font-size: 0.78rem; }
 
   .active-strip {
     grid-template-columns: 1fr;

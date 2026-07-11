@@ -279,33 +279,24 @@
         return;
       }
       $('recentBody').innerHTML = `
-        <table class="recent-table">
-          <thead>
-            <tr>
-              <th></th>
-              <th>Agent / model</th>
-              <th class="num">In / Out</th>
-              <th class="num">When</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${events.map((e) => {
-              const ok = e.pricingStatus !== 'unknown_model';
-              return `<tr>
-                <td><span class="status-dot ${ok ? 'ok' : 'warn'}"></span></td>
-                <td>
-                  <div class="recent-main">${escapeHtml(e.model || e.agent || '—')}</div>
-                  <div class="recent-sub">${escapeHtml(e.agent || '')}</div>
-                </td>
-                <td class="num">
-                  <span class="tok-in">${fmt(e.inputTokens)}↑</span>
-                  <span class="tok-out">${fmt(e.outputTokens)}↓</span>
-                </td>
-                <td class="num muted">${timeAgo(e.timestamp)}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>`;
+        <ul class="recent-list">
+          ${events.map((e) => {
+            const model = e.model || e.agent || '—';
+            const agent = e.agent && e.model ? e.agent : '';
+            return `<li class="recent-item">
+              <div class="recent-item-main">
+                <span class="recent-model" title="${escapeHtml(model)}">${escapeHtml(model)}</span>
+                ${agent ? `<span class="recent-agent">${escapeHtml(agent)}</span>` : ''}
+              </div>
+              <div class="recent-item-meta">
+                <span class="recent-tokens" title="input / output">
+                  <span>${fmt(e.inputTokens)}</span><span class="recent-sep">/</span><span>${fmt(e.outputTokens)}</span>
+                </span>
+                <time class="recent-when" datetime="${escapeHtml(e.timestamp || '')}">${timeAgo(e.timestamp)}</time>
+              </div>
+            </li>`;
+          }).join('')}
+        </ul>`;
     }
 
     function renderChart() {
