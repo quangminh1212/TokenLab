@@ -255,7 +255,25 @@ function rowToEvent(
     (typeof r.date === "string" && r.date) ||
     new Date().toISOString();
 
-  const routerCost = num(r.cost ?? r.estimatedCost ?? r.usd);
+  // Prefer router-reported cost when the field exists (including 0 — free/internal calls).
+  // Only fall back to bundled price table when cost is absent.
+  const hasRouterCost =
+    r.cost != null ||
+    r.estimatedCost != null ||
+    r.usd != null ||
+    (typeof r.meta === "object" &&
+      r.meta != null &&
+      ((r.meta as Record<string, unknown>).cost != null ||
+        (r.meta as Record<string, unknown>).estimatedCost != null));
+  const routerCost = num(
+    r.cost ??
+      r.estimatedCost ??
+      r.usd ??
+      (typeof r.meta === "object" && r.meta
+        ? (r.meta as Record<string, unknown>).cost ??
+          (r.meta as Record<string, unknown>).estimatedCost
+        : undefined),
+  );
   const connectionId = typeof r.connectionId === "string" ? r.connectionId : "";
   const endpoint = typeof r.endpoint === "string" ? r.endpoint : "";
   const nativeId = r.id != null ? String(r.id) : tag;
@@ -282,10 +300,9 @@ function rowToEvent(
     sourcePath: source,
   });
 
-  // Prefer router-reported cost when present (already billed estimate from 9router)
-  if (routerCost > 0) {
+  if (hasRouterCost) {
     event.estimatedCost = routerCost;
-    event.pricingStatus = "priced";
+    event.pricingStatus = routerCost > 0 ? "priced" : "zero_rate";
   }
 
   // keep endpoint lightly in workspace when useful
