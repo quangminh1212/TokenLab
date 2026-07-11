@@ -113,6 +113,22 @@ XLab Token scans **local agent usage artifacts**, normalizes them into one schem
 4. **Aggregate** tokens + spend by agent, model, time, workspace.
 5. **Serve** via `http://127.0.0.1:<port>` for UI and automation.
 
+### Agent modules
+
+Each agent lives in its own folder under `src/agents/<id>/` (one module = paths + parser):
+
+```text
+src/agents/
+  shared/          # generic-jsonl, usage-fields, path helpers
+  claude-code/     # index.ts → export const agent
+  codex/
+  grok/
+  …
+  index.ts         # registry: AGENTS, scanAll, detectAgents
+```
+
+To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentModule`, then register it in `src/agents/index.ts`.
+
 ---
 
 ## Supported agents

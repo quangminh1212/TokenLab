@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
-import { detectAgents, scanAll } from "../parsers/index.js";
+import { detectAgents, scanAll } from "../agents/index.js";
 import type { GroupBy, UsageEvent } from "../types.js";
 import { filterByPeriod } from "../util.js";
 import { VERSION } from "../version.js";

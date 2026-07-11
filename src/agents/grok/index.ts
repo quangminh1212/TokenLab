@@ -1,6 +1,9 @@
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
 import path from "node:path";
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
 import {
   estimateTokensFromText,
   num,
@@ -9,7 +12,7 @@ import {
   readText,
   stableId,
   walkFiles,
-} from "../util.js";
+} from "../../util.js";
 
 // Grok Build CLI: ~/.grok/sessions/<cwd>/<id>/chat_history.jsonl + summary.json
 // When API usage counters are missing, estimate from message text length.
@@ -147,3 +150,14 @@ function extractText(content: unknown): string {
   }
   return "";
 }
+
+
+export const agent: AgentModule = {
+  id: "grok",
+  label: "Grok (xAI)",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([path.join(home, ".grok"), path.join(appData, "Grok")]);
+  },
+  parse: parseGrok,
+};

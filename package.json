@@ -18,7 +18,7 @@
     "stats": "tsx src/cli.ts stats",
     "cost": "tsx src/cli.ts cost",
     "doctors": "tsx src/cli.ts doctors",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test src/**/*.test.ts src/**/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {

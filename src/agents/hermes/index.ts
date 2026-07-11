@@ -1,8 +1,11 @@
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
 import path from "node:path";
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../util.js";
-import { extractModel, extractTimestamp, extractTokenBuckets } from "./usage-fields.js";
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
 
 /**
  * Hermes Agent:
@@ -216,3 +219,21 @@ async function parseHermesSqlite(dbPath: string): Promise<UsageEvent[]> {
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
+
+
+export const agent: AgentModule = {
+  id: "hermes",
+  label: "Hermes Agent",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      expandHome(process.env.HERMES_HOME || path.join(home, ".hermes")),
+      path.join(home, ".hermes"),
+      path.join(appData, "hermes"),
+      path.join(localApp, "hermes"),
+      path.join(xdgData, "hermes"),
+      path.join(xdgConfig, "hermes"),
+    ]);
+  },
+  parse: parseHermes,
+};

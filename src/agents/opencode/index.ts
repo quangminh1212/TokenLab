@@ -1,6 +1,9 @@
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../util.js";
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
 
 /** OpenCode: JSONL under storage/message or similar local folders */
 export async function parseOpenCode(roots: string[]): Promise<UsageEvent[]> {
@@ -65,3 +68,19 @@ export async function parseOpenCode(roots: string[]): Promise<UsageEvent[]> {
 
   return events;
 }
+
+
+export const agent: AgentModule = {
+  id: "opencode",
+  label: "OpenCode",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      path.join(xdgData, "opencode"),
+      path.join(home, ".local", "share", "opencode"),
+      path.join(home, ".opencode"),
+      path.join(appData, "opencode"),
+    ]);
+  },
+  parse: parseOpenCode,
+};

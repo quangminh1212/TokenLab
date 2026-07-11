@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { aggregate, costReport } from "./aggregate.js";
-import { detectAgents, scanAll } from "./parsers/index.js";
+import { detectAgents, scanAll } from "./agents/index.js";
 import { startServer } from "./server/http.js";
 import type { GroupBy } from "./types.js";
 import { filterByPeriod, formatTokens, formatUsd } from "./util.js";

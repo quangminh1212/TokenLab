@@ -1,8 +1,11 @@
+import type { AgentModule } from "../shared/types.js";
+import { pathEnv, unique } from "../shared/env.js";
+
 import path from "node:path";
-import { applyPricing } from "../pricing.js";
-import type { UsageEvent } from "../types.js";
-import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../util.js";
-import { extractModel, extractTimestamp, extractTokenBuckets } from "./usage-fields.js";
+import { applyPricing } from "../../pricing.js";
+import type { UsageEvent } from "../../types.js";
+import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
 
 // Deep Codex support:
 // - ~/.codex/sessions (rollout-*.jsonl date tree)
@@ -219,3 +222,20 @@ function pickString(obj: unknown, keys: string[]): string | null {
   }
   return null;
 }
+
+
+export const agent: AgentModule = {
+  id: "codex",
+  label: "OpenAI Codex",
+  roots() {
+    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
+    return unique([
+      expandHome(process.env.CODEX_HOME || path.join(home, ".codex")),
+      path.join(home, ".codex"),
+      path.join(xdgConfig, "codex"),
+      path.join(appData, "Codex"),
+      path.join(localApp, "Codex"),
+    ]);
+  },
+  parse: parseCodex,
+};
