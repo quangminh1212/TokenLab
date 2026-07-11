@@ -43,9 +43,9 @@
     <!-- Toolbar: period + actions (9router Usage style) -->
     <div class="usage-toolbar">
       <div class="seg" id="periodSeg" role="tablist" aria-label="Time range">
-        <button type="button" class="seg-btn" data-period="today">Today</button>
+        <button type="button" class="seg-btn active" data-period="today">Today</button>
         <button type="button" class="seg-btn" data-period="24h">24h</button>
-        <button type="button" class="seg-btn active" data-period="7d">7D</button>
+        <button type="button" class="seg-btn" data-period="7d">7D</button>
         <button type="button" class="seg-btn" data-period="30d">30D</button>
         <button type="button" class="seg-btn" data-period="">All</button>
       </div>
@@ -172,7 +172,7 @@
     };
 
     const state = {
-      period: '7d',
+      period: 'today',
       groupBy: 'agent',
       viewMode: 'costs',
       chartMode: 'tokens',
@@ -552,7 +552,7 @@
     $('periodSeg').onclick = (e) => {
       const b = e.target.closest('.seg-btn');
       if (!b) return;
-      state.period = b.getAttribute('data-period') ?? '7d';
+      state.period = b.getAttribute('data-period') ?? 'today';
       setActive($('periodSeg'), 'data-period', state.period);
       syncTimeGroupButton();
       load();
