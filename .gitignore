@@ -53,3 +53,5 @@ self-host/
 .tmp-*
 .tmp-serve.*
 
+
+.playwright-mcp/
