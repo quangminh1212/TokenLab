@@ -1,103 +1,323 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>XLab Token</title>
+  <link rel="icon" type="image/png" href="/assets/favicon-32x32.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #0b1220;
-      --panel: #121a2b;
-      --text: #e8eefc;
-      --muted: #93a0b8;
-      --accent: #00a19a;
-      --border: #243049;
-      --warn: #f0b429;
+      /* XLab Web brand system */
+      --xlab: #00A19A;
+      --xlab-600: #0d9488;
+      --xlab-400: #2dd4bf;
+      --xlab-50: #f0fdfc;
+      --xlab-100: #ccfbf1;
+      --bg: #f8fafc;
+      --bg-elevated: #ffffff;
+      --text: #111827;
+      --text-secondary: #4b5563;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --border-strong: #d1d5db;
+      --panel: #ffffff;
+      --panel-soft: #f3f4f6;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
+      --shadow-lg: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --success: #10b981;
+      --warn: #f59e0b;
+      --error: #ef4444;
+      --radius: 14px;
+      --ring: rgba(0, 161, 154, 0.28);
+    }
+    html.dark {
+      --bg: #0f172a;
+      --bg-elevated: #1e293b;
+      --text: #f7f9fb;
+      --text-secondary: #c9d1d9;
+      --muted: #8b949e;
+      --border: #334155;
+      --border-strong: #475569;
+      --panel: #1e293b;
+      --panel-soft: #334155;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 8px 24px rgba(0, 0, 0, 0.2);
+      --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.35);
+      --ring: rgba(0, 212, 170, 0.28);
+      --xlab: #00d4aa;
+      --xlab-600: #00A19A;
+      --xlab-50: #042f2e;
+      --xlab-100: #115e59;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: radial-gradient(1200px 600px at 10% -10%, #163044 0%, transparent 50%), var(--bg);
-      color: var(--text);
       min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 420px at 8% -8%, rgba(0, 161, 154, 0.12), transparent 55%),
+        radial-gradient(700px 360px at 100% 0%, rgba(45, 212, 191, 0.08), transparent 50%),
+        var(--bg);
+      -webkit-font-smoothing: antialiased;
     }
-    header {
-      padding: 1.25rem 1.5rem;
+    a { color: inherit; text-decoration: none; }
+
+    .shell { max-width: 1180px; margin: 0 auto; padding: 0 1.25rem 2.5rem; }
+
+    /* Header */
+    .topbar {
+      position: sticky; top: 0; z-index: 40;
+      backdrop-filter: blur(14px);
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
       border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 1rem;
-      flex-wrap: wrap;
     }
-    h1 { font-size: 1.15rem; margin: 0; letter-spacing: 0.02em; }
-    h1 span { color: var(--accent); }
-    .muted { color: var(--muted); font-size: 0.9rem; }
-    main { padding: 1.25rem 1.5rem 2rem; max-width: 1100px; margin: 0 auto; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.85rem; }
+    .topbar-inner {
+      max-width: 1180px; margin: 0 auto;
+      padding: 0.85rem 1.25rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+    .brand-logo {
+      height: 40px; width: auto; display: block;
+      object-fit: contain;
+    }
+    .brand-mark {
+      display: none; align-items: baseline; font-weight: 800; font-size: 1.55rem; letter-spacing: -0.03em; line-height: 1;
+    }
+    .brand-mark .x { color: var(--text); }
+    .brand-mark .lab { color: var(--xlab); }
+    .brand-text { min-width: 0; }
+    .brand-title {
+      margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em;
+      display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+    }
+    .brand-title .token {
+      color: var(--xlab); font-weight: 800;
+    }
+    .brand-sub { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.8rem; }
+    .top-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .meta-chip {
+      font-size: 0.78rem; color: var(--muted);
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 999px; padding: 0.35rem 0.7rem;
+      white-space: nowrap;
+    }
+    .icon-btn, .btn {
+      appearance: none; border: 1px solid var(--border);
+      background: var(--panel); color: var(--text);
+      border-radius: 10px; padding: 0.5rem 0.85rem;
+      font: inherit; font-size: 0.875rem; font-weight: 600;
+      cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s, transform .1s;
+    }
+    .icon-btn { padding: 0.45rem 0.6rem; line-height: 1; }
+    .btn:hover, .icon-btn:hover { border-color: var(--xlab); box-shadow: 0 0 0 3px var(--ring); }
+    .btn:active, .icon-btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--xlab) 0%, var(--xlab-600) 100%);
+      color: #fff; border-color: transparent;
+    }
+    .btn-primary:hover { box-shadow: 0 0 0 3px var(--ring), 0 8px 18px rgba(0, 161, 154, 0.25); }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    /* Hero strip */
+    .hero {
+      margin: 1.35rem 0 1.1rem;
+      padding: 1.25rem 1.35rem;
+      border-radius: calc(var(--radius) + 4px);
+      border: 1px solid var(--border);
+      background:
+        linear-gradient(135deg, rgba(0, 161, 154, 0.1), transparent 48%),
+        var(--panel);
+      box-shadow: var(--shadow);
+      display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center;
+    }
+    .hero h2 { margin: 0 0 0.35rem; font-size: 1.2rem; font-weight: 750; letter-spacing: -0.02em; }
+    .hero p { margin: 0; color: var(--text-secondary); font-size: 0.9rem; max-width: 52ch; line-height: 1.5; }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: center;
+      margin-bottom: 1rem;
+    }
+    select {
+      appearance: none;
+      background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 0.7rem center;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.5rem 2rem 0.5rem 0.8rem;
+      font: inherit; font-size: 0.875rem; font-weight: 500;
+      cursor: pointer;
+    }
+    select:focus, .btn:focus-visible, .icon-btn:focus-visible {
+      outline: none; box-shadow: 0 0 0 3px var(--ring); border-color: var(--xlab);
+    }
+
+    /* KPI cards */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+      gap: 0.85rem;
+    }
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1rem;
+      border-radius: var(--radius);
+      padding: 1rem 1.05rem;
+      box-shadow: var(--shadow);
     }
-    .card .label { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.35rem; }
-    .card .value { font-size: 1.35rem; font-weight: 650; }
-    .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
-    button, select {
-      background: #182338;
+    .kpi {
+      position: relative; overflow: hidden;
+      transition: transform .15s, box-shadow .15s;
+    }
+    .kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+    .kpi::after {
+      content: ""; position: absolute; inset: auto -20% -40% auto;
+      width: 90px; height: 90px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 161, 154, 0.16), transparent 70%);
+      pointer-events: none;
+    }
+    .kpi .label {
+      display: flex; align-items: center; gap: 0.4rem;
+      color: var(--muted); font-size: 0.78rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.45rem;
+    }
+    .kpi .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--xlab); box-shadow: 0 0 0 3px rgba(0, 161, 154, 0.15);
+    }
+    .kpi .value {
+      font-size: 1.45rem; font-weight: 800; letter-spacing: -0.03em;
       color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.45rem 0.75rem;
-      cursor: pointer;
     }
-    button:hover { border-color: var(--accent); }
-    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-    th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid var(--border); font-size: 0.92rem; }
-    th { color: var(--muted); font-weight: 600; }
-    .bar {
-      height: 8px; background: #1c2740; border-radius: 99px; overflow: hidden; min-width: 80px;
+    .kpi .hint { margin-top: 0.25rem; font-size: 0.75rem; color: var(--muted); }
+
+    section.card { margin-top: 1rem; }
+    .section-head {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.65rem;
     }
-    .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), #3dd6ce); }
+    .section-head h3 { margin: 0; font-size: 0.98rem; font-weight: 700; }
     .pill {
-      display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px;
-      background: #18332f; color: #7dfff5; font-size: 0.75rem;
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.2rem 0.55rem; border-radius: 999px;
+      background: var(--xlab-50); color: var(--xlab-600);
+      border: 1px solid color-mix(in srgb, var(--xlab) 25%, transparent);
+      font-size: 0.72rem; font-weight: 700;
     }
-    .err { color: #ff8e8e; }
+    html.dark .pill { color: var(--xlab); }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      text-align: left; padding: 0.7rem 0.45rem;
+      border-bottom: 1px solid var(--border); font-size: 0.9rem;
+      vertical-align: middle;
+    }
+    th {
+      color: var(--muted); font-weight: 650; font-size: 0.75rem;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    tbody tr:hover td { background: color-mix(in srgb, var(--xlab) 4%, transparent); }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.84rem; font-weight: 600;
+      background: var(--panel-soft); border: 1px solid var(--border);
+      border-radius: 7px; padding: 0.12rem 0.4rem;
+    }
+    .bar {
+      height: 8px; background: var(--panel-soft); border-radius: 99px;
+      overflow: hidden; min-width: 84px; border: 1px solid var(--border);
+    }
+    .bar > i {
+      display: block; height: 100%;
+      background: linear-gradient(90deg, var(--xlab-600), var(--xlab-400));
+      border-radius: inherit;
+    }
+    .status {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      font-size: 0.78rem; font-weight: 650; border-radius: 999px;
+      padding: 0.18rem 0.55rem; border: 1px solid transparent;
+    }
+    .status.ok { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+    .status.miss { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
+    html.dark .status.ok { background: #064e3b; color: #6ee7b7; border-color: #065f46; }
+    html.dark .status.miss { background: #334155; color: #94a3b8; border-color: #475569; }
+    .muted { color: var(--muted); }
+    .err { color: var(--error); font-weight: 600; }
+    .path {
+      max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--muted); font-size: 0.8rem;
+    }
+    footer {
+      margin-top: 1.75rem; padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+      color: var(--muted); font-size: 0.8rem;
+    }
+    footer strong { color: var(--xlab); font-weight: 700; }
+    .empty {
+      text-align: center; padding: 1.5rem 0.5rem; color: var(--muted); font-size: 0.9rem;
+    }
+    @media (max-width: 640px) {
+      .brand-sub { display: none; }
+      .hero { padding: 1rem; }
+      .kpi .value { font-size: 1.25rem; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <div>
-      <h1>XLab <span>Token</span></h1>
-      <div class="muted">Local token API usage & cost · all agents on this machine</div>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <img class="brand-logo" src="/assets/logo.png" alt="XLab" width="120" height="48"
+          onerror="this.style.display='none'; document.querySelector('.brand-mark').style.display='flex';" />
+        <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
+        <div class="brand-text">
+          <h1 class="brand-title">XLab <span class="token">Token</span></h1>
+          <p class="brand-sub">Local token usage &amp; cost · all agents on this machine</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="meta-chip" id="meta">Loading…</span>
+        <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+      </div>
     </div>
-    <div class="muted" id="meta">Loading…</div>
   </header>
-  <main>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <h2>Usage dashboard</h2>
+        <p>Theo dõi token API và chi phí ước tính từ agent trên máy này — dữ liệu chỉ đọc local, không rời localhost.</p>
+      </div>
+      <div class="toolbar" style="margin:0">
+        <button class="btn" id="refresh" type="button">Refresh</button>
+        <button class="btn btn-primary" id="scan" type="button">Rescan</button>
+      </div>
+    </section>
+
     <div class="toolbar">
-      <select id="since">
+      <select id="since" aria-label="Time range">
         <option value="24h">Last 24h</option>
         <option value="7d" selected>Last 7d</option>
         <option value="30d">Last 30d</option>
         <option value="">All time</option>
       </select>
-      <select id="groupBy">
+      <select id="groupBy" aria-label="Group by">
         <option value="agent" selected>By agent</option>
         <option value="model">By model</option>
         <option value="day">By day</option>
       </select>
-      <button id="refresh">Refresh</button>
-      <button id="scan">Rescan</button>
     </div>
 
     <div class="grid" id="kpis"></div>
 
-    <section class="card" style="margin-top:1rem">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
-        <strong>Breakdown</strong>
+    <section class="card">
+      <div class="section-head">
+        <h3>Breakdown</h3>
         <span class="pill" id="sortLabel">sorted by cost</span>
       </div>
       <table>
@@ -113,25 +333,59 @@
       </table>
     </section>
 
-    <section class="card" style="margin-top:1rem">
-      <strong>Detected agents</strong>
+    <section class="card">
+      <div class="section-head">
+        <h3>Detected agents</h3>
+        <span class="pill" id="agentCount">—</span>
+      </div>
       <table>
         <thead>
-          <tr><th>Agent</th><th>Status</th><th>Events</th><th>Paths</th></tr>
+          <tr>
+            <th>Agent</th>
+            <th>Status</th>
+            <th>Events</th>
+            <th>Paths</th>
+          </tr>
         </thead>
         <tbody id="agents"></tbody>
       </table>
     </section>
+
+    <footer>
+      <div>Brand palette &amp; logo from <strong>XLab Web</strong> · teal <strong>#00A19A</strong></div>
+      <div>localhost only · no cloud billing APIs</div>
+    </footer>
   </main>
+
   <script>
     const $ = (id) => document.getElementById(id);
     const fmt = (n) => {
-      if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
-      if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
-      if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
-      return String(Math.round(n));
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(Math.round(n || 0));
     };
     const money = (n) => '$' + (n || 0).toFixed(4);
+
+    function applyTheme(mode) {
+      document.documentElement.classList.toggle('dark', mode === 'dark');
+      localStorage.setItem('xlab-token-theme', mode);
+      $('themeBtn').textContent = mode === 'dark' ? '☀' : '☾';
+      $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+    }
+    const saved = localStorage.getItem('xlab-token-theme');
+    applyTheme(saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light');
+    $('themeBtn').onclick = () => {
+      applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    };
+
+    function kpi(label, value, hint) {
+      return `<div class="card kpi">
+        <div class="label"><span class="dot"></span>${label}</div>
+        <div class="value">${value}</div>
+        ${hint ? `<div class="hint">${hint}</div>` : ''}
+      </div>`;
+    }
 
     async function load() {
       const since = $('since').value;
@@ -140,40 +394,58 @@
       if (since) q.set('since', since);
       try {
         const [stats, agents, health] = await Promise.all([
-          fetch('/api/stats?' + q).then(r => r.json()),
-          fetch('/api/agents').then(r => r.json()),
-          fetch('/api/health').then(r => r.json()),
+          fetch('/api/stats?' + q).then((r) => r.json()),
+          fetch('/api/agents').then((r) => r.json()),
+          fetch('/api/health').then((r) => r.json()),
         ]);
         const t = stats.totals || {};
-        $('meta').textContent = `v${health.version} · ${health.agentsDetected?.length || 0} agents detected · localhost only`;
-        $('kpis').innerHTML = `
-          <div class="card"><div class="label">Total tokens</div><div class="value">${fmt(t.totalTokens || 0)}</div></div>
-          <div class="card"><div class="label">Input</div><div class="value">${fmt(t.inputTokens || 0)}</div></div>
-          <div class="card"><div class="label">Output</div><div class="value">${fmt(t.outputTokens || 0)}</div></div>
-          <div class="card"><div class="label">Est. cost</div><div class="value">${money(t.estimatedCost || 0)}</div></div>
-          <div class="card"><div class="label">Events</div><div class="value">${fmt(t.eventCount || 0)}</div></div>
-        `;
-        const maxCost = Math.max(1, ...(stats.groups || []).map(g => g.estimatedCost || 0));
-        $('rows').innerHTML = (stats.groups || []).map(g => `
-          <tr>
-            <td><code>${g.key}</code></td>
-            <td>${fmt(g.totalTokens || 0)}</td>
-            <td>${money(g.estimatedCost || 0)}</td>
-            <td><div class="bar"><i style="width:${Math.round(((g.estimatedCost||0)/maxCost)*100)}%"></i></div></td>
-          </tr>
-        `).join('') || '<tr><td colspan="4" class="muted">No usage events found yet. Use AI agents, then Rescan.</td></tr>';
+        const detected = health.agentsDetected?.length || 0;
+        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(health.eventCount || 0)} events`;
+        $('kpis').innerHTML = [
+          kpi('Total tokens', fmt(t.totalTokens || 0), 'input + output + cache'),
+          kpi('Input', fmt(t.inputTokens || 0)),
+          kpi('Output', fmt(t.outputTokens || 0)),
+          kpi('Est. cost', money(t.estimatedCost || 0), 'USD · model rates'),
+          kpi('Events', fmt(t.eventCount || 0), 'usage records'),
+        ].join('');
 
-        $('agents').innerHTML = (agents.agents || []).map(a => `
+        const groups = stats.groups || [];
+        const maxCost = Math.max(1, ...groups.map((g) => g.estimatedCost || 0));
+        $('rows').innerHTML = groups.map((g) => `
           <tr>
-            <td>${a.label} <span class="muted">(${a.id})</span></td>
-            <td>${a.detected ? (a.enabled ? 'detected' : 'detected / parser pending') : 'not found'}</td>
-            <td>${a.eventCount}</td>
-            <td class="muted" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(a.paths||[]).join(', ') || '—'}</td>
+            <td><code>${escapeHtml(g.key)}</code></td>
+            <td>${fmt(g.totalTokens || 0)}</td>
+            <td><strong>${money(g.estimatedCost || 0)}</strong></td>
+            <td><div class="bar"><i style="width:${Math.round(((g.estimatedCost || 0) / maxCost) * 100)}%"></i></div></td>
           </tr>
-        `).join('');
+        `).join('') || '<tr><td colspan="4"><div class="empty">Chưa có usage. Dùng AI agents rồi bấm Rescan.</div></td></tr>';
+
+        const list = agents.agents || [];
+        const active = list.filter((a) => a.detected).length;
+        $('agentCount').textContent = `${active}/${list.length} detected`;
+        $('agents').innerHTML = list.map((a) => {
+          const ok = a.detected;
+          const status = ok
+            ? (a.enabled ? 'detected' : 'detected · parser pending')
+            : 'not found';
+          return `<tr>
+            <td><strong>${escapeHtml(a.label)}</strong> <span class="muted">(${escapeHtml(a.id)})</span></td>
+            <td><span class="status ${ok ? 'ok' : 'miss'}">${status}</span></td>
+            <td>${a.eventCount || 0}</td>
+            <td class="path" title="${escapeHtml((a.paths || []).join(', '))}">${escapeHtml((a.paths || []).join(', ') || '—')}</td>
+          </tr>`;
+        }).join('');
       } catch (e) {
         $('meta').innerHTML = '<span class="err">Failed to load API</span>';
       }
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
     }
 
     $('refresh').onclick = load;
@@ -181,9 +453,14 @@
     $('groupBy').onchange = load;
     $('scan').onclick = async () => {
       $('scan').disabled = true;
-      await fetch('/api/scan', { method: 'POST' });
-      $('scan').disabled = false;
-      await load();
+      $('scan').textContent = 'Scanning…';
+      try {
+        await fetch('/api/scan', { method: 'POST' });
+        await load();
+      } finally {
+        $('scan').disabled = false;
+        $('scan').textContent = 'Rescan';
+      }
     };
     load();
     setInterval(load, 30000);

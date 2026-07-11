@@ -111,6 +111,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       return;
     }
 
+    if (!noUi && req.method === "GET" && pathname.startsWith("/assets/")) {
+      const name = path.basename(pathname);
+      if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
+        return json(res, 400, { error: { code: "BAD_PATH", message: "Invalid asset name" } });
+      }
+      const file = path.join(__dirname, "assets", name);
+      try {
+        const data = await readFile(file);
+        res.writeHead(200, {
+          "Content-Type": contentTypeFor(name),
+          "Cache-Control": "public, max-age=3600",
+        });
+        res.end(data);
+        return;
+      } catch {
+        return json(res, 404, { error: { code: "NOT_FOUND", message: "Asset not found" } });
+      }
+    }
+
     json(res, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
   }
 
@@ -140,6 +159,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       });
     },
   };
+}
+
+function contentTypeFor(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".svg")) return "image/svg+xml; charset=utf-8";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".ico")) return "image/x-icon";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".css")) return "text/css; charset=utf-8";
+  if (lower.endsWith(".js")) return "text/javascript; charset=utf-8";
+  return "application/octet-stream";
 }
 
 async function listenWithRetry(
