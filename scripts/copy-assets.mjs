@@ -7,7 +7,7 @@ const serverSrc = path.join(root, "src", "server");
 const serverDist = path.join(root, "dist", "server");
 mkdirSync(serverDist, { recursive: true });
 
-const files = ["dashboard.html", "agents.html", "styles.css"];
+const files = ["dashboard.html", "agents.html", "settings.html", "styles.css"];
 for (const name of files) {
   const from = path.join(serverSrc, name);
   if (!existsSync(from)) {

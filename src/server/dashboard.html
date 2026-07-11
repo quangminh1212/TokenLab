@@ -28,11 +28,12 @@
       <nav class="nav" aria-label="Main">
         <a class="nav-link active" href="/">Dashboard</a>
         <a class="nav-link" href="/agents">Agents</a>
+        <a class="nav-link" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading…</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
-        <button class="icon-btn settings-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings" aria-haspopup="dialog" aria-controls="settingsOverlay">⚙</button>
+        <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings">⚙</a>
       </div>
     </div>
   </header>
@@ -109,61 +110,6 @@
     </footer>
   </main>
 
-  <!-- Settings panel (right header) -->
-  <div class="settings-overlay hidden" id="settingsOverlay" role="presentation">
-    <div class="settings-backdrop" id="settingsBackdrop" aria-hidden="true"></div>
-    <aside class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-      <div class="settings-panel-head">
-        <h2 id="settingsTitle">Settings</h2>
-        <button type="button" class="icon-btn" id="settingsClose" title="Close" aria-label="Close settings">✕</button>
-      </div>
-      <div class="settings-panel-body">
-        <section class="settings-section">
-          <h3>Appearance</h3>
-          <div class="settings-row">
-            <span>Theme</span>
-            <button type="button" class="btn" id="settingsThemeBtn">Toggle light / dark</button>
-          </div>
-        </section>
-        <section class="settings-section">
-          <div class="settings-section-head">
-            <h3>Model pricing</h3>
-            <div class="pricing-actions">
-              <button type="button" class="btn" id="pricingReload">Reload</button>
-              <button type="button" class="btn btn-primary" id="pricingSave">Save rates</button>
-            </div>
-          </div>
-          <p class="pricing-hint">
-            USD / 1M tokens. Custom rates override the bundled table. Router cost &gt; 0 is kept unless the model has a custom rate.
-            Config: <code id="pricingPath">…</code>
-          </p>
-          <div class="table-scroll settings-table-wrap">
-            <table class="usage-table pricing-table" id="pricingTable">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th class="num">Source</th>
-                  <th class="num">Input $/1M</th>
-                  <th class="num">Output $/1M</th>
-                </tr>
-              </thead>
-              <tbody id="pricingBody">
-                <tr><td colspan="4"><div class="empty">Loading rates…</div></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="pricing-add">
-            <input type="text" id="priceModel" placeholder="model name (e.g. big-pickle)" />
-            <input type="number" id="priceIn" step="0.001" min="0" placeholder="input $/1M" />
-            <input type="number" id="priceOut" step="0.001" min="0" placeholder="output $/1M" />
-            <button type="button" class="btn" id="priceAdd">Add / update</button>
-          </div>
-          <p class="pricing-status" id="pricingStatus"></p>
-        </section>
-      </div>
-    </aside>
-  </div>
-
   <script>
     const $ = (id) => document.getElementById(id);
     const fmt = (n) => {
@@ -200,29 +146,9 @@
       $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
-    function toggleTheme() {
+    $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
-    }
-    $('themeBtn').onclick = toggleTheme;
-    $('settingsThemeBtn').onclick = toggleTheme;
-
-    function openSettings() {
-      $('settingsOverlay').classList.remove('hidden');
-      document.body.classList.add('settings-open');
-      void loadPricing();
-      $('settingsClose')?.focus?.();
-    }
-    function closeSettings() {
-      $('settingsOverlay').classList.add('hidden');
-      document.body.classList.remove('settings-open');
-    }
-    $('settingsBtn').onclick = openSettings;
-    $('settingsClose').onclick = closeSettings;
-    $('settingsBackdrop').onclick = closeSettings;
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !$('settingsOverlay').classList.contains('hidden')) closeSettings();
-    });
-    if (location.hash === '#settings') openSettings();
+    };
 
     const state = {
       period: '7d',
@@ -638,139 +564,13 @@
       try {
         await fetch('/api/scan', { method: 'POST' });
         await load();
-        await loadPricing();
       } finally {
         $('scan').disabled = false;
         $('scan').textContent = 'Rescan';
       }
     };
 
-    // —— Model pricing editor ——
-    let pricingDraft = {}; // model -> { inputPer1M, outputPer1M }
-    let pricingMeta = { catalog: [], seenModels: [], customRates: {} };
-
-    function renderPricing() {
-      const seen = new Set([
-        ...(pricingMeta.seenModels || []),
-        ...Object.keys(pricingDraft),
-        ...Object.keys(pricingMeta.customRates || {}),
-      ]);
-      // Prefer models with usage first
-      const statsKeys = (state.groups || []).map((g) => g.key).filter(Boolean);
-      const ordered = [
-        ...statsKeys.filter((k) => state.groupBy === 'model' ? true : seen.has(k)),
-        ...[...seen].filter((k) => !statsKeys.includes(k)),
-      ];
-      // Always show seen + custom + draft
-      const models = [...new Set([
-        ...(pricingMeta.seenModels || []),
-        ...Object.keys(pricingMeta.customRates || {}),
-        ...Object.keys(pricingDraft),
-      ])].sort((a, b) => a.localeCompare(b));
-
-      const catMap = new Map((pricingMeta.catalog || []).map((c) => [c.model.toLowerCase(), c]));
-      if (!models.length) {
-        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">No models yet — rescan first.</div></td></tr>';
-        return;
-      }
-      $('pricingBody').innerHTML = models.map((model) => {
-        const cat = catMap.get(model.toLowerCase()) || {};
-        const draft = pricingDraft[model.toLowerCase()];
-        const custom = (pricingMeta.customRates || {})[model.toLowerCase()];
-        const src = draft ? 'draft' : custom ? 'custom' : (cat.source || 'bundled');
-        const input = draft?.inputPer1M ?? custom?.inputPer1M ?? cat.inputPer1M ?? 0;
-        const output = draft?.outputPer1M ?? custom?.outputPer1M ?? cat.outputPer1M ?? 0;
-        const safe = escapeHtml(model);
-        return `<tr data-model="${safe}">
-          <td><code title="${safe}">${safe}</code></td>
-          <td class="num muted">${escapeHtml(src)}</td>
-          <td class="num"><input class="price-input" data-field="in" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(input)}" /></td>
-          <td class="num"><input class="price-input" data-field="out" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(output)}" /></td>
-        </tr>`;
-      }).join('');
-    }
-
-    async function loadPricing() {
-      try {
-        const data = await fetch('/api/pricing').then((r) => r.json());
-        pricingMeta = data;
-        $('pricingPath').textContent = data.configPath || 'config.json';
-        // Keep draft edits; seed from custom only when empty
-        renderPricing();
-      } catch (e) {
-        $('pricingStatus').textContent = 'Failed to load pricing';
-      }
-    }
-
-    $('pricingBody').addEventListener('change', (e) => {
-      const inp = e.target.closest('.price-input');
-      if (!inp) return;
-      const model = (inp.getAttribute('data-model') || '').toLowerCase();
-      if (!model) return;
-      const row = pricingDraft[model] || {
-        inputPer1M: Number(inp.closest('tr').querySelector('[data-field="in"]').value) || 0,
-        outputPer1M: Number(inp.closest('tr').querySelector('[data-field="out"]').value) || 0,
-      };
-      if (inp.getAttribute('data-field') === 'in') row.inputPer1M = Number(inp.value) || 0;
-      if (inp.getAttribute('data-field') === 'out') row.outputPer1M = Number(inp.value) || 0;
-      pricingDraft[model] = row;
-    });
-
-    $('priceAdd').onclick = () => {
-      const model = normalizeModelName($('priceModel').value) || $('priceModel').value.trim();
-      if (!model) return;
-      pricingDraft[model.toLowerCase()] = {
-        inputPer1M: Number($('priceIn').value) || 0,
-        outputPer1M: Number($('priceOut').value) || 0,
-      };
-      $('priceModel').value = '';
-      $('priceIn').value = '';
-      $('priceOut').value = '';
-      renderPricing();
-      $('pricingStatus').textContent = `Draft: ${model} (not saved yet)`;
-    };
-
-    $('pricingReload').onclick = async () => {
-      pricingDraft = {};
-      await loadPricing();
-      $('pricingStatus').textContent = 'Reloaded from config';
-    };
-
-    $('pricingSave').onclick = async () => {
-      // Collect all visible inputs into draft
-      $('pricingBody').querySelectorAll('tr[data-model]').forEach((tr) => {
-        const model = (tr.getAttribute('data-model') || '').toLowerCase();
-        if (!model) return;
-        const inn = tr.querySelector('[data-field="in"]');
-        const out = tr.querySelector('[data-field="out"]');
-        pricingDraft[model] = {
-          inputPer1M: Number(inn?.value) || 0,
-          outputPer1M: Number(out?.value) || 0,
-        };
-      });
-      // Merge with existing custom so we don't wipe others
-      const customRates = { ...(pricingMeta.customRates || {}), ...pricingDraft };
-      $('pricingSave').disabled = true;
-      $('pricingStatus').textContent = 'Saving…';
-      try {
-        const res = await fetch('/api/pricing', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customRates, replace: true }),
-        }).then((r) => r.json());
-        pricingDraft = {};
-        await loadPricing();
-        await load();
-        $('pricingStatus').textContent = `Saved ${Object.keys(res.customRates || {}).length} custom rates · costs recalculated`;
-      } catch {
-        $('pricingStatus').textContent = 'Save failed';
-      } finally {
-        $('pricingSave').disabled = false;
-      }
-    };
-
     load();
-    loadPricing();
     setInterval(load, 30000);
   </script>
 </body>

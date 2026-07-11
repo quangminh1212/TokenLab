@@ -28,11 +28,12 @@
       <nav class="nav" aria-label="Main">
         <a class="nav-link" href="/">Dashboard</a>
         <a class="nav-link active" href="/agents">Agents</a>
+        <a class="nav-link" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading…</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
-        <button class="icon-btn settings-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings">⚙</button>
+        <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings">⚙</a>
       </div>
     </div>
   </header>
@@ -194,11 +195,6 @@
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
-    // Settings lives on Dashboard (pricing editor + theme)
-    $('settingsBtn').onclick = () => {
-      location.href = '/#settings';
-    };
-
     function colorFor(id) {
       let h = 0;
       for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;

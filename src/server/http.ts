@@ -43,6 +43,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
   const dashboardPath = path.join(__dirname, "dashboard.html");
   const agentsPagePath = path.join(__dirname, "agents.html");
+  const settingsPagePath = path.join(__dirname, "settings.html");
   const stylesPath = path.join(__dirname, "styles.css");
 
   const server = createServer(async (req, res) => {
@@ -174,6 +175,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
     if (!noUi && req.method === "GET" && (pathname === "/agents" || pathname === "/agents.html")) {
       const html = await readFile(agentsPagePath, "utf8");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+
+    if (
+      !noUi &&
+      req.method === "GET" &&
+      (pathname === "/settings" || pathname === "/settings.html" || pathname === "/pricing")
+    ) {
+      const html = await readFile(settingsPagePath, "utf8");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
       return;

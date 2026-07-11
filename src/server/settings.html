@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings · XLab Token</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
+  <link rel="shortcut icon" href="/assets/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <a class="brand-logo-wrap" href="/" title="XLab Token" aria-label="XLab Token">
+          <img class="brand-logo" src="/assets/logo.png" alt="XLab Token" width="140" height="56"
+            onerror="this.style.display='none'; document.querySelector('.brand-mark').style.display='flex';" />
+          <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
+        </a>
+      </div>
+      <nav class="nav" aria-label="Main">
+        <a class="nav-link" href="/">Dashboard</a>
+        <a class="nav-link" href="/agents">Agents</a>
+        <a class="nav-link active" href="/settings">Settings</a>
+      </nav>
+      <div class="top-actions">
+        <span class="meta-chip" id="meta">Loading…</span>
+        <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell settings-page">
+    <section class="hero settings-hero">
+      <div>
+        <h2>Model pricing</h2>
+        <p>Configure USD rates per 1M tokens. Custom rates override the bundled table and recalculate costs immediately.</p>
+      </div>
+      <div class="toolbar" style="margin:0">
+        <button class="btn" id="pricingReload" type="button">Reload</button>
+        <button class="btn btn-primary" id="pricingSave" type="button">Save rates</button>
+      </div>
+    </section>
+
+    <section class="u-card pricing-card" id="pricingCard">
+      <p class="pricing-hint">
+        Router-reported cost &gt; 0 is kept unless the model has a custom rate.
+        Free models use <code>0 / 0</code>. Config file:
+        <code id="pricingPath">…</code>
+      </p>
+
+      <div class="settings-toolbar">
+        <input class="search" id="priceSearch" type="search" placeholder="Filter models…" autocomplete="off" />
+        <label class="settings-check">
+          <input type="checkbox" id="priceOnlyCustom" />
+          Custom only
+        </label>
+        <label class="settings-check">
+          <input type="checkbox" id="priceOnlySeen" checked />
+          Seen in usage
+        </label>
+      </div>
+
+      <div class="table-scroll settings-page-table">
+        <table class="usage-table pricing-table" id="pricingTable">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th class="num">Source</th>
+              <th class="num">Input $/1M</th>
+              <th class="num">Output $/1M</th>
+            </tr>
+          </thead>
+          <tbody id="pricingBody">
+            <tr><td colspan="4"><div class="empty">Loading rates…</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pricing-add">
+        <input type="text" id="priceModel" placeholder="model name (e.g. big-pickle)" />
+        <input type="number" id="priceIn" step="0.001" min="0" placeholder="input $/1M" />
+        <input type="number" id="priceOut" step="0.001" min="0" placeholder="output $/1M" />
+        <button type="button" class="btn" id="priceAdd">Add / update row</button>
+      </div>
+      <p class="pricing-status" id="pricingStatus"></p>
+    </section>
+
+    <footer>
+      <div>Settings · model pricing</div>
+      <div>localhost only · estimated cost, not billing</div>
+    </footer>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+
+    function normalizeModelName(model) {
+      if (model == null) return '';
+      let m = String(model).trim();
+      if (!m) return '';
+      for (let i = 0; i < 3; i++) {
+        const next = m.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+        if (next === m) break;
+        m = next;
+      }
+      m = m.replace(/\s*\[[^\]]*\]\s*$/g, '').trim();
+      if (m.includes('|')) m = m.split('|')[0].trim();
+      if (m.includes('/') && !m.startsWith('http')) {
+        const parts = m.split('/').map((p) => p.trim()).filter(Boolean);
+        const last = parts[parts.length - 1] || m;
+        if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
+      }
+      m = m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
+      const lower = m.toLowerCase();
+      if (lower.startsWith('deep-seek')) m = 'deepseek' + m.slice('deep-seek'.length);
+      if (lower.startsWith('deep_seek')) m = 'deepseek' + m.slice('deep_seek'.length);
+      if (lower === 'digigo') m = 'Digigo';
+      return m;
+    }
+
+    function applyTheme(mode) {
+      document.documentElement.classList.toggle('dark', mode === 'dark');
+      localStorage.setItem('xlab-token-theme', mode);
+      $('themeBtn').textContent = mode === 'dark' ? '☀' : '☾';
+      $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+    }
+    applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
+    $('themeBtn').onclick = () => {
+      applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    };
+
+    let pricingDraft = {};
+    let pricingMeta = { catalog: [], seenModels: [], customRates: {} };
+
+    function renderPricing() {
+      const q = ($('priceSearch').value || '').trim().toLowerCase();
+      const onlyCustom = $('priceOnlyCustom').checked;
+      const onlySeen = $('priceOnlySeen').checked;
+      const seenSet = new Set((pricingMeta.seenModels || []).map((m) => String(m).toLowerCase()));
+      const custom = pricingMeta.customRates || {};
+      const catMap = new Map((pricingMeta.catalog || []).map((c) => [String(c.model).toLowerCase(), c]));
+
+      let models = [
+        ...new Set([
+          ...(pricingMeta.seenModels || []),
+          ...Object.keys(custom),
+          ...Object.keys(pricingDraft),
+          ...(pricingMeta.catalog || []).map((c) => c.model),
+        ]),
+      ].filter(Boolean);
+
+      models = models.filter((model) => {
+        const key = model.toLowerCase();
+        if (q && !key.includes(q)) return false;
+        if (onlyCustom && !custom[key] && !pricingDraft[key]) return false;
+        if (onlySeen && !seenSet.has(key) && !pricingDraft[key]) return false;
+        return true;
+      });
+
+      models.sort((a, b) => {
+        const as = seenSet.has(a.toLowerCase()) ? 0 : 1;
+        const bs = seenSet.has(b.toLowerCase()) ? 0 : 1;
+        if (as !== bs) return as - bs;
+        return a.localeCompare(b);
+      });
+
+      if (!models.length) {
+        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">No models match filters.</div></td></tr>';
+        return;
+      }
+
+      $('pricingBody').innerHTML = models.map((model) => {
+        const cat = catMap.get(model.toLowerCase()) || {};
+        const draft = pricingDraft[model.toLowerCase()];
+        const cust = custom[model.toLowerCase()];
+        const src = draft ? 'draft' : cust ? 'custom' : (cat.source || 'bundled');
+        const input = draft?.inputPer1M ?? cust?.inputPer1M ?? cat.inputPer1M ?? 0;
+        const output = draft?.outputPer1M ?? cust?.outputPer1M ?? cat.outputPer1M ?? 0;
+        const safe = escapeHtml(model);
+        return `<tr data-model="${safe}">
+          <td><code title="${safe}">${safe}</code></td>
+          <td class="num muted">${escapeHtml(src)}</td>
+          <td class="num"><input class="price-input" data-field="in" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(input)}" /></td>
+          <td class="num"><input class="price-input" data-field="out" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(output)}" /></td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function loadMeta() {
+      try {
+        const health = await fetch('/api/health').then((r) => r.json());
+        const n = health.agentsDetected?.length || 0;
+        $('meta').textContent = `v${health.version} · ${n} agents · ${health.eventCount || 0} events`;
+      } catch {
+        $('meta').innerHTML = '<span class="err">API offline</span>';
+      }
+    }
+
+    async function loadPricing() {
+      try {
+        const data = await fetch('/api/pricing').then((r) => r.json());
+        pricingMeta = data;
+        $('pricingPath').textContent = data.configPath || 'config.json';
+        renderPricing();
+        $('pricingStatus').textContent = `${(data.seenModels || []).length} models seen · ${Object.keys(data.customRates || {}).length} custom rates`;
+      } catch {
+        $('pricingStatus').textContent = 'Failed to load pricing';
+        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">Failed to load /api/pricing</div></td></tr>';
+      }
+    }
+
+    $('pricingBody').addEventListener('change', (e) => {
+      const inp = e.target.closest('.price-input');
+      if (!inp) return;
+      const model = (inp.getAttribute('data-model') || '').toLowerCase();
+      if (!model) return;
+      const tr = inp.closest('tr');
+      pricingDraft[model] = {
+        inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
+        outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
+      };
+    });
+
+    $('priceSearch').oninput = renderPricing;
+    $('priceOnlyCustom').onchange = renderPricing;
+    $('priceOnlySeen').onchange = renderPricing;
+
+    $('priceAdd').onclick = () => {
+      const model = normalizeModelName($('priceModel').value) || $('priceModel').value.trim();
+      if (!model) return;
+      pricingDraft[model.toLowerCase()] = {
+        inputPer1M: Number($('priceIn').value) || 0,
+        outputPer1M: Number($('priceOut').value) || 0,
+      };
+      $('priceModel').value = '';
+      $('priceIn').value = '';
+      $('priceOut').value = '';
+      renderPricing();
+      $('pricingStatus').textContent = `Draft: ${model} (not saved yet)`;
+    };
+
+    $('pricingReload').onclick = async () => {
+      pricingDraft = {};
+      await loadPricing();
+      $('pricingStatus').textContent = 'Reloaded from config';
+    };
+
+    $('pricingSave').onclick = async () => {
+      $('pricingBody').querySelectorAll('tr[data-model]').forEach((tr) => {
+        const model = (tr.getAttribute('data-model') || '').toLowerCase();
+        if (!model) return;
+        pricingDraft[model] = {
+          inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
+          outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
+        };
+      });
+      const customRates = { ...(pricingMeta.customRates || {}), ...pricingDraft };
+      $('pricingSave').disabled = true;
+      $('pricingStatus').textContent = 'Saving…';
+      try {
+        const res = await fetch('/api/pricing', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customRates, replace: true }),
+        }).then((r) => r.json());
+        pricingDraft = {};
+        await loadPricing();
+        $('pricingStatus').textContent = `Saved ${Object.keys(res.customRates || {}).length} custom rates · costs recalculated`;
+      } catch {
+        $('pricingStatus').textContent = 'Save failed';
+      } finally {
+        $('pricingSave').disabled = false;
+      }
+    };
+
+    loadMeta();
+    loadPricing();
+  </script>
+</body>
+</html>
