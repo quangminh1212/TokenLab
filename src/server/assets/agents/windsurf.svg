@@ -1,0 +1,6 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Windsurf">
+  <rect width="64" height="64" rx="14" fill="#0ea5e9"/>
+  <path d="M10 38c6-8 12-8 18 0s12 8 18 0 12-8 18 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M10 48c6-8 12-8 18 0s12 8 18 0 12-8 18 0" fill="none" stroke="#bae6fd" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="44" cy="20" r="6" fill="#fff"/>
+</svg>

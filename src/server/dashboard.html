@@ -353,6 +353,16 @@
       font-size: 0.72rem; font-weight: 800; letter-spacing: -0.02em;
       color: #fff; text-transform: uppercase;
       box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+      overflow: hidden;
+      background: var(--panel-soft);
+    }
+    .avatar img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .avatar.avatar-fallback {
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
     }
     .provider-body { min-width: 0; flex: 1; }
     .provider-name {
@@ -556,12 +566,53 @@
       },
     ];
 
-    /* Avatar palette biased toward XLab primary / secondary teals */
+    /* Avatar palette (fallback monogram) — XLab teal bias */
     const AVATAR_COLORS = [
       '#00A19A', '#0d9488', '#2dd4bf', '#37C88F', '#0f766e',
       '#14b8a6', '#5eead4', '#2CA072', '#115e59', '#06b6d4',
       '#10B981', '#0ea5e9', '#64748b', '#334155', '#475569',
     ];
+
+    /** Official-ish agent icons under /assets/agents/ */
+    const AGENT_ICONS = {
+      'claude-code': '/assets/agents/claude-code.jpg',
+      codex: '/assets/agents/codex.png',
+      cursor: '/assets/agents/cursor.jpg',
+      windsurf: '/assets/agents/windsurf.svg',
+      grok: '/assets/agents/grok.png',
+      gemini: '/assets/agents/gemini.png',
+      opencode: '/assets/agents/opencode.png',
+      copilot: '/assets/agents/copilot.jpg',
+      hermes: '/assets/agents/hermes.png',
+      openclaw: '/assets/agents/openclaw.jpg',
+      pi: '/assets/agents/pi.png',
+      kimi: '/assets/agents/kimi.svg',
+      qwen: '/assets/agents/qwen.png',
+      droid: '/assets/agents/droid.png',
+      amp: '/assets/agents/amp.svg',
+      goose: '/assets/agents/goose.png',
+      cline: '/assets/agents/cline.svg',
+      roocode: '/assets/agents/roocode.png',
+      kilocode: '/assets/agents/kilocode.png',
+      antigravity: '/assets/agents/antigravity.png',
+      warp: '/assets/agents/warp.jpg',
+      trae: '/assets/agents/trae.svg',
+      zed: '/assets/agents/zed.jpg',
+      codebuff: '/assets/agents/codebuff.svg',
+      mux: '/assets/agents/mux.png',
+      crush: '/assets/agents/crush.png',
+      kiro: '/assets/agents/kiro.png',
+      gjc: '/assets/agents/gjc.svg',
+      jcode: '/assets/agents/jcode.svg',
+      commandcode: '/assets/agents/commandcode.svg',
+      junie: '/assets/agents/junie.svg',
+      zcode: '/assets/agents/zcode.jpg',
+      opencodereview: '/assets/agents/opencodereview.svg',
+      codebuddy: '/assets/agents/codebuddy.svg',
+      workbuddy: '/assets/agents/workbuddy.svg',
+      aider: '/assets/agents/aider.svg',
+      continue: '/assets/agents/continue.svg',
+    };
 
     let agentState = [];
     let costByAgent = {};
@@ -613,7 +664,16 @@
     }
 
     function avatarHtml(a) {
-      return `<div class="avatar" style="background:${colorFor(a.id)}" title="${escapeHtml(a.id)}">${escapeHtml(monogram(a.label))}</div>`;
+      const icon = AGENT_ICONS[a.id];
+      const mono = escapeHtml(monogram(a.label));
+      const bg = colorFor(a.id);
+      const fallback = `this.parentElement.classList.add('avatar-fallback');this.parentElement.style.background='${bg}';this.parentElement.textContent='${mono}';this.remove();`;
+      if (icon) {
+        return `<div class="avatar" title="${escapeHtml(a.label)}">
+          <img src="${icon}" alt="${escapeHtml(a.label)}" loading="lazy" onerror="${fallback}" />
+        </div>`;
+      }
+      return `<div class="avatar avatar-fallback" style="background:${bg}" title="${escapeHtml(a.id)}">${mono}</div>`;
     }
 
     function statusHtml(a) {

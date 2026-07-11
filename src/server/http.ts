@@ -112,15 +112,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     }
 
     if (!noUi && req.method === "GET" && pathname.startsWith("/assets/")) {
-      const name = path.basename(pathname);
-      if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
-        return json(res, 400, { error: { code: "BAD_PATH", message: "Invalid asset name" } });
+      const rel = decodeURIComponent(pathname.slice("/assets/".length)).replace(/\\/g, "/");
+      if (!rel || rel.includes("..") || path.isAbsolute(rel) || !/^[a-zA-Z0-9._/-]+$/.test(rel)) {
+        return json(res, 400, { error: { code: "BAD_PATH", message: "Invalid asset path" } });
       }
-      const file = path.join(__dirname, "assets", name);
+      const assetsRoot = path.join(__dirname, "assets");
+      const file = path.resolve(assetsRoot, rel);
+      if (!file.startsWith(assetsRoot + path.sep) && file !== assetsRoot) {
+        return json(res, 400, { error: { code: "BAD_PATH", message: "Invalid asset path" } });
+      }
       try {
         const data = await readFile(file);
         res.writeHead(200, {
-          "Content-Type": contentTypeFor(name),
+          "Content-Type": contentTypeFor(path.basename(file)),
           "Cache-Control": "public, max-age=3600",
         });
         res.end(data);
