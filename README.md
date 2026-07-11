@@ -174,6 +174,16 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | WorkBuddy | `workbuddy` | `~/.workbuddy/projects` | Yes |
 | Aider | `aider` | `~/.aider` analytics / history | Yes |
 | Continue.dev | `continue` | `~/.continue` + VS Code storage | Yes |
+| Devin | `devin` | `%APPDATA%/devin/cli/sessions.db` | Yes |
+| Ollama | `ollama` | `~/.ollama` | Yes |
+| CodeWhale | `codewhale` | `~/.codewhale` / `~/.deepseek` | Yes |
+| MiMo Code | `mimocode` | `$MIMOCODE_HOME` / `~/.mimocode` | Yes |
+| Qoder | `qoder` | `~/.qoder` | Yes |
+| iFlow | `iflow` | `~/.iflow` | Yes |
+| Blackbox AI | `blackbox` | VS Code globalStorage / `~/.blackbox` | Yes |
+| Forge | `forge` | `~/.forge` | Yes |
+| Void | `void` | Void app data | Yes |
+| Amazon Q | `amazon-q` | `~/.aws/amazonq` / VS Code storage | Yes |
 
 > XLab Token only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
 

@@ -36,6 +36,16 @@ export type AgentId =
   | "workbuddy"
   | "aider"
   | "continue"
+  | "devin"
+  | "ollama"
+  | "codewhale"
+  | "mimocode"
+  | "qoder"
+  | "iflow"
+  | "blackbox"
+  | "forge"
+  | "void"
+  | "amazon-q"
   | "custom";
 
 export interface UsageEvent {
