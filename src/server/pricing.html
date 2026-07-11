@@ -37,64 +37,98 @@
     </div>
   </header>
 
-  <main class="shell settings-page">
-    <section class="hero settings-hero">
-      <div>
-        <h2>Model pricing</h2>
-        <p>Configure USD rates per 1M tokens. Custom rates override the bundled table and recalculate costs immediately.</p>
+  <main class="shell pricing-page">
+    <!-- Hero -->
+    <section class="pricing-hero">
+      <div class="pricing-hero-bg" aria-hidden="true"></div>
+      <div class="pricing-hero-inner">
+        <div class="pricing-hero-copy">
+          <span class="pricing-kicker">Rates · USD / 1M tokens</span>
+          <h1>Model pricing</h1>
+          <p>Set input &amp; output rates. Custom values override the bundled table and recalculate costs in realtime.</p>
+        </div>
+        <div class="pricing-hero-actions">
+          <button class="btn btn-with-icon" id="pricingReload" type="button">Reload</button>
+          <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save rates</button>
+        </div>
       </div>
-      <div class="toolbar" style="margin:0">
-        <button class="btn btn-with-icon" id="pricingReload" type="button">Reload</button>
-        <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save rates</button>
+      <div class="pricing-stats" id="pricingStats">
+        <div class="pricing-stat">
+          <span class="pricing-stat-label">Seen models</span>
+          <strong class="pricing-stat-value" id="statSeen">—</strong>
+        </div>
+        <div class="pricing-stat">
+          <span class="pricing-stat-label">Custom rates</span>
+          <strong class="pricing-stat-value" id="statCustom">—</strong>
+        </div>
+        <div class="pricing-stat">
+          <span class="pricing-stat-label">Showing</span>
+          <strong class="pricing-stat-value" id="statShowing">—</strong>
+        </div>
+        <div class="pricing-stat pricing-stat-live">
+          <span class="pricing-stat-label">Live total</span>
+          <strong class="pricing-stat-value tone-warn" id="statTotal">—</strong>
+        </div>
       </div>
     </section>
 
-    <section class="u-card pricing-card" id="pricingCard">
-      <p class="pricing-hint">
-        Router-reported cost &gt; 0 is kept unless the model has a custom rate.
-        Free models use <code>0 / 0</code>. Config file:
-        <code id="pricingPath">…</code>
-      </p>
-
-      <div class="settings-toolbar">
-        <input class="search" id="priceSearch" type="search" placeholder="Filter models…" autocomplete="off" />
-        <label class="settings-check">
-          <input type="checkbox" id="priceOnlyCustom" />
-          Custom only
-        </label>
-        <label class="settings-check">
-          <input type="checkbox" id="priceOnlySeen" checked />
-          Seen in usage
-        </label>
+    <!-- Main panel -->
+    <section class="pricing-panel">
+      <div class="pricing-panel-toolbar">
+        <div class="pricing-search-wrap">
+          <svg class="pricing-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+          <input class="pricing-search" id="priceSearch" type="search" placeholder="Search models…" autocomplete="off" />
+        </div>
+        <div class="pricing-chips" role="group" aria-label="Filters">
+          <label class="pricing-chip">
+            <input type="checkbox" id="priceOnlySeen" checked />
+            <span>Seen in usage</span>
+          </label>
+          <label class="pricing-chip">
+            <input type="checkbox" id="priceOnlyCustom" />
+            <span>Custom only</span>
+          </label>
+        </div>
       </div>
 
-      <div class="table-scroll settings-page-table">
-        <table class="usage-table pricing-table" id="pricingTable">
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th class="num">Source</th>
-              <th class="num">Input $/1M</th>
-              <th class="num">Output $/1M</th>
-            </tr>
-          </thead>
-          <tbody id="pricingBody">
-            <tr><td colspan="4"><div class="empty">Loading rates…</div></td></tr>
-          </tbody>
-        </table>
+      <div class="pricing-table-shell">
+        <div class="table-scroll pricing-table-scroll">
+          <table class="pricing-table-modern" id="pricingTable">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Source</th>
+                <th class="num">Input $/1M</th>
+                <th class="num">Output $/1M</th>
+              </tr>
+            </thead>
+            <tbody id="pricingBody">
+              <tr><td colspan="4"><div class="pricing-empty">Loading rates…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div class="pricing-add">
-        <input type="text" id="priceModel" placeholder="model name (e.g. big-pickle)" />
-        <input type="number" id="priceIn" step="0.001" min="0" placeholder="input $/1M" />
-        <input type="number" id="priceOut" step="0.001" min="0" placeholder="output $/1M" />
-        <button type="button" class="btn" id="priceAdd">Add / update row</button>
+      <div class="pricing-footer-bar">
+        <div class="pricing-add-card">
+          <span class="pricing-add-label">Add model</span>
+          <div class="pricing-add-row">
+            <input type="text" id="priceModel" placeholder="e.g. big-pickle" />
+            <input type="number" id="priceIn" step="0.001" min="0" placeholder="In $/1M" />
+            <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
+            <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
+          </div>
+        </div>
+        <div class="pricing-status-bar">
+          <span class="pricing-live-dot" id="liveDot" aria-hidden="true"></span>
+          <p class="pricing-status" id="pricingStatus">Ready</p>
+        </div>
+        <p class="pricing-path-line">Config · <code id="pricingPath">…</code></p>
       </div>
-      <p class="pricing-status" id="pricingStatus"></p>
     </section>
 
     <footer>
-      <div>Settings · model pricing</div>
+      <div>Pricing · rates apply to all agents</div>
       <div>localhost only · estimated cost, not billing</div>
     </footer>
   </main>
@@ -139,6 +173,7 @@
       sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
       reload: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
       save: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>',
+      plus: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
     };
 
     function applyTheme(mode) {
@@ -147,17 +182,39 @@
       const btn = $('themeBtn');
       btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
       btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
-      btn.setAttribute('aria-label', mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
     $('pricingReload').innerHTML = ICONS.reload + '<span>Reload</span>';
     $('pricingSave').innerHTML = ICONS.save + '<span>Save rates</span>';
+    $('priceAdd').innerHTML = ICONS.plus + '<span>Add</span>';
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
 
     let pricingDraft = {};
     let pricingMeta = { catalog: [], seenModels: [], customRates: {} };
+    let lastTotalCost = null;
+
+    function moneyLive(n) {
+      const v = Number(n) || 0;
+      const fixed = Math.abs(v).toFixed(2);
+      const [intPart, decPart] = fixed.split('.');
+      const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      return (v < 0 ? '-$' : '$') + grouped + ',' + decPart;
+    }
+
+    function sourceBadge(src) {
+      const s = String(src || 'default');
+      const cls =
+        s === 'custom' || s === 'draft' ? 'badge-custom' :
+        s === 'bundled' ? 'badge-bundled' : 'badge-default';
+      return `<span class="src-badge ${cls}">${escapeHtml(s)}</span>`;
+    }
+
+    function modelInitial(name) {
+      const s = String(name || '?');
+      return escapeHtml(s.slice(0, 1).toUpperCase());
+    }
 
     function renderPricing() {
       const q = ($('priceSearch').value || '').trim().toLowerCase();
@@ -191,8 +248,13 @@
         return a.localeCompare(b);
       });
 
+      $('statSeen').textContent = String((pricingMeta.seenModels || []).length);
+      $('statCustom').textContent = String(Object.keys(custom).length);
+      $('statShowing').textContent = String(models.length);
+      if (lastTotalCost != null) $('statTotal').textContent = moneyLive(lastTotalCost);
+
       if (!models.length) {
-        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">No models match filters.</div></td></tr>';
+        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="pricing-empty">No models match filters.</div></td></tr>';
         return;
       }
 
@@ -204,13 +266,31 @@
         const input = draft?.inputPer1M ?? cust?.inputPer1M ?? cat.inputPer1M ?? 0;
         const output = draft?.outputPer1M ?? cust?.outputPer1M ?? cat.outputPer1M ?? 0;
         const safe = escapeHtml(model);
-        return `<tr data-model="${safe}">
-          <td><code title="${safe}">${safe}</code></td>
-          <td class="num muted">${escapeHtml(src)}</td>
+        const free = Number(input) === 0 && Number(output) === 0;
+        return `<tr data-model="${safe}" class="${free ? 'is-free' : ''} ${src === 'custom' || src === 'draft' ? 'is-custom' : ''}">
+          <td>
+            <div class="model-cell">
+              <span class="model-avatar" aria-hidden="true">${modelInitial(model)}</span>
+              <div class="model-meta">
+                <code class="model-name" title="${safe}">${safe}</code>
+                ${free ? '<span class="model-tag">free</span>' : ''}
+              </div>
+            </div>
+          </td>
+          <td>${sourceBadge(src)}</td>
           <td class="num"><input class="price-input" data-field="in" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(input)}" /></td>
           <td class="num"><input class="price-input" data-field="out" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(output)}" /></td>
         </tr>`;
       }).join('');
+    }
+
+    function setStatus(text, mode) {
+      $('pricingStatus').textContent = text;
+      const dot = $('liveDot');
+      dot.classList.remove('is-live', 'is-busy', 'is-err');
+      if (mode === 'live') dot.classList.add('is-live');
+      if (mode === 'busy') dot.classList.add('is-busy');
+      if (mode === 'err') dot.classList.add('is-err');
     }
 
     async function loadMeta() {
@@ -229,10 +309,10 @@
         pricingMeta = data;
         $('pricingPath').textContent = data.configPath || 'config.json';
         renderPricing();
-        $('pricingStatus').textContent = `${(data.seenModels || []).length} models seen · ${Object.keys(data.customRates || {}).length} custom rates`;
+        setStatus(`${(data.seenModels || []).length} models · ${Object.keys(data.customRates || {}).length} custom`, 'live');
       } catch {
-        $('pricingStatus').textContent = 'Failed to load pricing';
-        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">Failed to load /api/pricing</div></td></tr>';
+        setStatus('Failed to load pricing', 'err');
+        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="pricing-empty">Failed to load /api/pricing</div></td></tr>';
       }
     }
 
@@ -245,14 +325,6 @@
           outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
         };
       });
-    }
-
-    function moneyLive(n) {
-      const v = Number(n) || 0;
-      const fixed = Math.abs(v).toFixed(2);
-      const [intPart, decPart] = fixed.split('.');
-      const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-      return (v < 0 ? '-$' : '$') + grouped + ',' + decPart;
     }
 
     let liveTimer = null;
@@ -269,7 +341,7 @@
       const customRates = { ...(pricingMeta.customRates || {}), ...pricingDraft };
       liveSaving = true;
       if (manual) $('pricingSave').disabled = true;
-      $('pricingStatus').textContent = manual ? 'Saving…' : 'Updating live…';
+      setStatus(manual ? 'Saving…' : 'Updating live…', 'busy');
       try {
         const res = await fetch('/api/pricing', {
           method: 'PUT',
@@ -278,18 +350,18 @@
         }).then((r) => r.json());
         pricingDraft = {};
         pricingMeta.customRates = res.customRates || {};
-        const cost = res.totals?.estimatedCost;
+        if (res.totals?.estimatedCost != null) lastTotalCost = res.totals.estimatedCost;
+        const costTxt = lastTotalCost != null ? ` · total ${moneyLive(lastTotalCost)}` : '';
         const rev = res.pricingRevision != null ? ` · rev ${res.pricingRevision}` : '';
-        const costTxt = cost != null ? ` · total ${moneyLive(cost)}` : '';
-        $('pricingStatus').textContent = manual
-          ? `Saved ${Object.keys(res.customRates || {}).length} rates${costTxt}${rev}`
-          : `Live · ${Object.keys(res.customRates || {}).length} rates applied${costTxt}${rev}`;
-        // Refresh catalog sources without wiping filters
+        setStatus(
+          (manual ? `Saved ${Object.keys(res.customRates || {}).length} rates` : `Live · ${Object.keys(res.customRates || {}).length} rates`) + costTxt + rev,
+          'live',
+        );
         const data = await fetch('/api/pricing').then((r) => r.json());
         pricingMeta = data;
         renderPricing();
       } catch {
-        $('pricingStatus').textContent = manual ? 'Save failed' : 'Live update failed';
+        setStatus(manual ? 'Save failed' : 'Live update failed', 'err');
       } finally {
         liveSaving = false;
         if (manual) $('pricingSave').disabled = false;
@@ -302,9 +374,7 @@
 
     function scheduleLivePush() {
       if (liveTimer) clearTimeout(liveTimer);
-      liveTimer = setTimeout(() => {
-        void pushRatesLive({ manual: false });
-      }, 450);
+      liveTimer = setTimeout(() => void pushRatesLive({ manual: false }), 450);
     }
 
     $('pricingBody').addEventListener('input', (e) => {
@@ -317,14 +387,11 @@
         inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
         outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
       };
-      $('pricingStatus').textContent = 'Typing… live update soon';
+      setStatus('Typing… live update soon', 'busy');
       scheduleLivePush();
     });
-
     $('pricingBody').addEventListener('change', (e) => {
-      const inp = e.target.closest('.price-input');
-      if (!inp) return;
-      scheduleLivePush();
+      if (e.target.closest('.price-input')) scheduleLivePush();
     });
 
     $('priceSearch').oninput = renderPricing;
@@ -349,13 +416,21 @@
       if (liveTimer) clearTimeout(liveTimer);
       pricingDraft = {};
       await loadPricing();
-      $('pricingStatus').textContent = 'Reloaded from config';
+      setStatus('Reloaded from config', 'live');
     };
 
     $('pricingSave').onclick = async () => {
       if (liveTimer) clearTimeout(liveTimer);
       await pushRatesLive({ manual: true });
     };
+
+    // Seed live total from stats once
+    fetch('/api/stats?groupBy=agent&sort=cost').then((r) => r.json()).then((s) => {
+      if (s?.totals?.estimatedCost != null) {
+        lastTotalCost = s.totals.estimatedCost;
+        $('statTotal').textContent = moneyLive(lastTotalCost);
+      }
+    }).catch(() => {});
 
     loadMeta();
     loadPricing();
