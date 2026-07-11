@@ -210,6 +210,13 @@ export function normalizeModelName(model: string | null | undefined): string | n
   // Drop trailing separators
   m = m.replace(/[-_:|]+$/g, "").trim();
 
+  // Common vendor spelling variants → canonical form for grouping + rates
+  const lower = m.toLowerCase();
+  if (lower.startsWith("deep-seek")) m = "deepseek" + m.slice("deep-seek".length);
+  if (lower.startsWith("deep_seek")) m = "deepseek" + m.slice("deep_seek".length);
+  // Digigo / digigo case
+  if (lower === "digigo") m = "Digigo";
+
   return m || null;
 }
 

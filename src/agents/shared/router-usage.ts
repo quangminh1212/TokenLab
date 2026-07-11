@@ -498,9 +498,8 @@ function rowToEvent(
     (typeof r.date === "string" && r.date) ||
     new Date().toISOString();
 
-  // Prefer router-reported cost when the field exists (including 0 — free/internal calls).
-  // Only fall back to bundled price table when cost is absent.
-  const hasRouterCost =
+  // Router-reported cost: use when > 0. Zero is NOT locked — fall back to rate table / custom rates.
+  const hasRouterCostField =
     r.cost != null ||
     r.estimatedCost != null ||
     r.usd != null ||
@@ -508,7 +507,7 @@ function rowToEvent(
       r.meta != null &&
       ((r.meta as Record<string, unknown>).cost != null ||
         (r.meta as Record<string, unknown>).estimatedCost != null));
-  const routerCost = num(
+  const routerCostRaw = num(
     r.cost ??
       r.estimatedCost ??
       r.usd ??
@@ -541,12 +540,8 @@ function rowToEvent(
     cacheWriteTokens,
     workspace: provider ? `provider:${provider}` : null,
     sourcePath: source,
+    routerCost: hasRouterCostField && routerCostRaw > 0 ? routerCostRaw : null,
   });
-
-  if (hasRouterCost) {
-    event.estimatedCost = routerCost;
-    event.pricingStatus = routerCost > 0 ? "priced" : "zero_rate";
-  }
 
   // keep endpoint lightly in workspace when useful
   if (endpoint && !event.workspace) {

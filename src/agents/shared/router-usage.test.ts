@@ -139,7 +139,7 @@ describe("router usage parsers", () => {
             cost: 0.0123,
             tokens: JSON.stringify({ prompt_tokens: 100, completion_tokens: 20 }),
           }),
-          // cost:0 must stay 0 (not re-priced by bundled table)
+          // cost:0 falls back to rate table (not locked at $0)
           JSON.stringify({
             id: 2,
             timestamp: "2026-07-01T13:00:00.000Z",
@@ -159,8 +159,8 @@ describe("router usage parsers", () => {
       assert.equal(events[0].outputTokens, 20);
       assert.equal(events[0].estimatedCost, 0.0123);
       assert.equal(events[0].model, "grok-4-fast");
-      assert.equal(events[1].estimatedCost, 0);
-      assert.equal(events[1].pricingStatus, "zero_rate");
+      // 50k in + 100 out at grok-4-fast rates → positive table price
+      assert.ok((events[1].estimatedCost || 0) > 0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

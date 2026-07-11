@@ -4,8 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
 import { detectAgents, scanAll } from "../agents/index.js";
-import type { GroupBy, UsageEvent } from "../types.js";
-import { filterByPeriod } from "../util.js";
+import { loadConfig, setCustomRates, configPath } from "../config.js";
+import { listPricingCatalog, repriceEvents } from "../pricing.js";
+import type { GroupBy, ModelRate, UsageEvent } from "../types.js";
+import { filterByPeriod, normalizeModelName } from "../util.js";
 import { VERSION } from "../version.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17,6 +19,7 @@ export interface ServerOptions {
 }
 
 export async function startServer(opts: ServerOptions = {}): Promise<{ close: () => Promise<void>; port: number; host: string }> {
+  await loadConfig();
   const host = opts.host || process.env.XLAB_TOKEN_HOST || "127.0.0.1";
   const port = Number(opts.port || process.env.XLAB_TOKEN_PORT || 3737);
   const noUi = opts.noUi || process.env.XLAB_TOKEN_NO_UI === "1";
@@ -114,6 +117,52 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const t0 = Date.now();
       const n = await rescan();
       return json(res, 200, { ok: true, eventsIngested: n, durationMs: Date.now() - t0 });
+    }
+
+    if (req.method === "GET" && pathname === "/api/pricing") {
+      const models = [...new Set(cache.map((e) => normalizeModelName(e.model) || e.model || "").filter(Boolean))];
+      const cfg = await loadConfig();
+      return json(res, 200, {
+        configPath: configPath(),
+        currency: cfg.pricing?.currency || "USD",
+        preferRouterCost: cfg.pricing?.preferRouterCost !== false,
+        customRates: cfg.pricing?.customRates || {},
+        catalog: listPricingCatalog(models as string[]),
+        seenModels: models.sort((a, b) => a.localeCompare(b)),
+      });
+    }
+
+    if (req.method === "PUT" && pathname === "/api/pricing") {
+      const body = await readJsonBody(req);
+      const ratesIn = (body?.customRates || body?.rates || {}) as Record<string, Partial<ModelRate>>;
+      const replace = body?.replace === true;
+      const normalized: Record<string, ModelRate> = {};
+      for (const [rawKey, rawVal] of Object.entries(ratesIn)) {
+        const key = (normalizeModelName(rawKey) || rawKey).trim().toLowerCase();
+        if (!key || !rawVal || typeof rawVal !== "object") continue;
+        const inputPer1M = Number(rawVal.inputPer1M);
+        const outputPer1M = Number(rawVal.outputPer1M);
+        if (!Number.isFinite(inputPer1M) || !Number.isFinite(outputPer1M)) continue;
+        normalized[key] = {
+          inputPer1M,
+          outputPer1M,
+          cacheReadPer1M:
+            rawVal.cacheReadPer1M != null && Number.isFinite(Number(rawVal.cacheReadPer1M))
+              ? Number(rawVal.cacheReadPer1M)
+              : undefined,
+          cacheWritePer1M:
+            rawVal.cacheWritePer1M != null && Number.isFinite(Number(rawVal.cacheWritePer1M))
+              ? Number(rawVal.cacheWritePer1M)
+              : undefined,
+        };
+      }
+      const cfg = await setCustomRates(normalized, replace);
+      cache = repriceEvents(cache);
+      return json(res, 200, {
+        ok: true,
+        customRates: cfg.pricing?.customRates || {},
+        eventCount: cache.length,
+      });
     }
 
     if (!noUi && req.method === "GET" && (pathname === "/" || pathname === "/index.html" || pathname === "/dashboard")) {
@@ -242,6 +291,23 @@ async function listenWithRetry(
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
