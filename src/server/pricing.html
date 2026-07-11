@@ -335,18 +335,19 @@
       const srcs = providerIconSrcs(p);
       const bg = providerColor(p);
       const title = escapeHtml(p);
+      // Always a fixed 2rem box; letter is overlay inside — never inline with model name
       if (!srcs.length) {
-        return `<span class="or-prov or-prov-fallback" title="${title}" style="background:${bg}" aria-hidden="true">${letter}</span>`;
+        return `<span class="or-prov is-fallback" title="${title}" style="background:${bg}" aria-hidden="true"><span class="or-prov-letter" style="background:${bg}">${letter}</span></span>`;
       }
       const src0 = escapeHtml(srcs[0]);
       const rest = srcs.slice(1).map((s) => escapeHtml(s)).join('|');
-      return `<span class="or-prov" title="${title}">
-        <img class="or-prov-img" src="${src0}" data-fallbacks="${rest}" alt="" width="28" height="28" loading="lazy" decoding="async" />
-        <span class="or-prov-fallback" hidden style="background:${bg}" aria-hidden="true">${letter}</span>
+      return `<span class="or-prov" title="${title}" style="--prov-bg:${bg}">
+        <img class="or-prov-img" src="${src0}" data-fallbacks="${rest}" alt="" width="32" height="32" loading="lazy" decoding="async" />
+        <span class="or-prov-letter" style="background:${bg}" aria-hidden="true">${letter}</span>
       </span>`;
     }
 
-    // Chain local → CDN → monogram (never Google favicon)
+    // Chain local → CDN → monogram letter inside icon box only
     document.addEventListener('error', (e) => {
       const img = e.target;
       if (!img || !img.classList || !img.classList.contains('or-prov-img')) return;
@@ -357,9 +358,8 @@
         img.src = queue[0];
         return;
       }
-      img.style.display = 'none';
-      const fb = img.nextElementSibling;
-      if (fb) fb.hidden = false;
+      const box = img.closest('.or-prov');
+      if (box) box.classList.add('is-fallback');
     }, true);
 
     /** OpenRouter-style multi-token AND search on id, name, provider, slug */
