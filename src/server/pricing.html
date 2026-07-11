@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pricing · XLab Token</title>
+  <title>Model · XLab Token</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
@@ -27,7 +27,7 @@
       <nav class="nav" aria-label="Main">
         <a class="nav-link" href="/">Dashboard</a>
         <a class="nav-link" href="/agents">Agents</a>
-        <a class="nav-link active" href="/pricing">Pricing</a>
+        <a class="nav-link active" href="/model">Model</a>
         <a class="nav-link" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
@@ -37,98 +37,51 @@
     </div>
   </header>
 
-  <main class="shell pricing-page">
-    <!-- Hero -->
-    <section class="pricing-hero">
-      <div class="pricing-hero-bg" aria-hidden="true"></div>
-      <div class="pricing-hero-inner">
-        <div class="pricing-hero-copy">
-          <span class="pricing-kicker">Rates · USD / 1M tokens</span>
-          <h1>Model pricing</h1>
-          <p>Set input &amp; output rates. Custom values override the bundled table and recalculate costs in realtime.</p>
-        </div>
-        <div class="pricing-hero-actions">
-          <button class="btn btn-with-icon" id="pricingReload" type="button">Reload</button>
-          <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save rates</button>
-        </div>
+  <main class="shell model-page">
+    <div class="usage-toolbar">
+      <div>
+        <h1 class="page-title">Model</h1>
+        <p class="page-sub">USD / 1M tokens · custom rates override defaults</p>
       </div>
-      <div class="pricing-stats" id="pricingStats">
-        <div class="pricing-stat">
-          <span class="pricing-stat-label">Seen models</span>
-          <strong class="pricing-stat-value" id="statSeen">—</strong>
-        </div>
-        <div class="pricing-stat">
-          <span class="pricing-stat-label">Custom rates</span>
-          <strong class="pricing-stat-value" id="statCustom">—</strong>
-        </div>
-        <div class="pricing-stat">
-          <span class="pricing-stat-label">Showing</span>
-          <strong class="pricing-stat-value" id="statShowing">—</strong>
-        </div>
-        <div class="pricing-stat pricing-stat-live">
-          <span class="pricing-stat-label">Live total</span>
-          <strong class="pricing-stat-value tone-warn" id="statTotal">—</strong>
-        </div>
+      <div class="usage-actions">
+        <span class="pricing-status muted" id="pricingStatus">—</span>
+        <button class="btn btn-with-icon" id="pricingReload" type="button">Reload</button>
+        <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save</button>
       </div>
-    </section>
+    </div>
 
-    <!-- Main panel -->
-    <section class="pricing-panel">
-      <div class="pricing-panel-toolbar">
-        <div class="pricing-search-wrap">
-          <svg class="pricing-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-          <input class="pricing-search" id="priceSearch" type="search" placeholder="Search models…" autocomplete="off" />
-        </div>
-        <div class="pricing-chips" role="group" aria-label="Filters">
-          <label class="pricing-chip">
-            <input type="checkbox" id="priceOnlySeen" checked />
-            <span>Seen in usage</span>
-          </label>
-          <label class="pricing-chip">
-            <input type="checkbox" id="priceOnlyCustom" />
-            <span>Custom only</span>
-          </label>
-        </div>
+    <section class="u-card table-card">
+      <div class="model-toolbar">
+        <input class="model-search" id="priceSearch" type="search" placeholder="Search model…" autocomplete="off" />
+        <label class="model-check"><input type="checkbox" id="priceOnlySeen" /> Seen only</label>
+        <label class="model-check"><input type="checkbox" id="priceOnlyCustom" /> Custom only</label>
       </div>
-
-      <div class="pricing-table-shell">
-        <div class="table-scroll pricing-table-scroll">
-          <table class="pricing-table-modern" id="pricingTable">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Source</th>
-                <th class="num">Input $/1M</th>
-                <th class="num">Output $/1M</th>
-              </tr>
-            </thead>
-            <tbody id="pricingBody">
-              <tr><td colspan="4"><div class="pricing-empty">Loading rates…</div></td></tr>
-            </tbody>
-          </table>
-        </div>
+      <div class="table-scroll">
+        <table class="usage-table" id="pricingTable">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Source</th>
+              <th class="num">Input $/1M</th>
+              <th class="num">Output $/1M</th>
+            </tr>
+          </thead>
+          <tbody id="pricingBody">
+            <tr><td colspan="4"><div class="empty">Loading…</div></td></tr>
+          </tbody>
+        </table>
       </div>
-
-      <div class="pricing-footer-bar">
-        <div class="pricing-add-card">
-          <span class="pricing-add-label">Add model</span>
-          <div class="pricing-add-row">
-            <input type="text" id="priceModel" placeholder="e.g. big-pickle" />
-            <input type="number" id="priceIn" step="0.001" min="0" placeholder="In $/1M" />
-            <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
-            <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
-          </div>
-        </div>
-        <div class="pricing-status-bar">
-          <span class="pricing-live-dot" id="liveDot" aria-hidden="true"></span>
-          <p class="pricing-status" id="pricingStatus">Ready</p>
-        </div>
-        <p class="pricing-path-line">Config · <code id="pricingPath">…</code></p>
+      <div class="model-add-row">
+        <input type="text" id="priceModel" placeholder="Model name" />
+        <input type="number" id="priceIn" step="0.001" min="0" placeholder="In $/1M" />
+        <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
+        <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
       </div>
+      <p class="model-path muted">Config · <code id="pricingPath">…</code></p>
     </section>
 
     <footer>
-      <div>Pricing · rates apply to all agents</div>
+      <div>Model rates · apply to all agents</div>
       <div>localhost only · estimated cost, not billing</div>
     </footer>
   </main>
@@ -185,7 +138,7 @@
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
     $('pricingReload').innerHTML = ICONS.reload + '<span>Reload</span>';
-    $('pricingSave').innerHTML = ICONS.save + '<span>Save rates</span>';
+    $('pricingSave').innerHTML = ICONS.save + '<span>Save</span>';
     $('priceAdd').innerHTML = ICONS.plus + '<span>Add</span>';
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
@@ -193,40 +146,26 @@
 
     let pricingDraft = {};
     let pricingMeta = { catalog: [], seenModels: [], customRates: {} };
-    let lastTotalCost = null;
+    let scanPollTimer = 0;
 
-    function moneyLive(n) {
-      const v = Number(n) || 0;
-      const fixed = Math.abs(v).toFixed(2);
-      const [intPart, decPart] = fixed.split('.');
-      const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-      return (v < 0 ? '-$' : '$') + grouped + ',' + decPart;
-    }
-
-    function sourceBadge(src) {
-      const s = String(src || 'default');
-      const cls =
-        s === 'custom' || s === 'draft' ? 'badge-custom' :
-        s === 'bundled' ? 'badge-bundled' : 'badge-default';
-      return `<span class="src-badge ${cls}">${escapeHtml(s)}</span>`;
-    }
-
-    function modelInitial(name) {
-      const s = String(name || '?');
-      return escapeHtml(s.slice(0, 1).toUpperCase());
+    function setStatus(text) {
+      $('pricingStatus').textContent = text;
     }
 
     function renderPricing() {
       const q = ($('priceSearch').value || '').trim().toLowerCase();
       const onlyCustom = $('priceOnlyCustom').checked;
-      const onlySeen = $('priceOnlySeen').checked;
-      const seenSet = new Set((pricingMeta.seenModels || []).map((m) => String(m).toLowerCase()));
+      let onlySeen = $('priceOnlySeen').checked;
+      const seenList = pricingMeta.seenModels || [];
+      const seenSet = new Set(seenList.map((m) => String(m).toLowerCase()));
+      // Avoid empty white table when cache has no usage yet
+      if (onlySeen && seenSet.size === 0) onlySeen = false;
       const custom = pricingMeta.customRates || {};
       const catMap = new Map((pricingMeta.catalog || []).map((c) => [String(c.model).toLowerCase(), c]));
 
       let models = [
         ...new Set([
-          ...(pricingMeta.seenModels || []),
+          ...seenList,
           ...Object.keys(custom),
           ...Object.keys(pricingDraft),
           ...(pricingMeta.catalog || []).map((c) => c.model),
@@ -248,13 +187,8 @@
         return a.localeCompare(b);
       });
 
-      $('statSeen').textContent = String((pricingMeta.seenModels || []).length);
-      $('statCustom').textContent = String(Object.keys(custom).length);
-      $('statShowing').textContent = String(models.length);
-      if (lastTotalCost != null) $('statTotal').textContent = moneyLive(lastTotalCost);
-
       if (!models.length) {
-        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="pricing-empty">No models match filters.</div></td></tr>';
+        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">No models. Scan usage or add a rate below.</div></td></tr>';
         return;
       }
 
@@ -266,38 +200,28 @@
         const input = draft?.inputPer1M ?? cust?.inputPer1M ?? cat.inputPer1M ?? 0;
         const output = draft?.outputPer1M ?? cust?.outputPer1M ?? cat.outputPer1M ?? 0;
         const safe = escapeHtml(model);
-        const free = Number(input) === 0 && Number(output) === 0;
-        return `<tr data-model="${safe}" class="${free ? 'is-free' : ''} ${src === 'custom' || src === 'draft' ? 'is-custom' : ''}">
-          <td>
-            <div class="model-cell">
-              <span class="model-avatar" aria-hidden="true">${modelInitial(model)}</span>
-              <div class="model-meta">
-                <code class="model-name" title="${safe}">${safe}</code>
-                ${free ? '<span class="model-tag">free</span>' : ''}
-              </div>
-            </div>
-          </td>
-          <td>${sourceBadge(src)}</td>
+        return `<tr data-model="${safe}">
+          <td><code title="${safe}">${safe}</code></td>
+          <td class="muted">${escapeHtml(src)}</td>
           <td class="num"><input class="price-input" data-field="in" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(input)}" /></td>
           <td class="num"><input class="price-input" data-field="out" data-model="${safe}" type="number" step="0.001" min="0" value="${Number(output)}" /></td>
         </tr>`;
       }).join('');
     }
 
-    function setStatus(text, mode) {
-      $('pricingStatus').textContent = text;
-      const dot = $('liveDot');
-      dot.classList.remove('is-live', 'is-busy', 'is-err');
-      if (mode === 'live') dot.classList.add('is-live');
-      if (mode === 'busy') dot.classList.add('is-busy');
-      if (mode === 'err') dot.classList.add('is-err');
-    }
-
     async function loadMeta() {
       try {
         const health = await fetch('/api/health').then((r) => r.json());
         const n = health.agentsDetected?.length || 0;
-        $('meta').textContent = `v${health.version} · ${n} agents · ${health.eventCount || 0} events`;
+        const scanHint = health.scanning ? ' · scanning…' : '';
+        $('meta').textContent = `v${health.version} · ${n} agents · ${health.eventCount || 0} events${scanHint}`;
+        if (health.scanning || (health.eventCount || 0) === 0 && (health.scanRevision || 0) === 0) {
+          if (scanPollTimer) clearTimeout(scanPollTimer);
+          scanPollTimer = setTimeout(() => {
+            void loadMeta();
+            void loadPricing();
+          }, 1200);
+        }
       } catch {
         $('meta').innerHTML = '<span class="err">API offline</span>';
       }
@@ -309,10 +233,10 @@
         pricingMeta = data;
         $('pricingPath').textContent = data.configPath || 'config.json';
         renderPricing();
-        setStatus(`${(data.seenModels || []).length} models · ${Object.keys(data.customRates || {}).length} custom`, 'live');
+        setStatus(`${(data.catalog || []).length} models · ${Object.keys(data.customRates || {}).length} custom`);
       } catch {
-        setStatus('Failed to load pricing', 'err');
-        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="pricing-empty">Failed to load /api/pricing</div></td></tr>';
+        setStatus('Load failed');
+        $('pricingBody').innerHTML = '<tr><td colspan="4"><div class="empty">Failed to load rates</div></td></tr>';
       }
     }
 
@@ -341,7 +265,7 @@
       const customRates = { ...(pricingMeta.customRates || {}), ...pricingDraft };
       liveSaving = true;
       if (manual) $('pricingSave').disabled = true;
-      setStatus(manual ? 'Saving…' : 'Updating live…', 'busy');
+      setStatus(manual ? 'Saving…' : 'Updating…');
       try {
         const res = await fetch('/api/pricing', {
           method: 'PUT',
@@ -350,18 +274,14 @@
         }).then((r) => r.json());
         pricingDraft = {};
         pricingMeta.customRates = res.customRates || {};
-        if (res.totals?.estimatedCost != null) lastTotalCost = res.totals.estimatedCost;
-        const costTxt = lastTotalCost != null ? ` · total ${moneyLive(lastTotalCost)}` : '';
-        const rev = res.pricingRevision != null ? ` · rev ${res.pricingRevision}` : '';
-        setStatus(
-          (manual ? `Saved ${Object.keys(res.customRates || {}).length} rates` : `Live · ${Object.keys(res.customRates || {}).length} rates`) + costTxt + rev,
-          'live',
-        );
+        setStatus(manual
+          ? `Saved · ${Object.keys(res.customRates || {}).length} custom`
+          : `Live · ${Object.keys(res.customRates || {}).length} custom`);
         const data = await fetch('/api/pricing').then((r) => r.json());
         pricingMeta = data;
         renderPricing();
       } catch {
-        setStatus(manual ? 'Save failed' : 'Live update failed', 'err');
+        setStatus(manual ? 'Save failed' : 'Update failed');
       } finally {
         liveSaving = false;
         if (manual) $('pricingSave').disabled = false;
@@ -387,7 +307,7 @@
         inputPer1M: Number(tr.querySelector('[data-field="in"]')?.value) || 0,
         outputPer1M: Number(tr.querySelector('[data-field="out"]')?.value) || 0,
       };
-      setStatus('Typing… live update soon', 'busy');
+      setStatus('Typing…');
       scheduleLivePush();
     });
     $('pricingBody').addEventListener('change', (e) => {
@@ -416,7 +336,7 @@
       if (liveTimer) clearTimeout(liveTimer);
       pricingDraft = {};
       await loadPricing();
-      setStatus('Reloaded from config', 'live');
+      setStatus('Reloaded');
     };
 
     $('pricingSave').onclick = async () => {
@@ -424,13 +344,18 @@
       await pushRatesLive({ manual: true });
     };
 
-    // Seed live total from stats once
-    fetch('/api/stats?groupBy=agent&sort=cost').then((r) => r.json()).then((s) => {
-      if (s?.totals?.estimatedCost != null) {
-        lastTotalCost = s.totals.estimatedCost;
-        $('statTotal').textContent = moneyLive(lastTotalCost);
-      }
-    }).catch(() => {});
+    try {
+      const es = new EventSource('/api/pricing/stream');
+      es.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'scan' && msg.reason === 'complete') {
+            void loadMeta();
+            void loadPricing();
+          }
+        } catch { /* ignore */ }
+      };
+    } catch { /* ignore */ }
 
     loadMeta();
     loadPricing();
