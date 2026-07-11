@@ -228,6 +228,19 @@ export function estimateTokensFromText(text: string): number {
 
 export function parseSince(since?: string | null): Date | null {
   if (!since) return null;
+  const key = String(since).trim().toLowerCase();
+  // Calendar "today" in local timezone (matches Dashboard/Agents UI)
+  if (key === "today") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  if (key === "yesterday") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 1);
+    return d;
+  }
   const m = since.match(/^(\d+)([smhd])$/i);
   if (m) {
     const n = Number(m[1]);
