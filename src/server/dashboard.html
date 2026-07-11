@@ -142,11 +142,6 @@
     .brand-mark .x { color: var(--text); }
     .brand-mark .lab { color: #00A19A; }
     html.dark .brand-mark .lab { color: #00d4aa; }
-    .brand-title {
-      margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em;
-    }
-    .brand-title .token { color: var(--xlab); font-weight: 800; }
-    .brand-sub { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.8rem; }
     .top-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
     .meta-chip {
       font-size: 0.78rem; color: var(--muted);
@@ -445,7 +440,6 @@
     }
     footer strong { color: var(--xlab); font-weight: 700; }
     @media (max-width: 640px) {
-      .brand-sub { display: none; }
       .search { max-width: none; }
     }
   </style>
@@ -454,15 +448,11 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <a class="brand-logo-wrap" href="/" title="XLab Token">
-          <img class="brand-logo" src="/assets/logo.png" alt="XLab" width="140" height="56"
+        <a class="brand-logo-wrap" href="/" title="XLab Token" aria-label="XLab Token">
+          <img class="brand-logo" src="/assets/logo.png" alt="XLab Token" width="140" height="56"
             onerror="this.style.display='none'; document.querySelector('.brand-mark').style.display='flex';" />
           <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
         </a>
-        <div>
-          <h1 class="brand-title">XLab <span class="token">Token</span></h1>
-          <p class="brand-sub">Local token usage &amp; cost · phong cách XLab Web</p>
-        </div>
       </div>
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading…</span>
