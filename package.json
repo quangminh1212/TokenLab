@@ -1,0 +1,50 @@
+{
+  "name": "xlab-token",
+  "version": "0.1.0",
+  "description": "Local-first token API usage and cost tracker for AI coding agents on one machine",
+  "type": "module",
+  "bin": {
+    "xlab-token": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "serve": "tsx src/cli.ts serve",
+    "stats": "tsx src/cli.ts stats",
+    "cost": "tsx src/cli.ts cost",
+    "doctors": "tsx src/cli.ts doctors",
+    "test": "tsx --test src/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "token-usage",
+    "cost-tracking",
+    "ai-agents",
+    "claude-code",
+    "cursor",
+    "codex",
+    "windsurf",
+    "grok",
+    "localhost"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "ATTRIBUTION.md"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
