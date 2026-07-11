@@ -259,8 +259,14 @@ export function filterByPeriod(
   });
 }
 
-export function formatUsd(n: number): string {
-  return `$${n.toFixed(4)}`;
+/** Format USD with thousand dots and decimal comma: $197.527,9600 */
+export function formatUsd(n: number, digits = 4): string {
+  const v = Number(n) || 0;
+  const neg = v < 0;
+  const fixed = Math.abs(v).toFixed(digits);
+  const [intPart, decPart] = fixed.split(".");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${neg ? "-$" : "$"}${grouped}${decPart != null ? `,${decPart}` : ""}`;
 }
 
 export function formatTokens(n: number): string {

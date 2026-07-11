@@ -155,7 +155,15 @@
       return String(Math.round(v));
     };
     const fmtFull = (n) => new Intl.NumberFormat().format(Math.round(Number(n) || 0));
-    const money = (n, digits = 2) => '$' + (Number(n) || 0).toFixed(digits);
+    /** USD with thousand separators: $197.527,96 (dot groups, comma decimals) */
+    const money = (n, digits = 2) => {
+      const v = Number(n) || 0;
+      const neg = v < 0;
+      const fixed = Math.abs(v).toFixed(digits);
+      const [intPart, decPart] = fixed.split('.');
+      const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      return (neg ? '-$' : '$') + grouped + (decPart != null ? ',' + decPart : '');
+    };
     const money4 = (n) => money(n, 4);
 
     function escapeHtml(s) {

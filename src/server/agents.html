@@ -83,7 +83,14 @@
       if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
       return String(Math.round(n || 0));
     };
-    const money = (n) => '$' + (n || 0).toFixed(4);
+    const money = (n, digits = 4) => {
+      const v = Number(n) || 0;
+      const neg = v < 0;
+      const fixed = Math.abs(v).toFixed(digits);
+      const [intPart, decPart] = fixed.split('.');
+      const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      return (neg ? '-$' : '$') + grouped + (decPart != null ? ',' + decPart : '');
+    };
 
     const CATEGORIES = [
       {
