@@ -31,15 +31,91 @@ describe("router usage parsers", () => {
   it("xlabrouter roots resolve without throw", async () => {
     const roots = xlabRouterRoots().filter(Boolean);
     assert.ok(roots.length >= 3);
+    assert.ok(roots.some((r) => r.includes("xlabrouter") || r.includes("var")));
     const existing: string[] = [];
     for (const r of roots) {
       if (await pathExists(r)) existing.push(r);
     }
     const events = await parseRouterUsage(existing, "xlabrouter");
     assert.ok(Array.isArray(events));
-    // Local AppData xlabrouter often has empty history — zero is OK
     for (const e of events) {
       assert.equal(e.agent, "xlabrouter");
+    }
+    // When VPS mirror is present, dailySummary gap-fill should yield many events
+    if (existing.some((r) => r.includes("mirrors") || r.includes(`${"xlabrouter"}\\data`) || r.includes("xlabrouter/data"))) {
+      assert.ok(events.length > 0, `expected xlabrouter events from ${existing.join(", ")}`);
+    }
+  });
+
+  it("expands dailySummary when history is sparse", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-xlabrouter-"));
+    try {
+      await writeFile(
+        path.join(dir, "db.json"),
+        JSON.stringify({
+          usageData: {
+            history: [
+              {
+                id: "h1",
+                timestamp: "2026-06-29T10:00:00.000Z",
+                model: "gpt-5.5",
+                provider: "x",
+                tokens: { prompt_tokens: 10, completion_tokens: 2 },
+                cost: 0.01,
+              },
+            ],
+            totalRequestsLifetime: 1000,
+            dailySummary: {
+              "2026-06-28": {
+                requests: 100,
+                promptTokens: 50000,
+                completionTokens: 1000,
+                cost: 12.5,
+                byModel: {
+                  "gpt-5.5|prov": {
+                    requests: 100,
+                    promptTokens: 50000,
+                    completionTokens: 1000,
+                    cost: 12.5,
+                    rawModel: "gpt-5.5",
+                    provider: "prov",
+                  },
+                },
+              },
+              "2026-06-29": {
+                requests: 200,
+                promptTokens: 90000,
+                completionTokens: 2000,
+                cost: 20,
+                byModel: {
+                  "gpt-5.5|prov": {
+                    requests: 200,
+                    promptTokens: 90000,
+                    completionTokens: 2000,
+                    cost: 20,
+                    rawModel: "gpt-5.5",
+                    provider: "prov",
+                  },
+                },
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "xlabrouter");
+      // history keeps 06-29; daily fills 06-28 only
+      assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-28")));
+      assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-29")));
+      const d28 = events.find((e) => e.timestamp.startsWith("2026-06-28"));
+      assert.equal(d28?.inputTokens, 50000);
+      assert.equal(d28?.estimatedCost, 12.5);
+      // only one 06-29 event (history), not history+daily
+      assert.equal(events.filter((e) => e.timestamp.startsWith("2026-06-29")).length, 1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

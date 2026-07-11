@@ -9,12 +9,17 @@ import { num, pathExists, readText, stableId } from "../../util.js";
  * Sources (in priority order per root):
  *  1. db/data.sqlite → usageHistory (current production schema)
  *  2. usage.json → { history: [...] }
- *  3. db.json → usageData.history
+ *  3. db.json → usageData.history (+ dailySummary gap-fill)
+ *  4. usage-history.jsonl / request-details.jsonl exports
+ *  5. usage-daily.json / usageData.json exports (xlabrouter DATA_DIR mirrors)
  *
  * History row shape (either source):
  *  { provider, model, tokens: { prompt_tokens, completion_tokens, cached_tokens? },
  *    timestamp, cost?, connectionId?, endpoint?, apiKey? }
  *  or flat columns: promptTokens, completionTokens, cost, tokens (JSON string)
+ *
+ * xlabrouter often keeps only a short rolling `history` (e.g. 200 rows) while
+ * `dailySummary` holds full multi-day totals — we gap-fill missing days from daily.
  */
 export async function parseRouterUsage(
   roots: string[],
@@ -22,6 +27,15 @@ export async function parseRouterUsage(
 ): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   const seen = new Set<string>();
+  const dailyBuckets: Array<{ source: string; daily: Record<string, unknown> }> = [];
+
+  const pushAll = (batch: UsageEvent[]) => {
+    for (const e of batch) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      events.push(e);
+    }
+  };
 
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
@@ -30,44 +44,65 @@ export async function parseRouterUsage(
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
       if (await pathExists(dbPath)) {
-        for (const e of await parseSqliteUsage(dbPath, agent)) {
-          if (seen.has(e.id)) continue;
-          seen.add(e.id);
-          events.push(e);
-        }
+        pushAll(await parseSqliteUsage(dbPath, agent));
       }
     }
 
     // 2) usage.json
     const usagePath = path.join(root, "usage.json");
     if (await pathExists(usagePath)) {
-      for (const e of await parseUsageJsonFile(usagePath, agent)) {
-        if (seen.has(e.id)) continue;
-        seen.add(e.id);
-        events.push(e);
-      }
+      pushAll(await parseUsageJsonFile(usagePath, agent));
+      const daily = await readDailySummaryFromJsonFile(usagePath);
+      if (daily) dailyBuckets.push({ source: usagePath, daily });
     }
 
     // 3) db.json → usageData
     const dbJsonPath = path.join(root, "db.json");
     if (await pathExists(dbJsonPath)) {
-      for (const e of await parseDbJsonUsage(dbJsonPath, agent)) {
-        if (seen.has(e.id)) continue;
-        seen.add(e.id);
-        events.push(e);
-      }
+      pushAll(await parseDbJsonUsage(dbJsonPath, agent));
+      const daily = await readDailySummaryFromDbJson(dbJsonPath);
+      if (daily) dailyBuckets.push({ source: dbJsonPath, daily });
     }
 
-    // 4) exported history dump (VPS mirror / manual export)
-    for (const name of ["usage-history.jsonl", "usage-history.json", "usageHistory.json"]) {
+    // 4) exported history / request-details dumps (VPS mirror)
+    for (const name of [
+      "usage-history.jsonl",
+      "usage-history.json",
+      "usageHistory.json",
+      "request-details.jsonl",
+      "request-details.json",
+    ]) {
       const p = path.join(root, name);
       if (!(await pathExists(p))) continue;
-      for (const e of await parseHistoryExport(p, agent)) {
-        if (seen.has(e.id)) continue;
-        seen.add(e.id);
-        events.push(e);
-      }
+      pushAll(await parseHistoryExport(p, agent));
     }
+
+    // 5) usageData.json export + usage-daily.json
+    const usageDataPath = path.join(root, "usageData.json");
+    if (await pathExists(usageDataPath)) {
+      pushAll(await parseUsageJsonFile(usageDataPath, agent));
+      const daily = await readDailySummaryFromJsonFile(usageDataPath);
+      if (daily) dailyBuckets.push({ source: usageDataPath, daily });
+    }
+    const dailyPath = path.join(root, "usage-daily.json");
+    if (await pathExists(dailyPath)) {
+      const daily = await readDailySummaryStandalone(dailyPath);
+      if (daily) dailyBuckets.push({ source: dailyPath, daily });
+    }
+  }
+
+  // Gap-fill: days present in dailySummary but missing (or sparse) in event-level history
+  const daysWithEvents = new Set<string>();
+  const eventCountByDay = new Map<string, number>();
+  for (const e of events) {
+    const day = (e.timestamp || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    daysWithEvents.add(day);
+    eventCountByDay.set(day, (eventCountByDay.get(day) || 0) + 1);
+  }
+
+  for (const { source, daily } of dailyBuckets) {
+    pushAll(expandDailySummary(daily, agent, source, daysWithEvents, eventCountByDay));
   }
 
   return events;
@@ -138,6 +173,139 @@ async function parseDbJsonUsage(file: string, agent: AgentId): Promise<UsageEven
   } catch {
     return [];
   }
+}
+
+async function readDailySummaryFromDbJson(file: string): Promise<Record<string, unknown> | null> {
+  const text = await readText(file);
+  if (!text) return null;
+  try {
+    const data = JSON.parse(text) as Record<string, unknown>;
+    const usageData = (data.usageData ?? null) as Record<string, unknown> | null;
+    const daily = usageData?.dailySummary;
+    if (daily && typeof daily === "object" && !Array.isArray(daily)) {
+      return daily as Record<string, unknown>;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+async function readDailySummaryFromJsonFile(file: string): Promise<Record<string, unknown> | null> {
+  const text = await readText(file);
+  if (!text) return null;
+  try {
+    const data = JSON.parse(text) as unknown;
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      const o = data as Record<string, unknown>;
+      const daily = o.dailySummary;
+      if (daily && typeof daily === "object" && !Array.isArray(daily)) {
+        return daily as Record<string, unknown>;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+async function readDailySummaryStandalone(file: string): Promise<Record<string, unknown> | null> {
+  const text = await readText(file);
+  if (!text) return null;
+  try {
+    const data = JSON.parse(text) as unknown;
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      return data as Record<string, unknown>;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Expand dailySummary into synthetic UsageEvents (one per model per day).
+ * Skips days that already have dense event-level history (>= 50% of daily.requests).
+ */
+function expandDailySummary(
+  daily: Record<string, unknown>,
+  agent: AgentId,
+  source: string,
+  daysWithEvents: Set<string>,
+  eventCountByDay: Map<string, number>,
+): UsageEvent[] {
+  const out: UsageEvent[] = [];
+  for (const [dateKey, raw] of Object.entries(daily)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
+    if (!raw || typeof raw !== "object") continue;
+    const day = raw as Record<string, unknown>;
+    const existing = eventCountByDay.get(dateKey) || 0;
+    // Prefer event-level rows when any exist for this day (avoids double-counting
+    // short rolling history against the same day's dailySummary rollup).
+    if (existing > 0) continue;
+
+    const byModel = day.byModel;
+    if (byModel && typeof byModel === "object" && !Array.isArray(byModel)) {
+      for (const [modelKey, mraw] of Object.entries(byModel as Record<string, unknown>)) {
+        if (!mraw || typeof mraw !== "object") continue;
+        const m = mraw as Record<string, unknown>;
+        const model =
+          (typeof m.rawModel === "string" && m.rawModel) ||
+          modelKey.split("|")[0] ||
+          modelKey;
+        const provider = typeof m.provider === "string" ? m.provider : null;
+        const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
+        const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
+        const cost = num(m.cost);
+        if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
+        const e = rowToEvent(
+          {
+            id: `daily:${dateKey}:${modelKey}`,
+            timestamp: `${dateKey}T12:00:00.000Z`,
+            model,
+            provider,
+            promptTokens: inputTokens,
+            completionTokens: outputTokens,
+            cost,
+            tokens: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
+          },
+          agent,
+          source,
+          `daily-${dateKey}-${modelKey}`,
+        );
+        if (e) {
+          e.estimated = true;
+          out.push(e);
+        }
+      }
+      continue;
+    }
+
+    // Fallback: single rollup for the day
+    const inputTokens = num(day.promptTokens ?? day.prompt_tokens);
+    const outputTokens = num(day.completionTokens ?? day.completion_tokens);
+    const cost = num(day.cost);
+    if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
+    const e = rowToEvent(
+      {
+        id: `daily:${dateKey}:all`,
+        timestamp: `${dateKey}T12:00:00.000Z`,
+        model: "mixed",
+        promptTokens: inputTokens,
+        completionTokens: outputTokens,
+        cost,
+        tokens: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
+      },
+      agent,
+      source,
+      `daily-${dateKey}`,
+    );
+    if (e) {
+      e.estimated = true;
+      out.push(e);
+    }
+  }
+  return out;
 }
 
 async function parseHistoryExport(file: string, agent: AgentId): Promise<UsageEvent[]> {

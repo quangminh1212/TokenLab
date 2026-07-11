@@ -5,9 +5,11 @@ import { parseRouterUsage } from "../shared/router-usage.js";
 
 /**
  * XLab Router (xlabrouter / xlab_router) usage.
- * Same data shape as 9router; typically %APPDATA%/xlabrouter or ~/.xlabrouter.
  *
- * VPS layout: /root/.xlabrouter/{db.json, logs}
+ * VPS systemd unit uses:
+ *   Environment=DATA_DIR=/var/lib/xlabrouter
+ *   PORT=1212
+ * Not ~/.xlabrouter (legacy empty install path).
  */
 export function xlabRouterRoots(): string[] {
   const { home, appData, localApp, xdgData, xdgConfig, path: p, expandHome } = pathEnv();
@@ -15,17 +17,23 @@ export function xlabRouterRoots(): string[] {
     process.env.XLAB_TOKEN_DATA_DIR ||
     p.join(appDataDir(), "xlab-token");
   return unique([
-    expandHome(process.env.XLABROUTER_HOME || process.env.XLAB_ROUTER_HOME || ""),
+    // Explicit overrides (preferred)
     expandHome(process.env.XLAB_TOKEN_XLABROUTER_DIR || ""),
+    expandHome(process.env.XLABROUTER_HOME || process.env.XLAB_ROUTER_HOME || ""),
+    expandHome(process.env.XLABROUTER_DATA_DIR || ""),
+    // Service DATA_DIR (VPS production)
+    expandHome(process.env.DATA_DIR || ""),
+    "/var/lib/xlabrouter",
+    p.join("/var", "lib", "xlabrouter"),
+    // Legacy / desktop installs
     p.join(home, ".xlabrouter"),
     p.join(appData, "xlabrouter"),
     p.join(localApp, "xlabrouter"),
     p.join(xdgConfig, "xlabrouter"),
     p.join(xdgData, "xlabrouter"),
-    // npm package name variant
     p.join(appData, "xlab_router"),
     p.join(home, ".xlab_router"),
-    // Local mirror of VPS data
+    // Local mirrors of VPS DATA_DIR
     p.join(xlabData, "mirrors", "xlabrouter"),
     p.join(homeDir(), ".xlab-token", "mirrors", "xlabrouter"),
     process.platform === "win32" ? "C:\\Dev\\VPS\\my.bnix.one\\xlabrouter\\data" : "",
