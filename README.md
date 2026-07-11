@@ -1,13 +1,16 @@
 # XLab Token
 
-**Local-first token usage tracker for every AI agent on a single machine.**
+**Local-first token API usage & cost tracker for every AI agent on one machine.**
 
-XLab Token is an npm package that runs a lightweight **localhost** service and dashboard. It aggregates token consumption from AI coding agents and CLI tools installed on the host (Claude Code, Cursor, Codex, Copilot, OpenCode, Grok, and others), so you can see **who used how many tokens, when, and at what estimated cost** — without sending raw session logs to a third-party cloud by default.
+XLab Token is an npm package that runs a lightweight **localhost** service and dashboard. It aggregates **token API consumption** and **estimated spend (cost)** from all AI coding agents and CLIs installed on the host — including **Cursor**, **Grok**, **Windsurf**, **Codex**, **Claude Code**, and more — so you always know **how many tokens each agent used and how much it cost**.
+
+No cloud account required by default. Data stays on your machine.
 
 ---
 
 ## Table of contents
 
+- [What it tracks](#what-it-tracks)
 - [Why](#why)
 - [Features](#features)
 - [How it works](#how-it-works)
@@ -16,6 +19,7 @@ XLab Token is an npm package that runs a lightweight **localhost** service and d
 - [Quick start](#quick-start)
 - [CLI reference](#cli-reference)
 - [HTTP API](#http-api)
+- [Cost engine](#cost-engine)
 - [Configuration](#configuration)
 - [Data model](#data-model)
 - [Privacy & security](#privacy--security)
@@ -26,110 +30,139 @@ XLab Token is an npm package that runs a lightweight **localhost** service and d
 
 ---
 
+## What it tracks
+
+| Dimension | Details |
+|-----------|---------|
+| **Token API usage** | Input, output, cache-read, cache-write tokens per request / session |
+| **Spend (cost)** | Estimated USD (or configured currency) from model pricing × tokens |
+| **By agent** | Cursor, Grok, Windsurf, Codex, Claude Code, … |
+| **By model** | e.g. `claude-sonnet-4`, `gpt-4.1`, `grok-3`, … |
+| **By time** | Hour / day / week / custom range |
+| **By workspace** | Project path when available in agent logs |
+
+**Primary questions answered**
+
+1. How many tokens did **all agents on this PC** use today / this month?
+2. Which agent burned the most tokens and **money**?
+3. Which models drive the highest cost?
+4. What is the running **total spend** across every local agent?
+
+---
+
 ## Why
 
-Modern development machines often run **multiple AI agents at once**. Each tool stores usage in a different path, format, and unit. Without a single local aggregator:
+Modern machines often run **multiple AI agents in parallel**. Each tool stores usage in a different path and format. Without one local aggregator:
 
 | Pain point | Impact |
 |------------|--------|
-| Fragmented logs | No machine-wide view of total tokens |
-| Opaque cost | Hard to estimate spend across providers |
-| No cross-agent timeline | Difficult to correlate spikes with work sessions |
-| Cloud-only dashboards | Privacy and offline constraints |
+| Fragmented token logs | No machine-wide token total |
+| Opaque spend | Cannot see real API cost across agents |
+| No cross-agent ranking | Hard to know which tool is expensive |
+| Cloud-only dashboards | Privacy / offline limits |
 
-XLab Token solves this by scanning **local agent data directories**, normalizing records into a common schema, and exposing them via **localhost HTTP + a simple web UI**.
+XLab Token scans **local agent usage artifacts**, normalizes them into one schema, computes **token totals + cost**, and serves them on **localhost HTTP + UI**.
 
 ---
 
 ## Features
 
-- **Localhost-only service** — binds to `127.0.0.1` by default; no public bind required
-- **Multi-agent aggregation** — one pipeline for all agents installed on the machine
-- **Token & cost tracking** — input / output / cache tokens with pluggable pricing tables
-- **Real-time refresh** — filesystem watchers + periodic rescan
-- **Timeline & breakdowns** — by agent, model, day/hour, and project path (when available)
-- **Zero cloud account** — works offline; optional export only
-- **npm-first UX** — install once, run with `npx` / `bunx` / global binary
-- **Stable JSON API** — integrate with scripts, status bars, and other local tools
+- **Token API tracking** — input / output / cache tokens from every supported agent
+- **Cost / spend tracking** — estimated currency cost per event, agent, model, and period
+- **All agents on one machine** — single dashboard for Cursor, Grok, Windsurf, Codex, Claude Code, …
+- **Localhost-only service** — binds to `127.0.0.1` by default
+- **Live refresh** — filesystem watchers + periodic rescan
+- **Breakdowns & rankings** — top agents, top models, spend over time
+- **Stable JSON API** — automate budgets, status bars, scripts
+- **npm-first UX** — `npx` / `bunx` / global binary
+- **Offline-friendly pricing** — bundled price table; optional refresh
 
 ---
 
 ## How it works
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Host machine                            │
-│                                                             │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐        │
-│  │ Claude   │ │ Cursor   │ │ Codex    │ │ Other    │        │
-│  │ sessions │ │ logs     │ │ usage    │ │ agents   │        │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘        │
-│       │            │            │            │              │
-│       └────────────┴─────┬──────┴────────────┘              │
-│                          ▼                                  │
-│              ┌───────────────────────┐                      │
-│              │  Scanner / parsers    │                      │
-│              │  (normalize → events) │                      │
-│              └───────────┬───────────┘                      │
-│                          ▼                                  │
-│              ┌───────────────────────┐                      │
-│              │  Local store (SQLite) │                      │
-│              └───────────┬───────────┘                      │
-│                          ▼                                  │
-│         ┌────────────────┴────────────────┐                 │
-│         ▼                                 ▼                 │
-│  ┌─────────────┐                   ┌─────────────┐          │
-│  │ HTTP API    │                   │ Dashboard   │          │
-│  │ :3737       │                   │ (localhost) │          │
-│  └─────────────┘                   └─────────────┘          │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         Host machine                             │
+│                                                                  │
+│  Cursor · Grok · Windsurf · Codex · Claude Code · Copilot · …    │
+│       │        │         │        │           │                  │
+│       └────────┴────┬────┴────────┴───────────┘                  │
+│                     ▼                                            │
+│           ┌─────────────────────┐                                │
+│           │ Scanners / parsers  │  → UsageEvent (tokens)         │
+│           └──────────┬──────────┘                                │
+│                      ▼                                           │
+│           ┌─────────────────────┐                                │
+│           │ Cost engine         │  tokens × model price          │
+│           └──────────┬──────────┘                                │
+│                      ▼                                           │
+│           ┌─────────────────────┐                                │
+│           │ SQLite local store  │  events + rollups              │
+│           └──────────┬──────────┘                                │
+│           ┌──────────┴──────────┐                                │
+│           ▼                     ▼                                │
+│    HTTP API :3737         Dashboard (localhost)                  │
+│    /api/stats · /api/cost                                        │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Discover** known agent data paths on the OS (Windows / macOS / Linux).
-2. **Parse** session or usage files into a unified `UsageEvent` schema.
-3. **Aggregate** by time window, agent, model, and optional workspace.
-4. **Serve** stats on `http://127.0.0.1:<port>` for UI and automation.
+1. **Discover** agent data directories on Windows / macOS / Linux.
+2. **Parse** local usage / session files into unified `UsageEvent` records (tokens).
+3. **Price** each event with the cost engine (model rate × token buckets).
+4. **Aggregate** tokens + spend by agent, model, time, workspace.
+5. **Serve** via `http://127.0.0.1:<port>` for UI and automation.
 
 ---
 
 ## Supported agents
 
-Initial target set (parsers may ship incrementally):
+**Goal:** track **token API usage and spend for every major agent on the machine**.
 
-| Agent / client     | Source type              | Status   |
-|--------------------|--------------------------|----------|
-| Claude Code        | Local session transcripts| Planned  |
-| Cursor             | Local usage / DB         | Planned  |
-| OpenAI Codex CLI   | Local session logs       | Planned  |
-| GitHub Copilot     | Local telemetry caches   | Planned  |
-| OpenCode           | Local store              | Planned  |
-| Grok / xAI tools   | Local session logs       | Planned  |
-| Custom / generic   | Drop folder + JSONL      | Planned  |
+| Agent / client | Canonical id | Typical sources | Priority |
+|----------------|--------------|-----------------|----------|
+| **Cursor** | `cursor` | Local DB / usage caches | P0 |
+| **Grok** (xAI / Grok CLI / IDE) | `grok` | Local session / usage logs | P0 |
+| **Windsurf** | `windsurf` | Local store / usage artifacts | P0 |
+| **OpenAI Codex CLI** | `codex` | Session logs | P0 |
+| **Claude Code** | `claude-code` | Session transcripts / usage | P0 |
+| GitHub Copilot | `copilot` | Local telemetry / caches | P1 |
+| OpenCode | `opencode` | Local store | P1 |
+| Cline | `cline` | Local session data | P1 |
+| Roo Code | `roocode` | Local session data | P1 |
+| Gemini CLI | `gemini` | Local logs | P1 |
+| Amp | `amp` | Local usage | P2 |
+| Droid (Factory) | `droid` | Local usage | P2 |
+| Warp AI | `warp` | Local usage | P2 |
+| Antigravity | `antigravity` | Local usage | P2 |
+| Trae | `trae` | Local usage | P2 |
+| Kimi / MiniMax / Z.AI / … | per-id | Local usage | P2 |
+| **Custom / generic** | `custom` | Drop-folder JSONL | P0 (escape hatch) |
 
-> **Note:** Support depends on each vendor’s local file layout. XLab Token only reads **local** files the user already has; it does not inject into agent processes.
+> XLab Token only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
+
+Parsers ship incrementally; `xlab-token doctors` reports which agents are detected and which parsers are active.
 
 ---
 
 ## Requirements
 
-| Item        | Minimum                          |
-|-------------|----------------------------------|
-| Runtime     | Node.js **20+** or Bun **1.1+**  |
-| OS          | Windows 10+, macOS 12+, Linux    |
-| Network     | None (localhost only)            |
-| Disk        | ~50 MB install + usage DB growth |
+| Item | Minimum |
+|------|---------|
+| Runtime | Node.js **20+** or Bun **1.1+** |
+| OS | Windows 10+, macOS 12+, Linux |
+| Network | None required (localhost + offline pricing) |
+| Disk | ~50 MB install + local DB growth |
 
 ---
 
 ## Quick start
 
-### One-shot (recommended)
+### One-shot
 
 ```bash
-# npm
 npx xlab-token@latest
-
-# bun
+# or
 bunx xlab-token@latest
 ```
 
@@ -137,26 +170,26 @@ bunx xlab-token@latest
 
 ```bash
 npm install -g xlab-token
-xlab-token
+xlab-token serve
 ```
 
-### Typical first run
-
-```bash
-xlab-token serve --port 3737
-```
-
-Then open:
+Open:
 
 ```text
 http://127.0.0.1:3737
 ```
 
-### Headless stats (no UI)
+### Token + cost snapshot (CLI)
 
 ```bash
+# All agents: tokens and estimated spend
 xlab-token stats --json
-xlab-token stats --since 24h --by agent
+
+# Last 24 hours, ranked by cost
+xlab-token stats --since 24h --by agent --sort cost
+
+# Cost only summary
+xlab-token cost --since 7d --currency USD
 ```
 
 ---
@@ -165,31 +198,35 @@ xlab-token stats --since 24h --by agent
 
 | Command | Description |
 |---------|-------------|
-| `xlab-token serve` | Start localhost API + dashboard |
-| `xlab-token scan` | One-shot rescan of all agent sources |
-| `xlab-token stats` | Print aggregated usage to stdout |
-| `xlab-token export` | Export events as JSON / CSV |
-| `xlab-token doctors` | Diagnose missing paths and parsers |
-| `xlab-token --version` | Print package version |
+| `xlab-token serve` | Start localhost API + dashboard (tokens + cost) |
+| `xlab-token scan` | Rescan all agent sources |
+| `xlab-token stats` | Aggregate **tokens + spend** to stdout |
+| `xlab-token cost` | Focused **spend** report (totals, by agent/model) |
+| `xlab-token export` | Export events (tokens + cost fields) as JSON/CSV |
+| `xlab-token doctors` | Detect agents, paths, parser health |
+| `xlab-token --version` | Package version |
 
 ### Common flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind address (localhost only recommended) |
+| `--host` | `127.0.0.1` | Bind address |
 | `--port` | `3737` | HTTP port |
-| `--data-dir` | OS app data | Directory for SQLite DB and config |
+| `--data-dir` | OS app data | SQLite + config directory |
+| `--since` / `--until` | — | Time range for stats/cost |
+| `--by` | `agent` | `agent` \| `model` \| `day` \| `hour` |
+| `--sort` | `tokens` | `tokens` \| `cost` |
+| `--currency` | `USD` | Display currency for cost |
 | `--no-ui` | off | API only |
-| `--watch` | on | Enable filesystem watchers while serving |
-| `--json` | off | Machine-readable CLI output |
+| `--watch` | on | FS watchers while serving |
+| `--json` | off | Machine-readable output |
 
 ---
 
 ## HTTP API
 
-Base URL: `http://127.0.0.1:3737`
-
-All responses use `Content-Type: application/json; charset=utf-8` unless noted.
+Base URL: `http://127.0.0.1:3737`  
+`Content-Type: application/json; charset=utf-8`
 
 ### `GET /api/health`
 
@@ -197,21 +234,20 @@ All responses use `Content-Type: application/json; charset=utf-8` unless noted.
 {
   "ok": true,
   "version": "0.1.0",
-  "uptimeSec": 120
+  "uptimeSec": 120,
+  "agentsDetected": ["cursor", "claude-code", "codex", "windsurf", "grok"]
 }
 ```
 
-### `GET /api/stats`
-
-Query parameters:
+### `GET /api/stats` — tokens **and** cost
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `since` | string | ISO-8601 timestamp or relative (`24h`, `7d`) |
-| `until` | string | ISO-8601 end bound |
+| `since` | string | ISO-8601 or relative (`24h`, `7d`, `30d`) |
+| `until` | string | End bound |
 | `groupBy` | string | `agent` \| `model` \| `day` \| `hour` |
-
-Example response:
+| `agent` | string | Filter one agent id |
+| `currency` | string | Cost currency (default `USD`) |
 
 ```json
 {
@@ -220,32 +256,101 @@ Example response:
     "outputTokens": 340000,
     "cacheReadTokens": 80000,
     "cacheWriteTokens": 12000,
-    "estimatedCostUsd": 18.42
+    "totalTokens": 1632000,
+    "estimatedCost": 18.42,
+    "currency": "USD"
   },
   "groups": [
+    {
+      "key": "cursor",
+      "inputTokens": 400000,
+      "outputTokens": 90000,
+      "totalTokens": 490000,
+      "estimatedCost": 6.20
+    },
     {
       "key": "claude-code",
       "inputTokens": 500000,
       "outputTokens": 120000,
-      "estimatedCostUsd": 7.10
+      "totalTokens": 620000,
+      "estimatedCost": 7.10
+    },
+    {
+      "key": "windsurf",
+      "inputTokens": 150000,
+      "outputTokens": 40000,
+      "totalTokens": 190000,
+      "estimatedCost": 2.40
+    },
+    {
+      "key": "codex",
+      "inputTokens": 100000,
+      "outputTokens": 50000,
+      "totalTokens": 150000,
+      "estimatedCost": 1.80
+    },
+    {
+      "key": "grok",
+      "inputTokens": 50000,
+      "outputTokens": 40000,
+      "totalTokens": 90000,
+      "estimatedCost": 0.92
     }
+  ]
+}
+```
+
+### `GET /api/cost` — spend-focused
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `since` / `until` | string | Time range |
+| `groupBy` | string | `agent` \| `model` \| `day` |
+| `currency` | string | e.g. `USD` |
+
+```json
+{
+  "currency": "USD",
+  "totalEstimatedCost": 18.42,
+  "period": { "since": "2026-07-01T00:00:00.000Z", "until": "2026-07-11T23:59:59.999Z" },
+  "byAgent": [
+    { "agent": "claude-code", "estimatedCost": 7.10, "share": 0.385 },
+    { "agent": "cursor", "estimatedCost": 6.20, "share": 0.337 }
+  ],
+  "byModel": [
+    { "model": "claude-sonnet-4", "estimatedCost": 5.50 },
+    { "model": "gpt-4.1", "estimatedCost": 3.10 }
   ]
 }
 ```
 
 ### `GET /api/events`
 
-Paginated raw usage events for debugging and integrations.
+Paginated usage events (tokens + cost per row).
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `limit` | number | Max rows (default `100`, max `1000`) |
-| `cursor` | string | Opaque pagination cursor |
-| `agent` | string | Filter by agent id |
+| `limit` | number | Default `100`, max `1000` |
+| `cursor` | string | Pagination cursor |
+| `agent` | string | e.g. `cursor`, `windsurf`, `grok` |
+
+### `GET /api/agents`
+
+List detected agents and parser status.
+
+```json
+{
+  "agents": [
+    { "id": "cursor", "detected": true, "enabled": true, "lastEventAt": "2026-07-11T10:00:00.000Z" },
+    { "id": "grok", "detected": true, "enabled": true, "lastEventAt": "2026-07-11T09:30:00.000Z" },
+    { "id": "windsurf", "detected": true, "enabled": true, "lastEventAt": "2026-07-11T08:00:00.000Z" },
+    { "id": "codex", "detected": true, "enabled": true, "lastEventAt": "2026-07-10T22:00:00.000Z" },
+    { "id": "claude-code", "detected": true, "enabled": true, "lastEventAt": "2026-07-11T11:00:00.000Z" }
+  ]
+}
+```
 
 ### `POST /api/scan`
-
-Triggers an immediate full or incremental rescan.
 
 ```json
 { "ok": true, "eventsIngested": 42, "durationMs": 318 }
@@ -262,13 +367,32 @@ Triggers an immediate full or incremental rescan.
 }
 ```
 
-HTTP status codes: `400` validation, `404` not found, `500` internal.
+Status: `400` validation · `404` not found · `500` internal.
+
+---
+
+## Cost engine
+
+Spend is computed **locally** from token buckets and a pricing table:
+
+```text
+cost = (inputTokens      × priceInputPer1M
+      + outputTokens     × priceOutputPer1M
+      + cacheReadTokens  × priceCacheReadPer1M
+      + cacheWriteTokens × priceCacheWritePer1M) / 1_000_000
+```
+
+| Topic | Behavior |
+|-------|----------|
+| Price source | Bundled offline snapshot of common model rates |
+| Unknown model | Marked `pricing: "unknown"`; cost may be `null` or use fallback tier |
+| Currency | Default `USD`; display conversion optional |
+| Accuracy | **Estimate** — may differ from provider invoices |
+| Override | User can set custom rates in config |
 
 ---
 
 ## Configuration
-
-Config file (created on first run):
 
 ```text
 # Windows
@@ -281,8 +405,6 @@ Config file (created on first run):
 ~/.config/xlab-token/config.json
 ```
 
-Example:
-
 ```json
 {
   "host": "127.0.0.1",
@@ -290,13 +412,22 @@ Example:
   "watch": true,
   "pricing": {
     "source": "bundled",
-    "currency": "USD"
+    "currency": "USD",
+    "customRates": {
+      "my-local-model": {
+        "inputPer1M": 0,
+        "outputPer1M": 0
+      }
+    }
   },
   "agents": {
-    "claude-code": { "enabled": true },
     "cursor": { "enabled": true },
+    "grok": { "enabled": true },
+    "windsurf": { "enabled": true },
     "codex": { "enabled": true },
-    "copilot": { "enabled": false }
+    "claude-code": { "enabled": true },
+    "copilot": { "enabled": true },
+    "opencode": { "enabled": true }
   },
   "paths": {
     "overrides": {}
@@ -304,40 +435,43 @@ Example:
 }
 ```
 
-Environment variables (override file values):
-
-| Variable | Meaning |
-|----------|---------|
+| Environment variable | Meaning |
+|----------------------|---------|
 | `XLAB_TOKEN_HOST` | Bind host |
 | `XLAB_TOKEN_PORT` | Bind port |
 | `XLAB_TOKEN_DATA_DIR` | Data directory |
-| `XLAB_TOKEN_NO_UI` | `1` to disable dashboard |
+| `XLAB_TOKEN_CURRENCY` | Cost currency |
+| `XLAB_TOKEN_NO_UI` | `1` = API only |
 
 ---
 
 ## Data model
 
-### `UsageEvent` (logical schema)
+### `UsageEvent`
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Stable hash of source + native id |
-| `agent` | string | Canonical agent id (`claude-code`, …) |
-| `model` | string \| null | Provider model id when known |
+| `id` | string | Stable hash (source + native id) |
+| `agent` | string | `cursor` \| `grok` \| `windsurf` \| `codex` \| `claude-code` \| … |
+| `model` | string \| null | Provider model id |
 | `timestamp` | string | ISO-8601 UTC |
-| `inputTokens` | number | Prompt / input tokens |
-| `outputTokens` | number | Completion tokens |
-| `cacheReadTokens` | number | Cache hits (if any) |
-| `cacheWriteTokens` | number | Cache writes (if any) |
-| `workspace` | string \| null | Project path when available |
-| `sourcePath` | string | Local file the event was parsed from |
-| `raw` | object \| null | Optional sanitized native fields |
+| `inputTokens` | number | API input / prompt tokens |
+| `outputTokens` | number | API output / completion tokens |
+| `cacheReadTokens` | number | Cache read tokens (if any) |
+| `cacheWriteTokens` | number | Cache write tokens (if any) |
+| `totalTokens` | number | Sum of token buckets |
+| `estimatedCost` | number \| null | Computed spend in `currency` |
+| `currency` | string | e.g. `USD` |
+| `pricingStatus` | string | `priced` \| `unknown_model` \| `zero_rate` |
+| `workspace` | string \| null | Project path when known |
+| `sourcePath` | string | Local file parsed |
+| `raw` | object \| null | Sanitized native fields (no full prompts by default) |
 
 ### Storage
 
-- Default: **SQLite** under the data directory
-- Append-only event log + rollup tables for fast dashboard queries
-- Idempotent ingest via `id` uniqueness
+- **SQLite** under data directory
+- Append-only events + rollup tables (tokens + cost by agent/model/day)
+- Idempotent ingest on `id`
 
 ---
 
@@ -345,17 +479,13 @@ Environment variables (override file values):
 
 | Principle | Practice |
 |-----------|----------|
-| Local by default | Listens on `127.0.0.1` only |
-| No account required | No signup, no telemetry required |
-| Minimal content | Prefer token counters over message bodies |
-| User-owned data | DB and exports stay on disk under `data-dir` |
-| Explicit network | Optional price table updates only when user enables them |
+| Local by default | `127.0.0.1` only |
+| No account | No signup required |
+| Prefer counters | Tokens + cost, not full chat bodies |
+| User-owned DB | All data under `data-dir` |
+| Explicit network | Optional price-table update only if enabled |
 
-**Recommendations**
-
-- Do not bind to `0.0.0.0` on untrusted networks.
-- Treat the local DB as sensitive if paths/workspace names are stored.
-- Review agent source paths before enabling a parser.
+Do not bind to `0.0.0.0` on untrusted networks. Treat the DB as sensitive if workspace paths are stored.
 
 ---
 
@@ -365,54 +495,49 @@ Environment variables (override file values):
 git clone https://github.com/<org>/XLab_Token.git
 cd XLab_Token
 npm install
-npm run dev          # API + UI with hot reload
+npm run dev
 npm test
 npm run build
-npm start            # production serve from dist
+npm start
 ```
-
-### Suggested package layout
 
 ```text
 packages/
-  cli/           # xlab-token binary
-  core/          # scanners, parsers, pricing, store
-  server/        # HTTP API
-  web/           # localhost dashboard
+  cli/      # xlab-token binary
+  core/     # scanners, parsers, cost engine, store
+  server/   # HTTP API (stats + cost)
+  web/      # localhost dashboard
 ```
-
-### Scripts (conventional)
 
 | Script | Purpose |
 |--------|---------|
-| `dev` | Local development server |
-| `build` | Compile TypeScript / bundle UI |
-| `test` | Unit + integration tests |
-| `lint` | ESLint / Biome |
-| `typecheck` | `tsc --noEmit` |
+| `dev` | API + UI hot reload |
+| `build` | Production build |
+| `test` | Unit + parser fixtures |
+| `lint` | Lint |
+| `typecheck` | TypeScript check |
 
 ---
 
 ## Roadmap
 
-- [ ] Core scanner framework + SQLite store
-- [ ] First-party parsers (Claude Code, Cursor, Codex)
-- [ ] Localhost dashboard (totals, charts, filters)
-- [ ] Pricing table with offline snapshot
-- [ ] Export JSON/CSV + `--json` CLI stats
-- [ ] Plugin API for custom agent parsers
+- [ ] Core scanner + SQLite (tokens + cost rollups)
+- [ ] P0 parsers: **Cursor, Grok, Windsurf, Codex, Claude Code**
+- [ ] Cost engine + bundled model price table
+- [ ] Dashboard: token totals, spend totals, agent/model charts
+- [ ] API: `/api/stats`, `/api/cost`, `/api/agents`, `/api/events`
+- [ ] CLI: `stats`, `cost`, `export`, `doctors`
+- [ ] P1 parsers: Copilot, OpenCode, Cline, Gemini, …
+- [ ] Plugin API for custom agents
 - [ ] Optional encrypted local DB
 
 ---
 
 ## Contributing
 
-Contributions are welcome.
-
-1. Fork the repository and create a feature branch.
-2. Keep parsers pure and well-tested (fixture-based).
-3. Prefer small, focused pull requests.
-4. Follow Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, …
+1. Fork and branch from `main`.
+2. Add parser fixtures for each agent (token fields required; cost via engine).
+3. Prefer small PRs; Conventional Commits (`feat:`, `fix:`, `docs:`).
 
 ---
 
@@ -424,4 +549,4 @@ MIT License — see [`LICENSE`](./LICENSE) when published.
 
 ## Disclaimer
 
-XLab Token reads **local usage artifacts** produced by third-party tools. Those tools and their file formats are owned by their respective vendors and may change without notice. Token counts and cost estimates are **best-effort** and may differ from provider billing dashboards.
+XLab Token reads **local usage artifacts** from third-party agents. Formats may change without notice. **Token counts and costs are best-effort estimates** and may differ from official provider billing dashboards or invoices.
