@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
 import { detectAgents, scanAll } from "../agents/index.js";
-import { loadConfig, saveConfig, setCustomRates, configPath } from "../config.js";
+import { loadConfig, saveConfig, setCustomRates, configPath, getConfigSync } from "../config.js";
 import {
   fetchOpenRouterModels,
   getOpenRouterFetchedAt,
@@ -13,8 +13,13 @@ import {
 } from "../openrouter-models.js";
 import { listPricingCatalog, repriceEvents } from "../pricing.js";
 import type { GroupBy, ModelRate, UsageEvent } from "../types.js";
-import { filterByPeriod, normalizeModelName } from "../util.js";
+import { filterByPeriod, normalizeModelName, startOfDayInTimeZone } from "../util.js";
 import { VERSION } from "../version.js";
+
+function configuredTimeZone(): string {
+  const tz = getConfigSync().timezone;
+  return (tz && String(tz).trim()) || "local";
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -180,6 +185,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
     if (req.method === "GET" && pathname === "/api/health") {
       const agents = await detectAgents(cache);
+      const timezone = configuredTimeZone();
       return json(res, 200, {
         ok: true,
         version: VERSION,
@@ -194,6 +200,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         scanUpdatedAt,
         pricingRevision,
         pricingUpdatedAt,
+        timezone,
+        todayStartsAt: startOfDayInTimeZone(timezone).toISOString(),
       });
     }
 
@@ -207,14 +215,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           error: { code: "INVALID_QUERY", message: "groupBy must be one of: agent, model, day, hour" },
         });
       }
-      const events = filterByPeriod(cache, since, until);
+      const events = filterByPeriod(cache, since, until, configuredTimeZone());
       return json(res, 200, aggregate(events, groupBy, sort, since, until));
     }
 
     if (req.method === "GET" && pathname === "/api/cost") {
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
-      const events = filterByPeriod(cache, since, until);
+      const events = filterByPeriod(cache, since, until, configuredTimeZone());
       return json(res, 200, costReport(events, since, until));
     }
 
@@ -223,7 +231,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const agent = url.searchParams.get("agent");
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
-      let list = filterByPeriod(cache, since, until);
+      let list = filterByPeriod(cache, since, until, configuredTimeZone());
       if (agent) list = list.filter((e) => e.agent === agent);
       // Newest first by timestamp (scan order is not chronological)
       list = list
@@ -457,8 +465,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           ? (body.pricing as Record<string, unknown>)
           : {};
       const bodyRates = bodyPricing.customRates;
+      const bodyTz =
+        typeof body.timezone === "string" && body.timezone.trim()
+          ? body.timezone.trim()
+          : prev.timezone;
       const next = await saveConfig({
         ...prev,
+        timezone: bodyTz || "local",
         pricing: {
           ...prev.pricing,
           ...bodyPricing,
@@ -472,7 +485,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // Reprice when preferRouterCost flips
       cache = repriceEvents(cache, { forceTable: next.pricing?.preferRouterCost === false });
       bumpPricing("config");
-      return json(res, 200, { ok: true, ...next, configPath: configPath() });
+      return json(res, 200, {
+        ok: true,
+        ...next,
+        configPath: configPath(),
+        todayStartsAt: startOfDayInTimeZone(next.timezone || "local").toISOString(),
+      });
     }
 
     if (!noUi && req.method === "GET" && pathname === "/styles.css") {

@@ -226,20 +226,83 @@ export function estimateTokensFromText(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
-export function parseSince(since?: string | null): Date | null {
-  if (!since) return null;
-  const key = String(since).trim().toLowerCase();
-  // Calendar "today" in local timezone (matches Dashboard/Agents UI)
-  if (key === "today") {
-    const d = new Date();
+/**
+ * Offset (ms) to add to UTC instant so wall-clock in `timeZone` matches
+ * the same numbers as if they were UTC. Used for zoned start-of-day math.
+ */
+function timeZoneOffsetMs(timeZone: string, date: Date): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = dtf.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) {
+    if (p.type !== "literal") map[p.type] = p.value;
+  }
+  const asUTC = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day),
+    Number(map.hour) % 24,
+    Number(map.minute),
+    Number(map.second),
+  );
+  return asUTC - date.getTime();
+}
+
+/** Start of calendar day (00:00:00.000) in the given IANA timezone (or "local" / "UTC"). */
+export function startOfDayInTimeZone(
+  timeZone?: string | null,
+  now: Date = new Date(),
+): Date {
+  const tz = (timeZone || "local").trim() || "local";
+  if (tz === "local") {
+    const d = new Date(now);
     d.setHours(0, 0, 0, 0);
     return d;
   }
-  if (key === "yesterday") {
-    const d = new Date();
+  if (tz === "UTC" || tz === "Etc/UTC") {
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  }
+  try {
+    const offset = timeZoneOffsetMs(tz, now);
+    const localAsUtc = new Date(now.getTime() + offset);
+    const startAsUtc = Date.UTC(
+      localAsUtc.getUTCFullYear(),
+      localAsUtc.getUTCMonth(),
+      localAsUtc.getUTCDate(),
+    );
+    // Recompute offset at the guessed boundary (DST-safe enough for day starts)
+    const guess = new Date(startAsUtc - offset);
+    const offset2 = timeZoneOffsetMs(tz, guess);
+    return new Date(startAsUtc - offset2);
+  } catch {
+    const d = new Date(now);
     d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - 1);
     return d;
+  }
+}
+
+/**
+ * Parse period start. `timeZone` applies to "today" / "yesterday"
+ * (IANA id, "local", or "UTC"). Relative 7d/24h is always wall-clock now − N.
+ */
+export function parseSince(since?: string | null, timeZone?: string | null): Date | null {
+  if (!since) return null;
+  const key = String(since).trim().toLowerCase();
+  if (key === "today") {
+    return startOfDayInTimeZone(timeZone, new Date());
+  }
+  if (key === "yesterday") {
+    const start = startOfDayInTimeZone(timeZone, new Date());
+    return new Date(start.getTime() - 86_400_000);
   }
   const m = since.match(/^(\d+)([smhd])$/i);
   if (m) {
@@ -260,8 +323,9 @@ export function filterByPeriod(
   events: UsageEvent[],
   since?: string | null,
   until?: string | null,
+  timeZone?: string | null,
 ): UsageEvent[] {
-  const s = parseSince(since);
+  const s = parseSince(since, timeZone);
   const u = until ? new Date(until) : null;
   return events.filter((e) => {
     const t = new Date(e.timestamp).getTime();
