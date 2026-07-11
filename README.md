@@ -119,25 +119,31 @@ XLab Token scans **local agent usage artifacts**, normalizes them into one schem
 
 **Goal:** track **token API usage and spend for every major agent on the machine**.
 
-| Agent / client | Canonical id | Typical sources | Priority |
-|----------------|--------------|-----------------|----------|
-| **Cursor** | `cursor` | Local DB / usage caches | P0 |
-| **Grok** (xAI / Grok CLI / IDE) | `grok` | Local session / usage logs | P0 |
-| **Windsurf** | `windsurf` | Local store / usage artifacts | P0 |
-| **OpenAI Codex CLI** | `codex` | Session logs | P0 |
-| **Claude Code** | `claude-code` | Session transcripts / usage | P0 |
-| GitHub Copilot | `copilot` | Local telemetry / caches | P1 |
-| OpenCode | `opencode` | Local store | P1 |
-| Cline | `cline` | Local session data | P1 |
-| Roo Code | `roocode` | Local session data | P1 |
-| Gemini CLI | `gemini` | Local logs | P1 |
-| Amp | `amp` | Local usage | P2 |
-| Droid (Factory) | `droid` | Local usage | P2 |
-| Warp AI | `warp` | Local usage | P2 |
-| Antigravity | `antigravity` | Local usage | P2 |
-| Trae | `trae` | Local usage | P2 |
-| Kimi / MiniMax / Z.AI / … | per-id | Local usage | P2 |
-| **Custom / generic** | `custom` | Drop-folder JSONL | P0 (escape hatch) |
+| Agent / client | Canonical id | Typical sources | Parser |
+|----------------|--------------|-----------------|--------|
+| **OpenAI Codex CLI** | `codex` | `~/.codex/sessions` rollout JSONL (deep) | Yes |
+| **Hermes Agent** | `hermes` | `~/.hermes/state.db` + JSONL | Yes |
+| **OpenClaw** (+ clawdbot/moltbot) | `openclaw` | `~/.openclaw/agents/**/sessions` | Yes |
+| **Cursor** | `cursor` | App data usage JSON/JSONL | Yes |
+| **Grok** (xAI) | `grok` | `~/.grok/sessions` | Yes |
+| **Windsurf** | `windsurf` | Codeium / Windsurf app data | Yes |
+| **Claude Code** | `claude-code` | `~/.claude/projects` JSONL | Yes |
+| Gemini CLI | `gemini` | `~/.gemini/tmp/**/chats` | Yes |
+| OpenCode | `opencode` | local share / storage | Yes |
+| GitHub Copilot | `copilot` | `~/.copilot/otel` JSONL | Yes |
+| Pi / Oh My Pi | `pi` | `~/.pi` / `~/.omp` sessions | Yes |
+| Kimi CLI | `kimi` | `~/.kimi/**/wire.jsonl` | Yes |
+| Qwen CLI | `qwen` | `~/.qwen/projects` | Yes |
+| Factory Droid | `droid` | `~/.factory` | Yes |
+| Amp | `amp` | `~/.amp` | Yes |
+| Goose | `goose` | XDG goose data | Yes |
+| Cline | `cline` | VS Code globalStorage | Yes |
+| Roo Code | `roocode` | VS Code globalStorage | Yes |
+| Kilo Code | `kilocode` | kilo data / globalStorage | Yes |
+| Antigravity | `antigravity` | gemini / antigravity data | Yes |
+| Warp AI | `warp` | Warp app data | Yes |
+| Trae | `trae` | Trae app data | Yes |
+| Zed Agent | `zed` | Zed threads data | Yes |
 
 > XLab Token only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
 
@@ -525,14 +531,16 @@ Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (
 
 | Area | Status |
 |------|--------|
-| Multi-agent local scanners | **Done** — Claude Code, Codex, Cursor, Windsurf, Grok, Gemini, OpenCode |
+| Multi-agent local scanners | **Done** — 23 agents incl. Codex (deep), Hermes, OpenClaw |
 | Token + cost aggregation | **Done** — `stats` / `cost` / `/api/stats` / `/api/cost` |
 | Bundled offline pricing | **Done** — LiteLLM-style rates in `src/pricing.ts` |
 | Localhost dashboard | **Done** — `xlab-token serve` → `http://127.0.0.1:3737` |
 | Agent detection (`doctors`) | **Done** |
+| Hermes SQLite (`state.db`) | **Done** — via `node:sqlite` + JSONL fallback |
+| OpenClaw / clawdbot / moltbot | **Done** — sessions index + JSONL usage |
+| Codex deep scan | **Done** — sessions/history/archived, cumulative token_count |
 | Grok session estimate | **Done** — real usage if present, else text-length estimate |
 | Cursor SQLite (`state.vscdb`) | Planned (JSON/JSONL caches supported now) |
-| Copilot deep parser | Path detect only |
 | SQLite persistent store | Planned (in-memory scan each run for v0.1) |
 | LiteLLM live price refresh | Planned |
 
