@@ -183,7 +183,8 @@
       google: 'gemini.png',
       'google-vertex': 'vertex.png',
       'google-ai-studio': 'gemini.png',
-      'x-ai': 'xai.png',
+      'x-ai': 'xai.png', // Grok brand mark (stylized G)
+      grok: 'xai.png',
       'meta-llama': 'meta.png',
       mistralai: 'mistral.png',
       deepseek: 'deepseek.png',
@@ -333,7 +334,7 @@
       const p = providerKey(provider);
       const srcs = [];
       const file = PROVIDER_ICON_FILE[p];
-      if (file) srcs.push('/assets/providers/' + file + '?v=11');
+      if (file) srcs.push('/assets/providers/' + file + '?v=12');
       const lobe = PROVIDER_LOBE[p];
       if (lobe) {
         srcs.push('https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@latest/packages/static-png/light/' + lobe + '.png');
