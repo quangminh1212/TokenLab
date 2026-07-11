@@ -1337,7 +1337,8 @@ html.dark .or-chip.active { color: var(--xlab-400); }
   max-height: 2rem;
   border-radius: 0.5rem;
   overflow: hidden;
-  background: #fff;
+  /* white plate so brand colors read correctly */
+  background: #ffffff;
   border: 1px solid var(--border-soft);
   display: flex;
   align-items: center;
@@ -1346,7 +1347,8 @@ html.dark .or-chip.active { color: var(--xlab-400); }
   grid-column: 1;
 }
 html.dark .or-prov {
-  background: #1a1a1a;
+  background: #ffffff;
+  border-color: color-mix(in srgb, #fff 12%, var(--border));
 }
 .or-prov-img {
   width: 100%;

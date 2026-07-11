@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Model · XLab Token</title>
+  <title>Model Â· XLab Token</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
@@ -31,7 +31,7 @@
         <a class="nav-link" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
-        <span class="meta-chip" id="meta">Loading…</span>
+        <span class="meta-chip" id="meta">Loadingâ€¦</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
       </div>
     </div>
@@ -41,10 +41,10 @@
     <div class="usage-toolbar model-toolbar-top">
       <div>
         <h1 class="page-title">Models</h1>
-        <p class="page-sub">OpenRouter · $/1M tokens</p>
+        <p class="page-sub">OpenRouter Â· $/1M tokens</p>
       </div>
       <div class="usage-actions">
-        <span class="pricing-status muted" id="pricingStatus">—</span>
+        <span class="pricing-status muted" id="pricingStatus">â€”</span>
         <button class="btn btn-with-icon" id="pricingReload" type="button">Refresh</button>
         <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save</button>
       </div>
@@ -53,7 +53,7 @@
     <section class="model-or-panel">
       <div class="or-search-bar">
         <svg class="or-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-        <input id="priceSearch" class="or-search-input" type="search" placeholder="Search models…" autocomplete="off" autofocus />
+        <input id="priceSearch" class="or-search-input" type="search" placeholder="Search modelsâ€¦" autocomplete="off" autofocus />
       </div>
 
       <div class="or-filters">
@@ -69,15 +69,15 @@
         <select id="sortFilter" class="or-select" aria-label="Sort">
           <option value="newest">Newest</option>
           <option value="name">Name</option>
-          <option value="price-asc">Price ↑</option>
-          <option value="price-desc">Price ↓</option>
+          <option value="price-asc">Price â†‘</option>
+          <option value="price-desc">Price â†“</option>
           <option value="context">Context</option>
         </select>
-        <span class="or-count muted" id="resultCount">—</span>
+        <span class="or-count muted" id="resultCount">â€”</span>
       </div>
 
       <div class="or-list" id="modelList">
-        <div class="empty">Loading models…</div>
+        <div class="empty">Loading modelsâ€¦</div>
       </div>
 
       <div class="model-add-row">
@@ -89,8 +89,8 @@
     </section>
 
     <footer>
-      <div>Rates from OpenRouter · editable overrides apply to all agents</div>
-      <div>localhost only · estimated cost, not billing</div>
+      <div>Rates from OpenRouter Â· editable overrides apply to all agents</div>
+      <div>localhost only Â· estimated cost, not billing</div>
     </footer>
   </main>
 
@@ -162,7 +162,7 @@
       const v = Number(n) || 0;
       if (v >= 1e6) return (v / 1e6).toFixed(v % 1e6 === 0 ? 0 : 1) + 'M';
       if (v >= 1e3) return Math.round(v / 1e3) + 'K';
-      return String(v || '—');
+      return String(v || 'â€”');
     }
 
     function fmtPrice(n) {
@@ -174,7 +174,7 @@
     }
 
     /**
-     * Full OpenRouter author → local brand icon (no letter-only if we have a logo).
+     * Full OpenRouter author â†’ local brand icon (no letter-only if we have a logo).
      * Community HF fine-tunes share huggingface.png intentionally.
      */
     const PROVIDER_ICON_FILE = {
@@ -333,7 +333,7 @@
       const p = providerKey(provider);
       const srcs = [];
       const file = PROVIDER_ICON_FILE[p];
-      if (file) srcs.push('/assets/providers/' + file + '?v=7');
+      if (file) srcs.push('/assets/providers/' + file + '?v=9');
       const lobe = PROVIDER_LOBE[p];
       if (lobe) {
         srcs.push('https://cdn.jsdelivr.net/gh/lobehub/lobe-icons@latest/packages/static-png/light/' + lobe + '.png');
@@ -354,7 +354,7 @@
       const srcs = providerIconSrcs(p);
       const bg = providerColor(p);
       const title = escapeHtml(p);
-      // Always a fixed 2rem box; letter is overlay inside — never inline with model name
+      // Always a fixed 2rem box; letter is overlay inside â€” never inline with model name
       if (!srcs.length) {
         return `<span class="or-prov is-fallback" title="${title}" style="background:${bg}" aria-hidden="true"><span class="or-prov-letter" style="background:${bg}">${letter}</span></span>`;
       }
@@ -366,7 +366,7 @@
       </span>`;
     }
 
-    // Chain local → CDN → monogram letter inside icon box only
+    // Chain local â†’ CDN â†’ monogram letter inside icon box only
     document.addEventListener('error', (e) => {
       const img = e.target;
       if (!img || !img.classList || !img.classList.contains('or-prov-img')) return;
@@ -446,7 +446,7 @@
       const MAX = 200;
       const slice = list.slice(0, MAX);
       const more = list.length > MAX
-        ? `<div class="or-more muted">Showing ${MAX} of ${list.length} — refine search</div>`
+        ? `<div class="or-more muted">Showing ${MAX} of ${list.length} â€” refine search</div>`
         : '';
 
       const head = `<div class="or-head" aria-hidden="true">
@@ -473,7 +473,7 @@
               </div>
               <div class="or-card-meta">
                 <code class="or-id">${id}</code>
-                <span class="or-dot">·</span>
+                <span class="or-dot">Â·</span>
                 <span>${fmtCtx(m.contextLength)}</span>
               </div>
             </div>
@@ -507,7 +507,7 @@
       try {
         const health = await fetch('/api/health').then((r) => r.json());
         const n = health.agentsDetected?.length || 0;
-        $('meta').textContent = `v${health.version} · ${n} agents · ${health.eventCount || 0} events`;
+        $('meta').textContent = `v${health.version} Â· ${n} agents Â· ${health.eventCount || 0} events`;
       } catch {
         $('meta').innerHTML = '<span class="err">API offline</span>';
       }
@@ -515,7 +515,7 @@
 
     async function loadPricing(opts = {}) {
       const refresh = opts.refresh === true;
-      setStatus(refresh ? 'Fetching OpenRouter…' : 'Loading…');
+      setStatus(refresh ? 'Fetching OpenRouterâ€¦' : 'Loadingâ€¦');
       try {
         const q = refresh ? '?refreshOpenRouter=1' : '';
         const res = await fetch('/api/pricing' + q);
@@ -534,8 +534,8 @@
         renderList();
         const when = data.openrouterFetchedAt
           ? new Date(data.openrouterFetchedAt).toLocaleString()
-          : '—';
-        setStatus(`${openrouter.length} models · ${Object.keys(customRates).length} custom`);
+          : 'â€”';
+        setStatus(`${openrouter.length} models Â· ${Object.keys(customRates).length} custom`);
         if (!openrouter.length) {
           $('modelList').innerHTML = '<div class="empty">No OpenRouter models yet. Click Refresh.</div>';
         }
@@ -571,7 +571,7 @@
       const custom = { ...customRates, ...pricingDraft };
       liveSaving = true;
       if (manual) $('pricingSave').disabled = true;
-      setStatus(manual ? 'Saving…' : 'Updating…');
+      setStatus(manual ? 'Savingâ€¦' : 'Updatingâ€¦');
       try {
         const res = await fetch('/api/pricing', {
           method: 'PUT',
@@ -581,8 +581,8 @@
         pricingDraft = {};
         customRates = res.customRates || {};
         setStatus(manual
-          ? `Saved · ${Object.keys(customRates).length} custom`
-          : `Live · ${Object.keys(customRates).length} custom`);
+          ? `Saved Â· ${Object.keys(customRates).length} custom`
+          : `Live Â· ${Object.keys(customRates).length} custom`);
         // patch openrouter sources without full refetch
         openrouter = openrouter.map((m) => {
           const c = customRates[m.id.toLowerCase()] || customRates[(m.slug || '').toLowerCase()];
@@ -621,7 +621,7 @@
         inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
         outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
       };
-      setStatus('Typing…');
+      setStatus('Typingâ€¦');
       scheduleLivePush();
     });
 
