@@ -41,3 +41,4 @@ self-host/
 # Screenshots
 *.png
 !packages/frontend/public/**/*.png
+!src/server/assets/**/*.png
