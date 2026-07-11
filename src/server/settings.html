@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Settings · XLab Token</title>
+  <title>Settings &middot; XLab Token</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
@@ -31,7 +31,7 @@
         <a class="nav-link active" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
-        <span class="meta-chip" id="meta">Loading…</span>
+        <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
       </div>
     </div>
@@ -56,7 +56,7 @@
         </div>
         <div class="settings-row muted-row">
           <span>Current</span>
-          <code id="themeLabel">—</code>
+          <code id="themeLabel">&mdash;</code>
         </div>
       </section>
 
@@ -94,15 +94,15 @@
         <p class="settings-card-desc">Where XLab Token stores config on this machine.</p>
         <div class="settings-kv">
           <span>Config file</span>
-          <code id="configPath">—</code>
+          <code id="configPath">&mdash;</code>
         </div>
         <div class="settings-kv">
           <span>Platform</span>
-          <code id="platformLabel">—</code>
+          <code id="platformLabel">&mdash;</code>
         </div>
         <div class="settings-kv">
           <span>Node</span>
-          <code id="nodeLabel">—</code>
+          <code id="nodeLabel">&mdash;</code>
         </div>
       </section>
 
@@ -112,19 +112,19 @@
         <p class="settings-card-desc">Live status of the local API process.</p>
         <div class="settings-kv">
           <span>Version</span>
-          <code id="versionLabel">—</code>
+          <code id="versionLabel">&mdash;</code>
         </div>
         <div class="settings-kv">
           <span>Events cached</span>
-          <code id="eventsLabel">—</code>
+          <code id="eventsLabel">&mdash;</code>
         </div>
         <div class="settings-kv">
           <span>Scanning</span>
-          <code id="scanningLabel">—</code>
+          <code id="scanningLabel">&mdash;</code>
         </div>
         <div class="settings-kv">
           <span>Pricing revision</span>
-          <code id="pricingRevLabel">—</code>
+          <code id="pricingRevLabel">&mdash;</code>
         </div>
         <div class="settings-actions">
           <button type="button" class="btn btn-with-icon" id="rescanBtn">Rescan now</button>
@@ -150,8 +150,8 @@
     </div>
 
     <footer>
-      <div>Settings · local preferences</div>
-      <div>localhost only · estimated cost, not billing</div>
+      <div>Settings &middot; local preferences</div>
+      <div>localhost only &middot; estimated cost, not billing</div>
     </footer>
   </main>
 
@@ -186,13 +186,13 @@
       try {
         const h = await fetch('/api/health').then((r) => r.json());
         const n = h.agentsDetected?.length || 0;
-        $('meta').textContent = `v${h.version} · ${n} agents · ${h.eventCount || 0} events`;
-        $('versionLabel').textContent = h.version || '—';
-        $('eventsLabel').textContent = String(h.eventCount ?? '—');
+        $('meta').textContent = `v${h.version} \u00B7 ${n} agents \u00B7 ${h.eventCount || 0} events`;
+        $('versionLabel').textContent = h.version || '\u2014';
+        $('eventsLabel').textContent = String(h.eventCount ?? '\u2014');
         $('scanningLabel').textContent = h.scanning ? 'yes' : 'no';
-        $('pricingRevLabel').textContent = String(h.pricingRevision ?? '—');
-        $('platformLabel').textContent = `${h.platform || '—'} / ${h.arch || '—'}`;
-        $('nodeLabel').textContent = h.node || '—';
+        $('pricingRevLabel').textContent = String(h.pricingRevision ?? '\u2014');
+        $('platformLabel').textContent = `${h.platform || '\u2014'} / ${h.arch || '\u2014'}`;
+        $('nodeLabel').textContent = h.node || '\u2014';
       } catch {
         $('meta').innerHTML = '<span class="err">API offline</span>';
       }
@@ -201,7 +201,7 @@
     async function loadConfigUi() {
       try {
         const c = await fetch('/api/config').then((r) => r.json());
-        $('configPath').textContent = c.configPath || '—';
+        $('configPath').textContent = c.configPath || '\u2014';
         $('currencyLabel').textContent = c.pricing?.currency || 'USD';
         $('preferRouterCost').checked = c.pricing?.preferRouterCost !== false;
       } catch {
@@ -211,7 +211,7 @@
 
     $('saveCostSettings').onclick = async () => {
       $('saveCostSettings').disabled = true;
-      $('costSettingsStatus').textContent = 'Saving…';
+      $('costSettingsStatus').textContent = 'Saving\u2026';
       try {
         await fetch('/api/config', {
           method: 'PUT',
@@ -222,7 +222,7 @@
             },
           }),
         }).then((r) => r.json());
-        $('costSettingsStatus').textContent = 'Saved · costs will use new rules on next reprice/rescan';
+        $('costSettingsStatus').textContent = 'Saved \u00B7 costs will use new rules on next reprice/rescan';
         await loadConfigUi();
       } catch {
         $('costSettingsStatus').textContent = 'Save failed';
@@ -233,10 +233,10 @@
 
     $('rescanBtn').onclick = async () => {
       $('rescanBtn').disabled = true;
-      $('rescanStatus').textContent = 'Scanning…';
+      $('rescanStatus').textContent = 'Scanning\u2026';
       try {
         const r = await fetch('/api/scan', { method: 'POST' }).then((x) => x.json());
-        $('rescanStatus').textContent = `Done · ${r.eventsIngested ?? 0} events (${r.durationMs ?? 0}ms)`;
+        $('rescanStatus').textContent = `Done \u00B7 ${r.eventsIngested ?? 0} events (${r.durationMs ?? 0}ms)`;
         await loadHealth();
       } catch {
         $('rescanStatus').textContent = 'Scan failed';

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Agents · XLab Token</title>
-  <!-- Same icon as XLab_Web title bar (layout.tsx → /images/misc/topup.png) -->
+  <title>Agents &middot; XLab Token</title>
+  <!-- Same icon as XLab_Web title bar (layout.tsx &rarr; /images/misc/topup.png) -->
   <link rel="icon" type="image/png" href="/assets/favicon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
@@ -32,7 +32,7 @@
         <a class="nav-link" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
-        <span class="meta-chip" id="meta">Loading…</span>
+        <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
         <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings"></a>
       </div>
@@ -43,7 +43,7 @@
     <section class="hero">
       <div>
         <h2>Agent providers</h2>
-        <p>Map local coding agents on this machine — live / detected / offline, with token &amp; cost when available.</p>
+        <p>Map local coding agents on this machine &mdash; live / detected / offline, with token &amp; cost when available.</p>
       </div>
       <div class="toolbar" style="margin:0">
         <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Rescan agents and reload">Refresh</button>
@@ -64,17 +64,17 @@
         <button type="button" data-filter="detected">Detected</button>
         <button type="button" data-filter="offline">Offline</button>
       </div>
-      <input class="search" id="providerSearch" type="search" placeholder="Search agents…" enterkeyhint="search" autocomplete="off" />
+      <input class="search" id="providerSearch" type="search" placeholder="Search agents&hellip;" enterkeyhint="search" autocomplete="off" />
     </div>
 
-    <div class="muted" style="font-size:0.85rem;margin-bottom:0.85rem" id="providerSummary">—</div>
+    <div class="muted" style="font-size:0.85rem;margin-bottom:0.85rem" id="providerSummary">&mdash;</div>
 
     <div class="active-strip" id="activeStrip"></div>
     <div id="providerSections"></div>
 
     <footer>
-      <div>Provider map · brand icons from product sites</div>
-      <div>localhost only · no cloud billing APIs</div>
+      <div>Provider map &middot; brand icons from product sites</div>
+      <div>localhost only &middot; no cloud billing APIs</div>
     </footer>
   </main>
 
@@ -303,7 +303,7 @@
       const offline = list.filter((a) => agentKind(a) === 'offline');
 
       $('providerSummary').textContent =
-        `${live.length} live · ${detected.length} detected · ${offline.length} offline · ${list.length} total`;
+        `${live.length} live \u00B7 ${detected.length} detected \u00B7 ${offline.length} offline \u00B7 ${list.length} total`;
 
       const top = [...live].sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0)).slice(0, 6);
       $('activeStrip').innerHTML = top.length
@@ -408,8 +408,8 @@
         if (typeof health.scanRevision === 'number') scanRevision = health.scanRevision;
         const scanning = Boolean(health.scanning);
         awaitingData = scanning || (eventCount === 0 && scanRevision === 0);
-        const scanHint = scanning ? ' · scanning…' : '';
-        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(eventCount)} events${scanHint}`;
+        const scanHint = scanning ? ' \u00B7 scanning\u2026' : '';
+        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} events${scanHint}`;
 
         costByAgent = {};
         tokensByAgent = {};
@@ -448,7 +448,7 @@
     $('providerSearch').oninput = () => renderProviders();
     $('since').onchange = load;
     $('refresh').onclick = async () => {
-      setRefreshBusy('Refreshing…');
+      setRefreshBusy('Refreshing\u2026');
       try {
         await fetch('/api/scan', { method: 'POST' });
         await load();

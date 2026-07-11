@@ -34,8 +34,8 @@
     }
     html.dark {
       /*
-       * Dark mode surfaces — Google Drive / Material Dark
-       * bg #1f1f1f · surface #292a2d · elevated #3c4043 · text #e8eaed
+       * Dark mode surfaces - Google Drive / Material Dark
+       * bg #1f1f1f | surface #292a2d | elevated #3c4043 | text #e8eaed
        * Brand accent stays XLab teal
        */
       --xlab: #00d4aa;
@@ -102,7 +102,7 @@
     @media (min-width: 640px) { .shell { padding-left: max(1.25rem, env(safe-area-inset-left)); padding-right: max(1.25rem, env(safe-area-inset-right)); } }
     @media (min-width: 1024px) { .shell { padding-left: max(1.5rem, env(safe-area-inset-left)); padding-right: max(1.5rem, env(safe-area-inset-right)); } }
 
-    /* Header — mirrors XLab_Web Header.tsx */
+    /* Header - mirrors XLab_Web Header.tsx */
     .topbar {
       position: sticky; top: 0; z-index: 50;
       backdrop-filter: blur(12px);
@@ -323,7 +323,7 @@
       border-radius: inherit;
     }
 
-    /* Provider cards — 9router-inspired, optimized */
+    /* Provider cards - 9router-inspired, optimized */
     .active-strip {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
@@ -545,7 +545,7 @@
 }
 
 /* ============================================================
-   Usage dashboard — layout inspired by 9router /dashboard/usage
+   Usage dashboard - layout inspired by 9router /dashboard/usage
    ============================================================ */
 :root {
   --chart-tokens: #6366f1;
@@ -607,7 +607,7 @@ html.dark {
 .fetch-spin.hidden { display: none; }
 @keyframes u-spin { to { transform: rotate(360deg); } }
 
-/* Overview cards — 5 col like OverviewCards.js */
+/* Overview cards - 5 col like OverviewCards.js */
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -702,7 +702,7 @@ html.dark {
 }
 .recent-scroll::-webkit-scrollbar-track { background: transparent; }
 
-/* Clean list — less visual noise than dense table */
+/* Clean list - less visual noise than dense table */
 .recent-list {
   list-style: none;
   margin: 0;
@@ -827,8 +827,8 @@ html.dark {
 }
 
 /* ============================================================
-   Responsive — global breakpoints
-   sm ≤640 · md ≤900 · lg ≤1100
+   Responsive - global breakpoints
+   sm ≤640 | md ≤900 | lg ≤1100
    ============================================================ */
 
 /* Tablet */
@@ -1168,7 +1168,7 @@ a.btn {
   .settings-kv { grid-template-columns: 1fr; }
 }
 
-/* ========== Model page — airy list + provider icons ========== */
+/* ========== Model page - airy list + provider icons ========== */
 .model-page .page-title {
   margin: 0;
   font-size: 1.2rem;
@@ -1380,7 +1380,7 @@ html.dark .or-prov-dd-opt[aria-selected="true"] {
   overflow: auto;
   padding: 0;
 }
-/* Column grid: Model (flex) | In | Out — same for header + each row */
+/* Column grid: Model (flex) | In | Out - same for header + each row */
 .or-head,
 .or-row {
   display: grid;
@@ -1427,7 +1427,7 @@ html.dark .or-prov-dd-opt[aria-selected="true"] {
   align-items: center;
   min-width: 0;
 }
-/* Fixed square — never stretch into model name text */
+/* Fixed square - never stretch into model name text */
 .or-prov {
   position: relative;
   box-sizing: border-box;

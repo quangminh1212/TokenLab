@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dashboard · XLab Token</title>
-  <!-- Same icon as XLab_Web title bar (layout.tsx → /images/misc/topup.png) -->
+  <title>Dashboard &middot; XLab Token</title>
+  <!-- Same icon as XLab_Web title bar (layout.tsx &rarr; /images/misc/topup.png) -->
   <link rel="icon" type="image/png" href="/assets/favicon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
@@ -32,7 +32,7 @@
         <a class="nav-link" href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
-        <span class="meta-chip" id="meta">Loading…</span>
+        <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
         <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings"></a>
       </div>
@@ -68,7 +68,7 @@
           </div>
         </div>
         <div class="chart-body" id="chartBody">
-          <div class="chart-empty">Loading…</div>
+          <div class="chart-empty">Loading&hellip;</div>
         </div>
       </section>
 
@@ -77,7 +77,7 @@
           <span class="u-card-title">Recent events</span>
         </div>
         <div class="recent-scroll" id="recentBody">
-          <div class="chart-empty">Loading…</div>
+          <div class="chart-empty">Loading&hellip;</div>
         </div>
       </section>
     </div>
@@ -105,8 +105,8 @@
     </section>
 
     <footer>
-      <div>Layout inspired by <strong>9router Usage</strong> · accent XLab teal</div>
-      <div>localhost only · estimated cost, not billing</div>
+      <div>Layout inspired by <strong>9router Usage</strong> &middot; accent XLab teal</div>
+      <div>localhost only &middot; estimated cost, not billing</div>
     </footer>
   </main>
 
@@ -139,7 +139,7 @@
         .replaceAll('"', '&quot;');
     }
 
-    /** Universal outline icons (Heroicons-style) — easy to recognize */
+    /** Universal outline icons (Heroicons-style) \u2014 easy to recognize */
     const ICONS = {
       moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
       sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
@@ -201,7 +201,7 @@
       return state.period || '';
     }
 
-    /** Parse relative (7d/24h) or ISO since — mirrors server parseSince. */
+    /** Parse relative (7d/24h) or ISO since \u2014 mirrors server parseSince. */
     function parseSinceMs(since) {
       if (!since) return null;
       const m = String(since).match(/^(\d+)([smhd])$/i);
@@ -232,7 +232,7 @@
 
     function formatHourLabel(key, withDate) {
       const d = parseHourKey(key);
-      if (Number.isNaN(d.getTime())) return String(key || '—');
+      if (Number.isNaN(d.getTime())) return String(key || '\u2014');
       if (withDate) {
         return d.toLocaleString(undefined, {
           month: 'short', day: 'numeric',
@@ -242,7 +242,7 @@
       return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
     }
 
-    /** Strip provider suffixes so "gpt-5.5 (openai-compatible-…)" → "gpt-5.5" */
+    /** Strip provider suffixes so "gpt-5.5 (openai-compatible-\u2026)" \u2192 "gpt-5.5" */
     function normalizeModelName(model) {
       if (model == null) return '';
       let m = String(model).trim();
@@ -343,7 +343,7 @@
     }
 
     function timeAgo(iso) {
-      if (!iso) return '—';
+      if (!iso) return '\u2014';
       const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
       if (mins < 1) return 'Just now';
       if (mins < 60) return mins + 'm ago';
@@ -354,8 +354,8 @@
     function emptyMsg(kind) {
       if (state.scanning || state.awaitingData) {
         return kind === 'table'
-          ? 'Đang quét agents… dữ liệu sẽ hiện ngay khi xong.'
-          : 'Scanning agents…';
+          ? 'Đang quét agents\u2026 dữ liệu sẽ hiện ngay khi xong.'
+          : 'Scanning agents\u2026';
       }
       if (kind === 'chart') return 'No data for this period';
       if (kind === 'table') return 'Chưa có usage. Dùng AI agents rồi bấm Refresh.';
@@ -370,7 +370,7 @@
       $('recentBody').innerHTML = `
         <ul class="recent-list">
           ${events.map((e) => {
-            const model = normalizeModelName(e.model) || e.agent || '—';
+            const model = normalizeModelName(e.model) || e.agent || '\u2014';
             const agent = e.agent && e.model ? e.agent : '';
             return `<li class="recent-item">
               <div class="recent-item-main">
@@ -490,7 +490,7 @@
           <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
           <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
           <td class="num muted">${fmtFull(input)}</td>
-          <td class="num muted">${cache ? fmtFull(cache) : '—'}</td>
+          <td class="num muted">${cache ? fmtFull(cache) : '\u2014'}</td>
           <td class="num muted">${fmtFull(output)}</td>
           <td class="num"><strong>${fmtFull(g.totalTokens || 0)}</strong></td>
         </tr>`;
@@ -516,7 +516,7 @@
       if (since) { qStats.set('since', since); qSeries.set('since', since); }
 
       try {
-        // Pass since to /api/events so server filters with parseSince (7d/24h/…),
+        // Pass since to /api/events so server filters with parseSince (7d/24h/\u2026),
         // not new Date("7d") which is Invalid Date and drops every event.
         const qEvents = new URLSearchParams({ limit: '40' });
         if (since) qEvents.set('since', since);
@@ -548,8 +548,8 @@
         state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
         state.lastEventCount = eventCount;
 
-        const scanHint = state.scanning ? ' · scanning…' : (state.awaitingData ? ' · waiting…' : '');
-        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(eventCount)} events${scanHint}`;
+        const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
+        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} events${scanHint}`;
 
         renderOverview(state.totals);
         renderChart();
@@ -624,7 +624,7 @@
 
     // Single action: rescan local agents + reload dashboard
     $('refresh').onclick = async () => {
-      setRefreshBusy('Refreshing…');
+      setRefreshBusy('Refreshing\u2026');
       try {
         await fetch('/api/scan', { method: 'POST' });
         await load({ quiet: true });
@@ -667,7 +667,7 @@
                 scheduleScanPoll();
                 return;
               }
-              // Scan finished (or error idle) — always reload so empty UI fills
+              // Scan finished (or error idle) \u2014 always reload so empty UI fills
               if (rev !== state.scanRevision || wasScanning || msg.reason === 'complete') {
                 state.scanRevision = rev;
                 state.awaitingData = false;
