@@ -503,8 +503,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           public: body.public === true,
           eventCountHint: cache.length,
           saveToken: body.saveToken === true,
-          // Gist: settings by default (size limits); full only if requested & fits
-          scope: body.scope === "full" ? "full" : "settings",
+          // Always full project usage (config + rates + events + compact daily mirrors)
+          scope: "full",
           events: cache,
         });
         return json(res, 200, {
@@ -514,6 +514,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           exportedAt: result.backup.exportedAt,
           customRateCount: Object.keys(result.backup.config.pricing?.customRates || {}).length,
           eventCount: result.backup.events?.length || result.backup.meta?.eventCount || 0,
+          mirrorFileCount: result.backup.meta?.mirrorFileCount || 0,
         });
       } catch (err) {
         return json(res, 400, {
