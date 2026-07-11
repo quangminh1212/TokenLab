@@ -44,7 +44,7 @@
       </div>
     </section>
 
-    <div class="toolbar">
+    <div class="toolbar agents-toolbar">
       <select id="since" aria-label="Time range for cost">
         <option value="24h">Last 24h</option>
         <option value="7d" selected>Last 7d</option>
@@ -57,7 +57,7 @@
         <button type="button" data-filter="detected">Detected</button>
         <button type="button" data-filter="offline">Offline</button>
       </div>
-      <input class="search" id="providerSearch" type="search" placeholder="Search agents…" />
+      <input class="search" id="providerSearch" type="search" placeholder="Search agents…" enterkeyhint="search" autocomplete="off" />
     </div>
 
     <div class="muted" style="font-size:0.85rem;margin-bottom:0.85rem" id="providerSummary">—</div>
