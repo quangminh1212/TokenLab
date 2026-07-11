@@ -82,7 +82,7 @@
       <div class="seg seg-sm" id="groupSeg" role="tablist" aria-label="Group by">
         <button type="button" class="seg-btn active" data-group="agent">By agent</button>
         <button type="button" class="seg-btn" data-group="model">By model</button>
-        <button type="button" class="seg-btn" data-group="day">By day</button>
+        <button type="button" class="seg-btn" data-group="day" id="groupTimeBtn">By day</button>
       </div>
       <div class="seg seg-sm" id="viewModeSeg" role="tablist" aria-label="Value mode">
         <button type="button" class="seg-btn active" data-view="costs">Costs</button>
@@ -143,9 +143,14 @@
       viewMode: 'costs',
       chartMode: 'tokens',
       daySeries: [],
+      chartByHour: false,
       groups: [],
       totals: null,
     };
+
+    function isHourlyPeriod() {
+      return state.period === 'today' || state.period === '24h';
+    }
 
     function sinceParam() {
       if (state.period === 'today') {
@@ -154,6 +159,81 @@
         return d.toISOString();
       }
       return state.period || '';
+    }
+
+    /** Match aggregate.ts hour key: UTC `YYYY-MM-DDTHH:00` */
+    function hourKeyFromDate(d) {
+      return d.toISOString().slice(0, 13) + ':00';
+    }
+
+    function parseHourKey(key) {
+      const s = String(key || '');
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(s)) return new Date(s + ':00.000Z');
+      return new Date(s);
+    }
+
+    function formatHourLabel(key, withDate) {
+      const d = parseHourKey(key);
+      if (Number.isNaN(d.getTime())) return String(key || '—');
+      if (withDate) {
+        return d.toLocaleString(undefined, {
+          month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit', hour12: false,
+        });
+      }
+      return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    function formatGroupKey(key) {
+      if (state.groupBy === 'hour' || /^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(String(key || ''))) {
+        return formatHourLabel(key, true);
+      }
+      return String(key ?? '');
+    }
+
+    /** Fill missing hours so Today/24h chart is continuous. */
+    function fillHourSeries(groups, period) {
+      const byKey = new Map((groups || []).map((g) => [g.key, g]));
+      const blank = (key) => ({
+        key,
+        totalTokens: 0,
+        estimatedCost: 0,
+        eventCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      });
+      const end = new Date();
+      end.setMinutes(0, 0, 0);
+      let start;
+      if (period === 'today') {
+        start = new Date();
+        start.setHours(0, 0, 0, 0);
+      } else {
+        start = new Date(end.getTime() - 23 * 3_600_000);
+      }
+      const out = [];
+      for (let t = start.getTime(); t <= end.getTime(); t += 3_600_000) {
+        const key = hourKeyFromDate(new Date(t));
+        out.push(byKey.get(key) || blank(key));
+      }
+      return out;
+    }
+
+    function syncTimeGroupButton() {
+      const btn = $('groupTimeBtn');
+      if (!btn) return;
+      if (isHourlyPeriod()) {
+        btn.setAttribute('data-group', 'hour');
+        btn.textContent = 'By hour';
+        if (state.groupBy === 'day') state.groupBy = 'hour';
+      } else {
+        btn.setAttribute('data-group', 'day');
+        btn.textContent = 'By day';
+        if (state.groupBy === 'hour') state.groupBy = 'day';
+      }
+      setActive($('groupSeg'), 'data-group', state.groupBy);
     }
 
     function setActive(segEl, attr, value) {
@@ -261,8 +341,11 @@
       }).join('');
 
       const xLabels = series.map((d, i) => {
-        if (n > 14 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return '';
-        const label = String(d.key || '').slice(5); // MM-DD
+        const step = n > 14 ? Math.ceil(n / 8) : (n > 10 ? 2 : 1);
+        if (n > 8 && i % step !== 0 && i !== n - 1 && i !== 0) return '';
+        const label = state.chartByHour
+          ? formatHourLabel(d.key, false)
+          : String(d.key || '').slice(5); // MM-DD
         return `<text x="${xAt(i)}" y="${H - 8}" class="chart-tick" text-anchor="middle">${escapeHtml(label)}</text>`;
       }).join('');
 
@@ -310,9 +393,10 @@
         const inputCost = cost * (inputShare / totalTok);
         const outCost = cost * (output / totalTok);
 
+        const label = formatGroupKey(g.key);
         if (costs) {
           return `<tr>
-            <td><code>${escapeHtml(g.key)}</code></td>
+            <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
             <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
             <td class="num muted">${money(inputCost)}</td>
             <td class="num muted">${money(outCost)}</td>
@@ -320,7 +404,7 @@
           </tr>`;
         }
         return `<tr>
-          <td><code>${escapeHtml(g.key)}</code></td>
+          <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
           <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
           <td class="num muted">${fmtFull(input)}</td>
           <td class="num muted">${cache ? fmtFull(cache) : '—'}</td>
@@ -332,22 +416,37 @@
 
     async function load() {
       $('fetchSpin').classList.remove('hidden');
+      syncTimeGroupButton();
       const since = sinceParam();
-      const qStats = new URLSearchParams({ groupBy: state.groupBy, sort: state.viewMode === 'tokens' ? 'tokens' : 'cost' });
-      const qDay = new URLSearchParams({ groupBy: 'day', sort: 'tokens' });
-      if (since) { qStats.set('since', since); qDay.set('since', since); }
+      const hourly = isHourlyPeriod();
+      state.chartByHour = hourly;
+
+      const tableSort = (state.groupBy === 'hour' || state.groupBy === 'day')
+        ? 'tokens'
+        : (state.viewMode === 'tokens' ? 'tokens' : 'cost');
+      const qStats = new URLSearchParams({ groupBy: state.groupBy, sort: tableSort });
+      const seriesBy = hourly ? 'hour' : 'day';
+      const qSeries = new URLSearchParams({ groupBy: seriesBy, sort: 'tokens' });
+      if (since) { qStats.set('since', since); qSeries.set('since', since); }
 
       try {
-        const [stats, dayStats, health, eventsRes] = await Promise.all([
+        const [stats, seriesStats, health, eventsRes] = await Promise.all([
           fetch('/api/stats?' + qStats).then((r) => r.json()),
-          fetch('/api/stats?' + qDay).then((r) => r.json()),
+          fetch('/api/stats?' + qSeries).then((r) => r.json()),
           fetch('/api/health').then((r) => r.json()),
           fetch('/api/events?limit=40').then((r) => r.json()),
         ]);
 
         state.totals = stats.totals || {};
-        state.groups = stats.groups || [];
-        state.daySeries = (dayStats.groups || []).slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+        let groups = stats.groups || [];
+        // Chronological for time buckets
+        if (state.groupBy === 'hour' || state.groupBy === 'day') {
+          groups = groups.slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+        }
+        state.groups = groups;
+
+        const rawSeries = (seriesStats.groups || []).slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+        state.daySeries = hourly ? fillHourSeries(rawSeries, state.period) : rawSeries;
 
         const detected = health.agentsDetected?.length || 0;
         $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(health.eventCount || 0)} events`;
@@ -356,7 +455,6 @@
         renderChart();
         renderTable();
 
-        // Filter recent by period client-side when since is set
         let recent = eventsRes.events || [];
         if (since) {
           const t0 = new Date(since).getTime();
@@ -376,6 +474,7 @@
       if (!b) return;
       state.period = b.getAttribute('data-period') ?? '7d';
       setActive($('periodSeg'), 'data-period', state.period);
+      syncTimeGroupButton();
       load();
     };
     $('chartMode').onclick = (e) => {
