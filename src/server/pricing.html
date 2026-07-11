@@ -414,7 +414,9 @@
       setStatus(refresh ? 'Fetching OpenRouter…' : 'Loading…');
       try {
         const q = refresh ? '?refreshOpenRouter=1' : '';
-        const data = await fetch('/api/pricing' + q).then((r) => r.json());
+        const res = await fetch('/api/pricing' + q);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
         openrouter = Array.isArray(data.openrouter) ? data.openrouter : [];
         customRates = data.customRates || {};
         seenSet = new Set((data.seenModels || []).map((m) => String(m).toLowerCase()));
@@ -422,17 +424,19 @@
         for (const s of [...seenSet]) {
           if (s.includes('/')) seenSet.add(s.slice(s.lastIndexOf('/') + 1));
         }
-        $('pricingPath').textContent = data.configPath || 'config.json';
+        const pathEl = $('pricingPath');
+        if (pathEl) pathEl.textContent = data.configPath || 'config.json';
         fillProviders();
         renderList();
         const when = data.openrouterFetchedAt
           ? new Date(data.openrouterFetchedAt).toLocaleString()
           : '—';
-        setStatus(`${openrouter.length} OpenRouter · ${Object.keys(customRates).length} custom · ${when}`);
+        setStatus(`${openrouter.length} models · ${Object.keys(customRates).length} custom`);
         if (!openrouter.length) {
           $('modelList').innerHTML = '<div class="empty">No OpenRouter models yet. Click Refresh.</div>';
         }
-      } catch {
+      } catch (err) {
+        console.error('[model] loadPricing', err);
         setStatus('Load failed');
         $('modelList').innerHTML = '<div class="empty">Failed to load models</div>';
       }
