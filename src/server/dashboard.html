@@ -580,7 +580,11 @@
       '#10B981', '#0ea5e9', '#64748b', '#334155', '#475569',
     ];
 
-    /** Official-ish agent icons under /assets/agents/ */
+    /**
+     * Agent icons under /assets/agents/
+     * Verified brand marks where available (Claude/Cursor/Codex/Gemini/Grok/Copilot/…)
+     * Fallback: official-adjacent marks from simple-icons / product repos
+     */
     const AGENT_ICONS = {
       'claude-code': '/assets/agents/claude-code.jpg',
       codex: '/assets/agents/codex.png',
@@ -596,7 +600,7 @@
       kimi: '/assets/agents/kimi.svg',
       qwen: '/assets/agents/qwen.png',
       droid: '/assets/agents/droid.png',
-      amp: '/assets/agents/amp.svg',
+      amp: '/assets/agents/amp.ico',
       goose: '/assets/agents/goose.png',
       cline: '/assets/agents/cline.svg',
       roocode: '/assets/agents/roocode.png',
@@ -618,7 +622,7 @@
       codebuddy: '/assets/agents/codebuddy.svg',
       workbuddy: '/assets/agents/workbuddy.svg',
       aider: '/assets/agents/aider.svg',
-      continue: '/assets/agents/continue.svg',
+      continue: '/assets/agents/continue.png',
     };
 
     let agentState = [];
