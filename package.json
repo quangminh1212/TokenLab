@@ -4,14 +4,20 @@
   "description": "Local-first token API usage and cost tracker for AI coding agents on one machine",
   "type": "module",
   "bin": {
-    "xlab-token": "./dist/cli.js"
+    "xlab-token": "dist/cli.js"
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "prepublishOnly": "npm run build && npm test",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "serve": "tsx src/cli.ts serve",
@@ -20,7 +26,8 @@
     "cost": "tsx src/cli.ts cost",
     "doctors": "tsx src/cli.ts doctors",
     "test": "tsx --test src/**/*.test.ts src/**/**/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pack:check": "npm pack --dry-run"
   },
   "engines": {
     "node": ">=20"
@@ -34,9 +41,23 @@
     "codex",
     "windsurf",
     "grok",
-    "localhost"
+    "devin",
+    "localhost",
+    "xlab"
   ],
+  "author": "XLab",
   "license": "MIT",
+  "homepage": "https://github.com/quangminh1212/XLab_Token#readme",
+  "bugs": {
+    "url": "https://github.com/quangminh1212/XLab_Token/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quangminh1212/XLab_Token.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist",
     "README.md",

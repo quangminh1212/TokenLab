@@ -46,3 +46,6 @@ self-host/
 !src/server/assets/**/*.jpeg
 !src/server/assets/**/*.svg
 !src/server/assets/**/*.ico
+
+.npmrc
+
