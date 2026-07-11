@@ -1,4 +1,4 @@
-﻿/* Design tokens from C:\\Dev\\XLab_Web (tailwind + globals.css) */
+/* Design tokens from C:\\Dev\\XLab_Web (tailwind + globals.css) */
     :root {
       --xlab: #00A19A;           /* primary.500 / xlab.500 */
       --xlab-600: #0d9488;       /* primary.600 */
@@ -34,8 +34,8 @@
     }
     html.dark {
       /*
-       * Dark mode surfaces â€” Google Drive / Material Dark
-       * bg #1f1f1f Â· surface #292a2d Â· elevated #3c4043 Â· text #e8eaed
+       * Dark mode surfaces — Google Drive / Material Dark
+       * bg #1f1f1f · surface #292a2d · elevated #3c4043 · text #e8eaed
        * Brand accent stays XLab teal
        */
       --xlab: #00d4aa;
@@ -102,7 +102,7 @@
     @media (min-width: 640px) { .shell { padding-left: max(1.25rem, env(safe-area-inset-left)); padding-right: max(1.25rem, env(safe-area-inset-right)); } }
     @media (min-width: 1024px) { .shell { padding-left: max(1.5rem, env(safe-area-inset-left)); padding-right: max(1.5rem, env(safe-area-inset-right)); } }
 
-    /* Header â€” mirrors XLab_Web Header.tsx */
+    /* Header — mirrors XLab_Web Header.tsx */
     .topbar {
       position: sticky; top: 0; z-index: 50;
       backdrop-filter: blur(12px);
@@ -323,7 +323,7 @@
       border-radius: inherit;
     }
 
-    /* Provider cards â€” 9router-inspired, optimized */
+    /* Provider cards — 9router-inspired, optimized */
     .active-strip {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
