@@ -54,29 +54,35 @@ async function main(): Promise<void> {
     const port = getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined;
     const noUi = has(args, "--no-ui");
     const shouldOpen = has(args, "--open") || process.env.XLAB_TOKEN_OPEN === "1";
-    const srv = await startServer({ host, port, noUi });
-    const uiUrl = `http://${srv.host}:${srv.port}/`;
-    console.log(`XLab Token v${VERSION}  (${process.platform}/${process.arch})`);
-    console.log(`API  http://${srv.host}:${srv.port}/api/health`);
-    if (!noUi) console.log(`UI   ${uiUrl}`);
-    console.log("Press Ctrl+C to stop");
-    if (shouldOpen && !noUi) openBrowser(uiUrl);
+    try {
+      const srv = await startServer({ host, port, noUi });
+      const uiUrl = `http://${srv.host}:${srv.port}/`;
+      console.log(`XLab Token v${VERSION}  (${process.platform}/${process.arch})`);
+      console.log(`API  http://${srv.host}:${srv.port}/api/health`);
+      if (!noUi) console.log(`UI   ${uiUrl}`);
+      console.log("Scanning agents in background…");
+      console.log("Press Ctrl+C to stop");
+      if (shouldOpen && !noUi) openBrowser(uiUrl);
 
-    let shuttingDown = false;
-    const shutdown = async (_signal: string) => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      try {
-        await srv.close();
-      } catch {
-        // ignore close errors on hot-reload restart
-      }
-      process.exit(0);
-    };
-    process.on("SIGINT", () => void shutdown("SIGINT"));
-    process.on("SIGTERM", () => void shutdown("SIGTERM"));
-    // tsx watch / Windows sometimes sends before handlers finish
-    process.on("SIGHUP", () => void shutdown("SIGHUP"));
+      let shuttingDown = false;
+      const shutdown = async (_signal: string) => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        try {
+          await srv.close();
+        } catch {
+          // ignore close errors on hot-reload restart
+        }
+        process.exit(0);
+      };
+      process.on("SIGINT", () => void shutdown("SIGINT"));
+      process.on("SIGTERM", () => void shutdown("SIGTERM"));
+      // tsx watch / Windows sometimes sends before handlers finish
+      process.on("SIGHUP", () => void shutdown("SIGHUP"));
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
     return;
   }
 

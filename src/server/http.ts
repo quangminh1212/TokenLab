@@ -62,8 +62,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     }
   }
 
-  await rescan();
-
+  // Do NOT block listen on the full scan — large agent datasets (100k+ events)
+  // take many seconds and race with hot-reload port reclaim on Windows.
   const dashboardPath = path.join(__dirname, "dashboard.html");
   const agentsPagePath = path.join(__dirname, "agents.html");
   const settingsPagePath = path.join(__dirname, "settings.html");
@@ -94,6 +94,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         agentsDetected: agents.filter((a) => a.detected).map((a) => a.id),
         eventCount: cache.length,
+        scanning,
         pricingRevision,
         pricingUpdatedAt,
       });
@@ -302,10 +303,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     json(res, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
   }
 
-  // Retry listen so hot-reload (tsx watch) can reclaim the port after restart
-  await listenWithRetry(server, port, host, 25, 120);
+  // Bind immediately (retry on EADDRINUSE — common with tsx watch on Windows)
+  await listenWithRetry(server, port, host, 40, 150);
 
-  // background refresh every 60s
+  // Initial scan + periodic refresh in background
+  void rescan().catch((err) => {
+    console.error("[xlab-token] initial scan failed:", err instanceof Error ? err.message : err);
+  });
   const timer = setInterval(() => {
     void rescan();
   }, 60_000);
@@ -324,7 +328,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
         // hard-stop hang if peers keep sockets open
-        setTimeout(() => resolve(), 500).unref?.();
+        setTimeout(() => resolve(), 800).unref?.();
       });
     },
   };
@@ -369,11 +373,28 @@ async function listenWithRetry(
     } catch (err) {
       lastErr = err;
       const code = err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : "";
+      // Must close before re-listen on the same Server instance
+      try {
+        server.close();
+      } catch {
+        // ignore
+      }
       if (code !== "EADDRINUSE" || i === attempts - 1) break;
+      if (i === 0 || (i + 1) % 5 === 0) {
+        console.warn(
+          `[xlab-token] port ${host}:${port} busy (EADDRINUSE), retry ${i + 1}/${attempts}…`,
+        );
+      }
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  const msg =
+    lastErr instanceof Error
+      ? lastErr.message
+      : String(lastErr);
+  throw new Error(
+    `Cannot bind ${host}:${port} — ${msg}. Stop other xlab-token / node processes using this port, then retry.`,
+  );
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
