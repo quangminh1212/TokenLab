@@ -32,67 +32,91 @@
     </div>
   </header>
 
-  <main class="shell">
-    <section class="hero">
-      <div>
-        <h2>Usage dashboard</h2>
-        <p>Token totals, estimated cost, and breakdown by agent / model / day.</p>
+  <main class="shell usage-page">
+    <!-- Toolbar: period + actions (9router Usage style) -->
+    <div class="usage-toolbar">
+      <div class="seg" id="periodSeg" role="tablist" aria-label="Time range">
+        <button type="button" class="seg-btn" data-period="today">Today</button>
+        <button type="button" class="seg-btn" data-period="24h">24h</button>
+        <button type="button" class="seg-btn active" data-period="7d">7D</button>
+        <button type="button" class="seg-btn" data-period="30d">30D</button>
+        <button type="button" class="seg-btn" data-period="">All</button>
       </div>
-      <div class="toolbar" style="margin:0">
+      <div class="usage-actions">
+        <span class="fetch-spin hidden" id="fetchSpin" aria-hidden="true"></span>
         <button class="btn" id="refresh" type="button">Refresh</button>
         <button class="btn btn-primary" id="scan" type="button">Rescan</button>
       </div>
-    </section>
-
-    <div class="toolbar">
-      <select id="since" aria-label="Time range">
-        <option value="24h">Last 24h</option>
-        <option value="7d" selected>Last 7d</option>
-        <option value="30d">Last 30d</option>
-        <option value="">All time</option>
-      </select>
-      <select id="groupBy" aria-label="Group by">
-        <option value="agent" selected>By agent</option>
-        <option value="model">By model</option>
-        <option value="day">By day</option>
-      </select>
     </div>
 
-    <div class="grid-kpi" id="kpis"></div>
+    <!-- Overview cards -->
+    <div class="overview-grid" id="overview"></div>
 
-    <section class="card block">
-      <div class="section-head">
-        <h3>Breakdown</h3>
-        <span class="pill" id="sortLabel">sorted by cost</span>
+    <!-- Chart + Recent -->
+    <div class="usage-mid">
+      <section class="u-card chart-card">
+        <div class="chart-head">
+          <div class="seg seg-sm" id="chartMode" role="tablist" aria-label="Chart metric">
+            <button type="button" class="seg-btn active" data-mode="tokens">Tokens</button>
+            <button type="button" class="seg-btn" data-mode="cost">Cost</button>
+          </div>
+        </div>
+        <div class="chart-body" id="chartBody">
+          <div class="chart-empty">Loading…</div>
+        </div>
+      </section>
+
+      <section class="u-card recent-card">
+        <div class="u-card-head">
+          <span class="u-card-title">Recent events</span>
+        </div>
+        <div class="recent-scroll" id="recentBody">
+          <div class="chart-empty">Loading…</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Breakdown table -->
+    <div class="table-toolbar">
+      <div class="seg seg-sm" id="groupSeg" role="tablist" aria-label="Group by">
+        <button type="button" class="seg-btn active" data-group="agent">By agent</button>
+        <button type="button" class="seg-btn" data-group="model">By model</button>
+        <button type="button" class="seg-btn" data-group="day">By day</button>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Tokens</th>
-            <th>Cost (USD)</th>
-            <th>Share</th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
+      <div class="seg seg-sm" id="viewModeSeg" role="tablist" aria-label="Value mode">
+        <button type="button" class="seg-btn active" data-view="costs">Costs</button>
+        <button type="button" class="seg-btn" data-view="tokens">Tokens</button>
+      </div>
+    </div>
+
+    <section class="u-card table-card">
+      <div class="table-scroll">
+        <table class="usage-table" id="usageTable">
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
     </section>
 
     <footer>
-      <div>Màu &amp; logo từ <strong>XLab Web</strong> · primary <strong>#00A19A</strong></div>
-      <div>localhost only · no cloud billing APIs</div>
+      <div>Layout inspired by <strong>9router Usage</strong> · accent XLab teal</div>
+      <div>localhost only · estimated cost, not billing</div>
     </footer>
   </main>
 
   <script>
     const $ = (id) => document.getElementById(id);
     const fmt = (n) => {
-      if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-      if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-      return String(Math.round(n || 0));
+      const v = Number(n) || 0;
+      if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+      if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+      if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+      return String(Math.round(v));
     };
-    const money = (n) => '$' + (n || 0).toFixed(4);
+    const fmtFull = (n) => new Intl.NumberFormat().format(Math.round(Number(n) || 0));
+    const money = (n, digits = 2) => '$' + (Number(n) || 0).toFixed(digits);
+    const money4 = (n) => money(n, 4);
+
     function escapeHtml(s) {
       return String(s ?? '')
         .replaceAll('&', '&amp;')
@@ -112,53 +136,270 @@
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
 
-    function kpi(label, value, hint) {
-      return `<div class="card kpi">
-        <div class="label"><span class="dot"></span>${label}</div>
-        <div class="value">${value}</div>
-        ${hint ? `<div class="hint">${hint}</div>` : ''}
+    const state = {
+      period: '7d',
+      groupBy: 'agent',
+      viewMode: 'costs',
+      chartMode: 'tokens',
+      daySeries: [],
+      groups: [],
+      totals: null,
+    };
+
+    function sinceParam() {
+      if (state.period === 'today') {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        return d.toISOString();
+      }
+      return state.period || '';
+    }
+
+    function setActive(segEl, attr, value) {
+      segEl.querySelectorAll('.seg-btn').forEach((b) => {
+        b.classList.toggle('active', b.getAttribute(attr) === value || (value === '' && b.getAttribute(attr) === ''));
+      });
+    }
+
+    function overviewCard(label, value, tone, hint) {
+      return `<div class="ov-card">
+        <span class="ov-label">${label}</span>
+        <span class="ov-value ${tone || ''}">${value}</span>
+        ${hint ? `<span class="ov-hint">${hint}</span>` : ''}
       </div>`;
     }
 
+    function renderOverview(t) {
+      const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
+      $('overview').innerHTML = [
+        overviewCard('Total events', fmtFull(t.eventCount || 0)),
+        overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
+        overviewCard('Cached tokens', fmtFull(cache), 'tone-info'),
+        overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
+        overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing'),
+      ].join('');
+    }
+
+    function timeAgo(iso) {
+      if (!iso) return '—';
+      const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return mins + 'm ago';
+      if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
+      return new Date(iso).toLocaleDateString();
+    }
+
+    function renderRecent(events) {
+      if (!events.length) {
+        $('recentBody').innerHTML = '<div class="chart-empty">No events yet.</div>';
+        return;
+      }
+      $('recentBody').innerHTML = `
+        <table class="recent-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Agent / model</th>
+              <th class="num">In / Out</th>
+              <th class="num">When</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${events.map((e) => {
+              const ok = e.pricingStatus !== 'unknown_model';
+              return `<tr>
+                <td><span class="status-dot ${ok ? 'ok' : 'warn'}"></span></td>
+                <td>
+                  <div class="recent-main">${escapeHtml(e.model || e.agent || '—')}</div>
+                  <div class="recent-sub">${escapeHtml(e.agent || '')}</div>
+                </td>
+                <td class="num">
+                  <span class="tok-in">${fmt(e.inputTokens)}↑</span>
+                  <span class="tok-out">${fmt(e.outputTokens)}↓</span>
+                </td>
+                <td class="num muted">${timeAgo(e.timestamp)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    function renderChart() {
+      const series = state.daySeries;
+      const mode = state.chartMode;
+      const vals = series.map((d) => mode === 'tokens' ? (d.totalTokens || 0) : (d.estimatedCost || 0));
+      const has = vals.some((v) => v > 0);
+      if (!has) {
+        $('chartBody').innerHTML = '<div class="chart-empty">No data for this period</div>';
+        return;
+      }
+
+      const W = 640, H = 200, PL = 44, PR = 12, PT = 12, PB = 28;
+      const iw = W - PL - PR, ih = H - PT - PB;
+      const max = Math.max(...vals, mode === 'tokens' ? 1 : 0.0001);
+      const n = series.length;
+      const xAt = (i) => PL + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
+      const yAt = (v) => PT + ih - (v / max) * ih;
+
+      const pts = series.map((d, i) => {
+        const v = mode === 'tokens' ? (d.totalTokens || 0) : (d.estimatedCost || 0);
+        return [xAt(i), yAt(v)];
+      });
+      const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+      const area = line + ` L${pts[pts.length - 1][0].toFixed(1)},${(PT + ih).toFixed(1)} L${pts[0][0].toFixed(1)},${(PT + ih).toFixed(1)} Z`;
+      const stroke = mode === 'tokens' ? 'var(--chart-tokens)' : 'var(--chart-cost)';
+      const fillId = mode === 'tokens' ? 'gradTok' : 'gradCost';
+      const fillFrom = mode === 'tokens' ? 'rgba(99,102,241,0.28)' : 'rgba(245,158,11,0.28)';
+
+      const yTicks = [0, 0.5, 1].map((t) => {
+        const v = max * t;
+        const y = yAt(v);
+        const label = mode === 'tokens' ? fmt(v) : money4(v);
+        return `<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" class="chart-grid" />
+          <text x="${PL - 6}" y="${y + 3}" class="chart-tick" text-anchor="end">${label}</text>`;
+      }).join('');
+
+      const xLabels = series.map((d, i) => {
+        if (n > 14 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return '';
+        const label = String(d.key || '').slice(5); // MM-DD
+        return `<text x="${xAt(i)}" y="${H - 8}" class="chart-tick" text-anchor="middle">${escapeHtml(label)}</text>`;
+      }).join('');
+
+      $('chartBody').innerHTML = `
+        <svg class="usage-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Usage chart">
+          <defs>
+            <linearGradient id="gradTok" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stop-color="${fillFrom}" />
+              <stop offset="95%" stop-color="rgba(99,102,241,0)" />
+            </linearGradient>
+            <linearGradient id="gradCost" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stop-color="${fillFrom}" />
+              <stop offset="95%" stop-color="rgba(245,158,11,0)" />
+            </linearGradient>
+          </defs>
+          ${yTicks}
+          <path d="${area}" fill="url(#${fillId})" />
+          <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" vector-effect="non-scaling-stroke" />
+          ${xLabels}
+        </svg>`;
+    }
+
+    function renderTable() {
+      const costs = state.viewMode === 'costs';
+      const head = costs
+        ? ['Key', 'Events', 'Input $', 'Output $', 'Total $']
+        : ['Key', 'Events', 'Input', 'Cached', 'Output', 'Total'];
+      $('tableHead').innerHTML = `<tr>${head.map((h, i) =>
+        `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr>`;
+
+      const groups = state.groups;
+      if (!groups.length) {
+        $('tableBody').innerHTML = `<tr><td colspan="${head.length}"><div class="empty">Chưa có usage. Dùng AI agents rồi bấm Rescan.</div></td></tr>`;
+        return;
+      }
+
+      // Split cost by token share (same approach as 9router UsageTable)
+      $('tableBody').innerHTML = groups.map((g) => {
+        const input = g.inputTokens || 0;
+        const output = g.outputTokens || 0;
+        const cache = (g.cacheReadTokens || 0) + (g.cacheWriteTokens || 0);
+        const totalTok = g.totalTokens || (input + output + cache) || 1;
+        const cost = g.estimatedCost || 0;
+        const inputShare = Math.max(0, input - cache);
+        const inputCost = cost * (inputShare / totalTok);
+        const outCost = cost * (output / totalTok);
+
+        if (costs) {
+          return `<tr>
+            <td><code>${escapeHtml(g.key)}</code></td>
+            <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
+            <td class="num muted">${money(inputCost)}</td>
+            <td class="num muted">${money(outCost)}</td>
+            <td class="num toned-cost"><strong>${money(cost)}</strong></td>
+          </tr>`;
+        }
+        return `<tr>
+          <td><code>${escapeHtml(g.key)}</code></td>
+          <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
+          <td class="num muted">${fmtFull(input)}</td>
+          <td class="num muted">${cache ? fmtFull(cache) : '—'}</td>
+          <td class="num muted">${fmtFull(output)}</td>
+          <td class="num"><strong>${fmtFull(g.totalTokens || 0)}</strong></td>
+        </tr>`;
+      }).join('');
+    }
+
     async function load() {
-      const since = $('since').value;
-      const groupBy = $('groupBy').value;
-      const q = new URLSearchParams({ groupBy, sort: 'cost' });
-      if (since) q.set('since', since);
+      $('fetchSpin').classList.remove('hidden');
+      const since = sinceParam();
+      const qStats = new URLSearchParams({ groupBy: state.groupBy, sort: state.viewMode === 'tokens' ? 'tokens' : 'cost' });
+      const qDay = new URLSearchParams({ groupBy: 'day', sort: 'tokens' });
+      if (since) { qStats.set('since', since); qDay.set('since', since); }
+
       try {
-        const [stats, health] = await Promise.all([
-          fetch('/api/stats?' + q).then((r) => r.json()),
+        const [stats, dayStats, health, eventsRes] = await Promise.all([
+          fetch('/api/stats?' + qStats).then((r) => r.json()),
+          fetch('/api/stats?' + qDay).then((r) => r.json()),
           fetch('/api/health').then((r) => r.json()),
+          fetch('/api/events?limit=40').then((r) => r.json()),
         ]);
-        const t = stats.totals || {};
+
+        state.totals = stats.totals || {};
+        state.groups = stats.groups || [];
+        state.daySeries = (dayStats.groups || []).slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+
         const detected = health.agentsDetected?.length || 0;
         $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(health.eventCount || 0)} events`;
-        $('kpis').innerHTML = [
-          kpi('Total tokens', fmt(t.totalTokens || 0), 'input + output + cache'),
-          kpi('Input', fmt(t.inputTokens || 0)),
-          kpi('Output', fmt(t.outputTokens || 0)),
-          kpi('Est. cost', money(t.estimatedCost || 0), 'USD · model rates'),
-          kpi('Events', fmt(t.eventCount || 0), 'usage records'),
-        ].join('');
 
-        const groups = stats.groups || [];
-        const maxCost = Math.max(1, ...groups.map((g) => g.estimatedCost || 0));
-        $('rows').innerHTML = groups.map((g) => `
-          <tr>
-            <td><code>${escapeHtml(g.key)}</code></td>
-            <td>${fmt(g.totalTokens || 0)}</td>
-            <td><strong>${money(g.estimatedCost || 0)}</strong></td>
-            <td><div class="bar"><i style="width:${Math.round(((g.estimatedCost || 0) / maxCost) * 100)}%"></i></div></td>
-          </tr>
-        `).join('') || '<tr><td colspan="4"><div class="empty">Chưa có usage. Dùng AI agents rồi bấm Rescan.</div></td></tr>';
-      } catch (e) {
+        renderOverview(state.totals);
+        renderChart();
+        renderTable();
+
+        // Filter recent by period client-side when since is set
+        let recent = eventsRes.events || [];
+        if (since) {
+          const t0 = new Date(since).getTime();
+          recent = recent.filter((e) => new Date(e.timestamp).getTime() >= t0);
+        }
+        renderRecent(recent.slice(0, 25));
+      } catch {
         $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+      } finally {
+        $('fetchSpin').classList.add('hidden');
       }
     }
 
+    // Segment handlers
+    $('periodSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.period = b.getAttribute('data-period') ?? '7d';
+      setActive($('periodSeg'), 'data-period', state.period);
+      load();
+    };
+    $('chartMode').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.chartMode = b.getAttribute('data-mode') || 'tokens';
+      setActive($('chartMode'), 'data-mode', state.chartMode);
+      renderChart();
+    };
+    $('groupSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.groupBy = b.getAttribute('data-group') || 'agent';
+      setActive($('groupSeg'), 'data-group', state.groupBy);
+      load();
+    };
+    $('viewModeSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.viewMode = b.getAttribute('data-view') || 'costs';
+      setActive($('viewModeSeg'), 'data-view', state.viewMode);
+      load();
+    };
+
     $('refresh').onclick = load;
-    $('since').onchange = load;
-    $('groupBy').onchange = load;
     $('scan').onclick = async () => {
       $('scan').disabled = true;
       $('scan').textContent = 'Scanning…';
@@ -170,6 +411,7 @@
         $('scan').textContent = 'Rescan';
       }
     };
+
     load();
     setInterval(load, 30000);
   </script>
