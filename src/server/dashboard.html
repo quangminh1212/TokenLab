@@ -50,8 +50,7 @@
       </div>
       <div class="usage-actions">
         <span class="fetch-spin hidden" id="fetchSpin" aria-hidden="true"></span>
-        <button class="btn btn-with-icon" id="refresh" type="button">Refresh</button>
-        <button class="btn btn-primary btn-with-icon" id="scan" type="button">Rescan</button>
+        <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Rescan agents and reload stats">Refresh</button>
       </div>
     </div>
 
@@ -158,8 +157,15 @@
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
     $('settingsBtn').innerHTML = ICONS.settings;
-    $('refresh').innerHTML = ICONS.refresh + '<span>Refresh</span>';
-    $('scan').innerHTML = ICONS.scan + '<span>Rescan</span>';
+    function setRefreshIdle() {
+      $('refresh').disabled = false;
+      $('refresh').innerHTML = ICONS.refresh + '<span>Refresh</span>';
+    }
+    function setRefreshBusy(label) {
+      $('refresh').disabled = true;
+      $('refresh').innerHTML = ICONS.refresh + '<span>' + label + '</span>';
+    }
+    setRefreshIdle();
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
@@ -473,8 +479,9 @@
       }).join('');
     }
 
-    async function load() {
-      $('fetchSpin').classList.remove('hidden');
+    async function load(opts = {}) {
+      const quiet = opts.quiet === true;
+      if (!quiet) $('fetchSpin').classList.remove('hidden');
       syncTimeGroupButton();
       const since = sinceParam();
       const hourly = isHourlyPeriod();
@@ -534,7 +541,7 @@
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         renderRecent(recent.slice(0, 25));
       } catch {
-        $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+        if (!quiet) $('meta').innerHTML = '<span class="err">Failed to load API</span>';
       } finally {
         $('fetchSpin').classList.add('hidden');
       }
@@ -571,23 +578,21 @@
       load();
     };
 
-    $('refresh').onclick = load;
-    $('scan').onclick = async () => {
-      $('scan').disabled = true;
-      $('scan').innerHTML = ICONS.scan + '<span>Scanning…</span>';
+    // Single action: rescan local agents + reload dashboard
+    $('refresh').onclick = async () => {
+      setRefreshBusy('Refreshing…');
       try {
         await fetch('/api/scan', { method: 'POST' });
-        await load();
+        await load({ quiet: true });
       } finally {
-        $('scan').disabled = false;
-        $('scan').innerHTML = ICONS.scan + '<span>Rescan</span>';
+        setRefreshIdle();
       }
     };
 
     load();
-    setInterval(load, 30000);
+    setInterval(() => void load({ quiet: true }), 30000);
 
-    // Realtime cost refresh when Settings updates model rates
+    // Realtime cost refresh when Settings updates model rates (quiet — no spinner/button flash)
     let pricingRevision = 0;
     function watchPricingStream() {
       try {
@@ -601,25 +606,21 @@
             }
             if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
               pricingRevision = msg.revision;
-              void load();
+              void load({ quiet: true });
             }
           } catch {
             // ignore parse errors
           }
         };
-        es.onerror = () => {
-          // reconnect is automatic for EventSource; fallback poll
-        };
       } catch {
         // EventSource unavailable
       }
-      // Fallback poll (multi-tab / proxies that buffer SSE)
       setInterval(async () => {
         try {
           const h = await fetch('/api/health').then((r) => r.json());
           if (h.pricingRevision && h.pricingRevision !== pricingRevision) {
             pricingRevision = h.pricingRevision;
-            void load();
+            void load({ quiet: true });
           }
         } catch {
           // offline

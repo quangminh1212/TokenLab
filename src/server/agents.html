@@ -45,8 +45,7 @@
         <p>Map local coding agents on this machine — live / detected / offline, with token &amp; cost when available.</p>
       </div>
       <div class="toolbar" style="margin:0">
-        <button class="btn btn-with-icon" id="refresh" type="button">Refresh</button>
-        <button class="btn btn-primary btn-with-icon" id="scan" type="button">Rescan</button>
+        <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Rescan agents and reload">Refresh</button>
       </div>
     </section>
 
@@ -203,8 +202,15 @@
     }
     applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
     $('settingsBtn').innerHTML = ICONS.settings;
-    $('refresh').innerHTML = ICONS.refresh + '<span>Refresh</span>';
-    $('scan').innerHTML = ICONS.scan + '<span>Rescan</span>';
+    function setRefreshIdle() {
+      $('refresh').disabled = false;
+      $('refresh').innerHTML = ICONS.refresh + '<span>Refresh</span>';
+    }
+    function setRefreshBusy(label) {
+      $('refresh').disabled = true;
+      $('refresh').innerHTML = ICONS.refresh + '<span>' + label + '</span>';
+    }
+    setRefreshIdle();
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
@@ -408,23 +414,20 @@
       if (grid) grid.hidden = !open;
     };
     $('providerSearch').oninput = () => renderProviders();
-    $('refresh').onclick = load;
     $('since').onchange = load;
-    $('scan').onclick = async () => {
-      $('scan').disabled = true;
-      $('scan').innerHTML = ICONS.scan + '<span>Scanning…</span>';
+    $('refresh').onclick = async () => {
+      setRefreshBusy('Refreshing…');
       try {
         await fetch('/api/scan', { method: 'POST' });
         await load();
       } finally {
-        $('scan').disabled = false;
-        $('scan').innerHTML = ICONS.scan + '<span>Rescan</span>';
+        setRefreshIdle();
       }
     };
     load();
     setInterval(load, 30000);
 
-    // Refresh cost badges when Settings updates rates (realtime)
+    // Quiet reload when Settings updates rates (no button flash)
     let pricingRevision = 0;
     try {
       const es = new EventSource('/api/pricing/stream');
