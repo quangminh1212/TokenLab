@@ -1298,6 +1298,48 @@ a.icon-btn:hover {
   color: var(--muted);
   font-weight: 500;
 }
+.settings-gist-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: 100%;
+  max-width: 28rem;
+}
+.settings-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.5rem;
+  background: var(--bg-soft, var(--bg));
+  color: var(--text);
+  font: inherit;
+  font-size: 0.86rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.settings-check input {
+  accent-color: var(--xlab);
+}
+.settings-help code {
+  font-size: 0.78em;
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+#gistLinkRow a {
+  color: var(--xlab);
+  font-weight: 600;
+  word-break: break-all;
+}
 .btn-sm {
   padding: 0.38rem 0.7rem;
   font-size: 0.82rem;

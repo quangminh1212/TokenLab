@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
 import { detectAgents, scanAll } from "../agents/index.js";
+import { buildBackup, restoreBackup, uploadBackupToGist } from "../backup.js";
 import { loadConfig, saveConfig, setCustomRates, configPath, getConfigSync } from "../config.js";
 import {
   fetchOpenRouterModels,
@@ -451,10 +452,74 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
     if (req.method === "GET" && pathname === "/api/config") {
       const cfg = await loadConfig();
+      // Never echo full GitHub token to the browser
+      const hasToken = Boolean(cfg.backup?.githubToken || process.env.XLAB_GITHUB_TOKEN || process.env.GITHUB_TOKEN);
       return json(res, 200, {
         ...cfg,
         configPath: configPath(),
+        backup: {
+          gistId: cfg.backup?.gistId || null,
+          gistUrl: cfg.backup?.gistUrl || null,
+          lastBackupAt: cfg.backup?.lastBackupAt || null,
+          hasGithubToken: hasToken,
+        },
       });
+    }
+
+    // Portable backup of settings + custom model rates (not raw usage logs)
+    if (req.method === "GET" && pathname === "/api/backup") {
+      const backup = buildBackup({ eventCountHint: cache.length });
+      return json(res, 200, backup);
+    }
+
+    if (req.method === "POST" && pathname === "/api/backup/gist") {
+      const body = await readJsonBody(req);
+      try {
+        const result = await uploadBackupToGist({
+          token: typeof body.token === "string" ? body.token : null,
+          gistId: typeof body.gistId === "string" ? body.gistId : null,
+          public: body.public === true,
+          eventCountHint: cache.length,
+          saveToken: body.saveToken === true,
+        });
+        return json(res, 200, {
+          ok: true,
+          gist: result.gist,
+          exportedAt: result.backup.exportedAt,
+          customRateCount: Object.keys(result.backup.config.pricing?.customRates || {}).length,
+        });
+      } catch (err) {
+        return json(res, 400, {
+          error: {
+            code: "GIST_BACKUP_FAILED",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
+    }
+
+    if (req.method === "POST" && pathname === "/api/backup/restore") {
+      const body = await readJsonBody(req);
+      const payload = (body.backup && typeof body.backup === "object" ? body.backup : body) as unknown;
+      try {
+        const result = await restoreBackup(payload);
+        cache = repriceEvents(cache, {
+          forceTable: result.config.pricing?.preferRouterCost === false,
+        });
+        bumpPricing("restore");
+        return json(res, 200, {
+          ok: true,
+          customRateCount: result.customRateCount,
+          timezone: result.config.timezone || "local",
+        });
+      } catch (err) {
+        return json(res, 400, {
+          error: {
+            code: "RESTORE_FAILED",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
     }
 
     if (req.method === "PUT" && pathname === "/api/config") {

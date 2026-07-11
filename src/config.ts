@@ -18,6 +18,14 @@ export interface XlabTokenConfig {
     /** USD per 1M tokens overrides, keyed by normalized model name. */
     customRates?: Record<string, ModelRate>;
   };
+  /** Optional backup destination (GitHub Gist). Token is local-only — never committed. */
+  backup?: {
+    gistId?: string;
+    gistUrl?: string;
+    lastBackupAt?: string;
+    /** Optional classic PAT with `gist` scope (prefer env XLAB_GITHUB_TOKEN). */
+    githubToken?: string;
+  };
 }
 
 const DEFAULT_CONFIG: XlabTokenConfig = {
@@ -103,6 +111,10 @@ function mergeConfig(base: XlabTokenConfig, over: XlabTokenConfig): XlabTokenCon
         ...(base.pricing?.customRates || {}),
         ...(over.pricing?.customRates || {}),
       },
+    },
+    backup: {
+      ...base.backup,
+      ...over.backup,
     },
   };
 }

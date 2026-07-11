@@ -104,6 +104,70 @@
         </div>
       </section>
 
+      <!-- Backup -->
+      <section class="settings-section u-card">
+        <div class="settings-section-head">
+          <h2>Backup &amp; restore</h2>
+          <p>
+            Export settings and custom model rates. Usage events stay on this machine (re-scanned from agents).
+            You can also push a <strong>secret</strong> file to a GitHub Gist.
+          </p>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-label">Download JSON</span>
+            <span class="settings-help">Portable backup of timezone, cost prefs, and custom rates.</span>
+          </div>
+          <button type="button" class="btn" id="backupDownload">Download</button>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-label">Restore from file</span>
+            <span class="settings-help">Merge a previous xlab-token-backup.json into this install.</span>
+          </div>
+          <div class="settings-inline-actions">
+            <input type="file" id="backupRestoreFile" accept="application/json,.json" hidden />
+            <button type="button" class="btn" id="backupRestoreBtn">Choose file…</button>
+            <span class="settings-status" id="backupRestoreStatus" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <div class="settings-row settings-row-stack">
+          <div class="settings-row-text">
+            <span class="settings-label">GitHub Gist</span>
+            <span class="settings-help">
+              Requires a classic PAT with the <code>gist</code> scope.
+              Prefer env <code>XLAB_GITHUB_TOKEN</code> (or paste below). Secret gist by default.
+            </span>
+          </div>
+          <div class="settings-gist-box">
+            <input
+              type="password"
+              id="gistToken"
+              class="settings-input"
+              placeholder="ghp_… token (optional if env set)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <label class="settings-check">
+              <input type="checkbox" id="gistSaveToken" />
+              <span>Remember token in local config</span>
+            </label>
+            <div class="settings-inline-actions">
+              <button type="button" class="btn btn-primary" id="backupGistBtn">Backup to Gist</button>
+              <span class="settings-status" id="backupGistStatus" aria-live="polite"></span>
+            </div>
+            <p class="settings-help" id="gistLinkRow" hidden>
+              Last gist:
+              <a id="gistLink" href="#" target="_blank" rel="noopener noreferrer">—</a>
+              <span id="gistMeta" class="settings-help muted"></span>
+            </p>
+          </div>
+        </div>
+      </section>
+
       <!-- System -->
       <section class="settings-section u-card">
         <div class="settings-section-head">
@@ -267,6 +331,21 @@
       }
     }
 
+    function showGistLink(url, lastAt) {
+      const row = $('gistLinkRow');
+      const a = $('gistLink');
+      const meta = $('gistMeta');
+      if (!row || !a) return;
+      if (url) {
+        row.hidden = false;
+        a.href = url;
+        a.textContent = url;
+        meta.textContent = lastAt ? ' \u00B7 ' + new Date(lastAt).toLocaleString() : '';
+      } else {
+        row.hidden = true;
+      }
+    }
+
     async function loadConfigUi() {
       try {
         const c = await fetch('/api/config').then((r) => r.json());
@@ -281,11 +360,84 @@
         } catch {
           $('browserTzLabel').textContent = 'Browser: local';
         }
+        if (c.backup?.hasGithubToken) {
+          $('gistToken').placeholder = 'Token saved / env set \u2014 leave blank to reuse';
+        }
+        showGistLink(c.backup?.gistUrl, c.backup?.lastBackupAt);
         await loadHealth();
       } catch {
         $('configPath').textContent = '(unavailable)';
       }
     }
+
+    $('backupDownload').onclick = async () => {
+      try {
+        const backup = await fetch('/api/backup').then((r) => r.json());
+        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const day = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = `xlab-token-backup-${day}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        alert('Download failed');
+      }
+    };
+
+    $('backupRestoreBtn').onclick = () => $('backupRestoreFile').click();
+    $('backupRestoreFile').onchange = async () => {
+      const file = $('backupRestoreFile').files && $('backupRestoreFile').files[0];
+      $('backupRestoreFile').value = '';
+      if (!file) return;
+      const st = $('backupRestoreStatus');
+      st.textContent = 'Restoring\u2026';
+      try {
+        const text = await file.text();
+        const backup = JSON.parse(text);
+        const res = await fetch('/api/backup/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backup }),
+        }).then((r) => r.json());
+        if (res.error) throw new Error(res.error.message || 'Restore failed');
+        st.textContent = `Restored \u00B7 ${res.customRateCount || 0} rates`;
+        await loadConfigUi();
+        setTimeout(() => { st.textContent = ''; }, 2500);
+      } catch (e) {
+        st.textContent = e instanceof Error ? e.message : 'Restore failed';
+      }
+    };
+
+    $('backupGistBtn').onclick = async () => {
+      const btn = $('backupGistBtn');
+      const st = $('backupGistStatus');
+      btn.disabled = true;
+      st.textContent = 'Uploading\u2026';
+      try {
+        const token = ($('gistToken').value || '').trim();
+        const res = await fetch('/api/backup/gist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: token || undefined,
+            saveToken: $('gistSaveToken').checked,
+            public: false,
+          }),
+        }).then((r) => r.json());
+        if (res.error) throw new Error(res.error.message || 'Gist backup failed');
+        const g = res.gist || {};
+        st.textContent = g.updated ? 'Gist updated' : 'Gist created';
+        showGistLink(g.htmlUrl, res.exportedAt);
+        if ($('gistSaveToken').checked) $('gistToken').value = '';
+        setTimeout(() => { st.textContent = ''; }, 2800);
+      } catch (e) {
+        st.textContent = e instanceof Error ? e.message : 'Failed';
+      } finally {
+        btn.disabled = false;
+      }
+    };
 
     $('savePrefs').onclick = async () => {
       const btn = $('savePrefs');
