@@ -1,4 +1,5 @@
 import type { GroupBy, GroupRow, StatsResult, TokenTotals, UsageEvent } from "./types.js";
+import { normalizeModelName } from "./util.js";
 
 function emptyTotals(currency = "USD"): TokenTotals {
   return {
@@ -26,7 +27,8 @@ function add(t: TokenTotals, e: UsageEvent): void {
 function groupKey(e: UsageEvent, by: GroupBy): string {
   if (by === "agent") return e.agent;
   if (by === "model") {
-    const m = (e.model || "").trim();
+    // Strip provider suffixes in parentheses / pipes so variants merge
+    const m = normalizeModelName(e.model);
     // Label missing model with agent so "unknown" is not a mystery model name
     return m || `unknown (${e.agent})`;
   }

@@ -205,9 +205,32 @@
       return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
     }
 
+    /** Strip provider suffixes so "gpt-5.5 (openai-compatible-…)" → "gpt-5.5" */
+    function normalizeModelName(model) {
+      if (model == null) return '';
+      let m = String(model).trim();
+      if (!m) return '';
+      for (let i = 0; i < 3; i++) {
+        const next = m.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+        if (next === m) break;
+        m = next;
+      }
+      m = m.replace(/\s*\[[^\]]*\]\s*$/g, '').trim();
+      if (m.includes('|')) m = m.split('|')[0].trim();
+      if (m.includes('/') && !m.startsWith('http')) {
+        const parts = m.split('/').map((p) => p.trim()).filter(Boolean);
+        const last = parts[parts.length - 1] || m;
+        if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
+      }
+      return m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
+    }
+
     function formatGroupKey(key) {
       if (state.groupBy === 'hour' || /^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(String(key || ''))) {
         return formatHourLabel(key, true);
+      }
+      if (state.groupBy === 'model') {
+        return normalizeModelName(key) || String(key ?? '');
       }
       return String(key ?? '');
     }
@@ -299,7 +322,7 @@
       $('recentBody').innerHTML = `
         <ul class="recent-list">
           ${events.map((e) => {
-            const model = e.model || e.agent || '—';
+            const model = normalizeModelName(e.model) || e.agent || '—';
             const agent = e.agent && e.model ? e.agent : '';
             return `<li class="recent-item">
               <div class="recent-item-main">

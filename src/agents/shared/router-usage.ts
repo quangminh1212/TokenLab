@@ -1,7 +1,7 @@
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { AgentId, UsageEvent } from "../../types.js";
-import { num, pathExists, readText, stableId } from "../../util.js";
+import { normalizeModelName, num, pathExists, readText, stableId } from "../../util.js";
 
 /**
  * Shared parser for 9router / xlabrouter local data.
@@ -321,9 +321,11 @@ function expandOneDay(
       if (!mraw || typeof mraw !== "object") continue;
       const m = mraw as Record<string, unknown>;
       const model =
-        (typeof m.rawModel === "string" && m.rawModel) ||
-        modelKey.split("|")[0] ||
-        modelKey;
+        normalizeModelName(
+          (typeof m.rawModel === "string" && m.rawModel) ||
+            modelKey.split("|")[0] ||
+            modelKey,
+        ) || "mixed";
       const provider = typeof m.provider === "string" ? m.provider : null;
       const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
       const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
@@ -481,12 +483,14 @@ function rowToEvent(
 
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) return null;
 
-  const model =
+  const model = normalizeModelName(
     (typeof r.model === "string" && r.model) ||
-    (typeof r.rawModel === "string" && r.rawModel) ||
-    null;
+      (typeof r.rawModel === "string" && r.rawModel) ||
+      null,
+  );
   const provider = typeof r.provider === "string" ? r.provider : null;
-  const modelLabel = model || provider || null;
+  // Prefer clean model id; never append provider/connection id into the label
+  const modelLabel = model;
 
   const ts =
     (typeof r.timestamp === "string" && r.timestamp) ||

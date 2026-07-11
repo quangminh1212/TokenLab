@@ -1,4 +1,4 @@
-import { num } from "../../util.js";
+import { normalizeModelName, num } from "../../util.js";
 
 export interface TokenBuckets {
   inputTokens: number;
@@ -70,16 +70,24 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
 
 export function extractModel(...candidates: unknown[]): string | null {
   for (const c of candidates) {
-    if (typeof c === "string" && c.trim()) return c.trim();
+    if (typeof c === "string" && c.trim()) {
+      const n = normalizeModelName(c);
+      if (n) return n;
+    }
     if (c && typeof c === "object") {
       const o = c as Record<string, unknown>;
-      if (typeof o.model === "string" && o.model.trim()) return o.model.trim();
-      if (typeof o.modelId === "string" && o.modelId.trim()) return o.modelId.trim();
-      if (typeof o.model_id === "string" && o.model_id.trim()) return o.model_id.trim();
-      if (typeof o.model_name === "string" && o.model_name.trim()) return o.model_name.trim();
+      for (const key of ["model", "modelId", "model_id", "model_name", "rawModel"] as const) {
+        if (typeof o[key] === "string" && (o[key] as string).trim()) {
+          const n = normalizeModelName(o[key] as string);
+          if (n) return n;
+        }
+      }
       if (o.message && typeof o.message === "object") {
         const m = o.message as Record<string, unknown>;
-        if (typeof m.model === "string" && m.model.trim()) return m.model.trim();
+        if (typeof m.model === "string" && m.model.trim()) {
+          const n = normalizeModelName(m.model);
+          if (n) return n;
+        }
       }
     }
   }

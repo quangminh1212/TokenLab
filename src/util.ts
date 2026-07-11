@@ -167,6 +167,52 @@ export function num(v: unknown): number {
   return 0;
 }
 
+/**
+ * Normalize model display/group keys so variants collapse together:
+ *  - "gpt-5.5 (openai-compatible-responses-uuid)" → "gpt-5.5"
+ *  - "gpt-5.5|provider-id" → "gpt-5.5"
+ *  - "provider/gpt-5.5" → "gpt-5.5" (keeps last path segment when useful)
+ *  - trims whitespace / trailing punctuation
+ */
+export function normalizeModelName(model: string | null | undefined): string | null {
+  if (model == null) return null;
+  let m = String(model).trim();
+  if (!m) return null;
+
+  // Strip parenthetical provider/connection suffixes: "name (…)"
+  // Repeat for nested "a (b (c))" style once or twice.
+  for (let i = 0; i < 3; i++) {
+    const next = m.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+    if (next === m) break;
+    m = next;
+  }
+
+  // Strip bracket suffixes: "name [conn]"
+  m = m.replace(/\s*\[[^\]]*\]\s*$/g, "").trim();
+
+  // Router daily keys: "rawModel|providerId"
+  if (m.includes("|")) {
+    m = m.split("|")[0].trim();
+  }
+
+  // "provider/model" or "openai/gpt-4.1" → prefer last segment if it looks like a model id
+  if (m.includes("/") && !m.startsWith("http")) {
+    const parts = m.split("/").map((p) => p.trim()).filter(Boolean);
+    const last = parts[parts.length - 1] || m;
+    // Keep full string if last segment is too generic
+    if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) {
+      m = last;
+    }
+  }
+
+  // Collapse internal whitespace
+  m = m.replace(/\s+/g, " ").trim();
+  // Drop trailing separators
+  m = m.replace(/[-_:|]+$/g, "").trim();
+
+  return m || null;
+}
+
 export function estimateTokensFromText(text: string): number {
   if (!text) return 0;
   // Rough heuristic: ~4 chars per token for mixed code/English
