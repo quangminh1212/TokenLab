@@ -88,42 +88,83 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
       const chatText = await readText(chatPath);
       if (!chatText) continue;
 
-      let userChars = 0;
-      let assistantChars = 0;
+      // One event per assistant turn so new messages increase event count & cost,
+      // instead of rewriting a single session row that UI often looked "stuck".
+      let pendingUserChars = 0;
       let turn = 0;
+      let emitted = 0;
       for (const row of parseJsonl(chatText)) {
         if (!row || typeof row !== "object") continue;
         const r = row as Record<string, unknown>;
         const type = String(r.type ?? r.role ?? "");
         const content = extractText(r.content);
         if (!content) continue;
-        if (type === "user" || type === "human") userChars += content.length;
+        if (type === "user" || type === "human") {
+          pendingUserChars += content.length;
+          continue;
+        }
         if (type === "assistant" || type === "ai" || type === "model") {
-          assistantChars += content.length;
           turn += 1;
+          const inputTokens = estimateTokensFromText("x".repeat(pendingUserChars));
+          const outputTokens = estimateTokensFromText("x".repeat(content.length));
+          pendingUserChars = 0;
+          if (inputTokens + outputTokens <= 0) continue;
+          const rowTs =
+            (typeof r.timestamp === "string" && r.timestamp) ||
+            (typeof r.created_at === "string" && r.created_at) ||
+            (typeof r.ts === "string" && r.ts) ||
+            ts;
+          events.push(
+            applyPricing({
+              id: stableId("grok", sessionId, "turn", String(turn), String(inputTokens), String(outputTokens)),
+              agent: "grok",
+              model,
+              timestamp: rowTs,
+              inputTokens,
+              outputTokens,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              workspace,
+              sourcePath: chatPath,
+              estimated: true,
+            }),
+          );
+          emitted += 1;
         }
       }
 
-      if (userChars + assistantChars === 0) continue;
-
-      const inputTokens = estimateTokensFromText("x".repeat(userChars));
-      const outputTokens = estimateTokensFromText("x".repeat(assistantChars));
-
-      events.push(
-        applyPricing({
-          id: stableId("grok", sessionId, "est", String(inputTokens), String(outputTokens)),
-          agent: "grok",
-          model,
-          timestamp: ts,
-          inputTokens,
-          outputTokens,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          workspace,
-          sourcePath: chatPath,
-          estimated: true,
-        }),
-      );
+      // Fallback: no typed turns parsed — keep session-level estimate
+      if (emitted === 0) {
+        let userChars = 0;
+        let assistantChars = 0;
+        for (const row of parseJsonl(chatText)) {
+          if (!row || typeof row !== "object") continue;
+          const r = row as Record<string, unknown>;
+          const type = String(r.type ?? r.role ?? "");
+          const content = extractText(r.content);
+          if (!content) continue;
+          if (type === "user" || type === "human") userChars += content.length;
+          if (type === "assistant" || type === "ai" || type === "model") assistantChars += content.length;
+        }
+        if (userChars + assistantChars === 0) continue;
+        const inputTokens = estimateTokensFromText("x".repeat(userChars));
+        const outputTokens = estimateTokensFromText("x".repeat(assistantChars));
+        events.push(
+          applyPricing({
+            id: stableId("grok", sessionId, "est", String(inputTokens), String(outputTokens)),
+            agent: "grok",
+            model,
+            timestamp: ts,
+            inputTokens,
+            outputTokens,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            workspace,
+            sourcePath: chatPath,
+            estimated: true,
+          }),
+        );
+      }
     }
   }
 

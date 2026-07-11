@@ -183,10 +183,41 @@
       scanning: false,
       awaitingData: true, // until first non-empty scan or confirmed idle empty
       scanRevision: 0,
+      scanUpdatedAt: 0,
       lastEventCount: 0,
+      /** Fingerprint of last rendered totals — detect token/cost changes even when eventCount stays same */
+      lastTotalsKey: '',
       loading: false,
+      /** If a quiet reload was skipped while busy, run again right after */
+      pendingLoad: false,
     };
     let pricingRevision = 0;
+
+    function totalsKey(t) {
+      if (!t) return '';
+      return [
+        t.eventCount || 0,
+        t.inputTokens || 0,
+        t.outputTokens || 0,
+        t.cacheReadTokens || 0,
+        t.cacheWriteTokens || 0,
+        Math.round((t.estimatedCost || 0) * 1e6),
+      ].join('|');
+    }
+
+    /** Always-safe reload: never drop updates when a fetch is already in flight */
+    function requestLoad(opts = {}) {
+      const quiet = opts.quiet === true;
+      if (state.loading) {
+        state.pendingLoad = true;
+        if (!quiet) {
+          // User-facing action: show spinner intent even if coalesced
+          $('fetchSpin')?.classList.remove('hidden');
+        }
+        return;
+      }
+      void load(opts);
+    }
 
     function isHourlyPeriod() {
       return state.period === 'today' || state.period === '24h';
@@ -500,7 +531,10 @@
 
     async function load(opts = {}) {
       const quiet = opts.quiet === true;
-      if (state.loading && quiet) return; // avoid piling quiet reloads
+      if (state.loading) {
+        state.pendingLoad = true;
+        return;
+      }
       state.loading = true;
       if (!quiet) $('fetchSpin').classList.remove('hidden');
       syncTimeGroupButton();
@@ -530,6 +564,7 @@
         ]);
 
         state.totals = stats.totals || {};
+        state.lastTotalsKey = totalsKey(state.totals);
         let groups = stats.groups || [];
         // Chronological for time buckets
         if (state.groupBy === 'hour' || state.groupBy === 'day') {
@@ -544,6 +579,7 @@
         const detected = health.agentsDetected?.length || 0;
         state.scanning = Boolean(health.scanning);
         if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
+        if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
         if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
         // First boot / empty cache: keep polling until first scan finishes
         state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
@@ -579,6 +615,11 @@
       } finally {
         state.loading = false;
         $('fetchSpin').classList.add('hidden');
+        // Drain coalesced reloads so scan/token updates never get dropped
+        if (state.pendingLoad) {
+          state.pendingLoad = false;
+          void load({ quiet: true });
+        }
       }
     }
 
@@ -590,7 +631,7 @@
       const delay = state.scanning ? 600 : 1200;
       scanPollTimer = setTimeout(() => {
         scanPollTimer = 0;
-        void load({ quiet: true });
+        requestLoad({ quiet: true });
       }, delay);
     }
 
@@ -601,7 +642,7 @@
       state.period = b.getAttribute('data-period') ?? 'today';
       setActive($('periodSeg'), 'data-period', state.period);
       syncTimeGroupButton();
-      load();
+      requestLoad();
     };
     $('chartMode').onclick = (e) => {
       const b = e.target.closest('.seg-btn');
@@ -615,14 +656,14 @@
       if (!b) return;
       state.groupBy = b.getAttribute('data-group') || 'agent';
       setActive($('groupSeg'), 'data-group', state.groupBy);
-      load();
+      requestLoad();
     };
     $('viewModeSeg').onclick = (e) => {
       const b = e.target.closest('.seg-btn');
       if (!b) return;
       state.viewMode = b.getAttribute('data-view') || 'costs';
       setActive($('viewModeSeg'), 'data-view', state.viewMode);
-      load();
+      requestLoad();
     };
 
     // Rescan in background (async) so UI never freezes 10\u201320s on heavy agents
@@ -632,19 +673,19 @@
         state.scanning = true;
         state.awaitingData = state.lastEventCount === 0;
         await fetch('/api/scan?async=1', { method: 'POST' });
-        await load({ quiet: true });
+        requestLoad({ quiet: true });
         scheduleScanPoll();
       } catch {
-        // still try to load whatever is cached
-        await load({ quiet: true });
+        requestLoad({ quiet: true });
       } finally {
         // Idle button immediately; meta chip shows scanning until SSE/poll clears it
         setRefreshIdle();
       }
     };
 
-    load();
-    setInterval(() => void load({ quiet: true }), 30000);
+    requestLoad();
+    // Faster auto-refresh so new usage shows without waiting for manual Refresh
+    setInterval(() => void requestLoad({ quiet: true }), 10_000);
 
     // Realtime: pricing rate changes + scan completion (fills empty bootstrap UI)
     function watchLiveStream() {
@@ -665,7 +706,7 @@
             }
             if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
               pricingRevision = msg.revision;
-              void load({ quiet: true });
+              requestLoad({ quiet: true });
               return;
             }
             if (msg.type === 'scan') {
@@ -679,17 +720,17 @@
               }
               // Progressive agent batches: refresh totals as soon as data arrives
               if (msg.reason === 'progress') {
-                state.lastEventCount = msg.eventCount || state.lastEventCount;
+                if (typeof msg.eventCount === 'number') state.lastEventCount = msg.eventCount;
                 if ((msg.eventCount || 0) > 0) state.awaitingData = false;
-                void load({ quiet: true });
+                requestLoad({ quiet: true });
                 return;
               }
               // Scan finished (or error idle) \u2014 always reload so empty UI fills
               if (rev !== state.scanRevision || wasScanning || msg.reason === 'complete' || msg.reason === 'error') {
-                state.scanRevision = rev;
+                // Do NOT stamp scanRevision here before load \u2014 requestLoad will refresh from /api/health
                 state.scanning = false;
                 state.awaitingData = false;
-                void load({ quiet: true });
+                requestLoad({ quiet: true });
               }
             }
           } catch {
@@ -708,11 +749,12 @@
           const h = await fetch('/api/health').then((r) => r.json());
           let need = false;
           if (h.pricingRevision && h.pricingRevision !== pricingRevision) {
-            pricingRevision = h.pricingRevision;
             need = true;
           }
           if (typeof h.scanRevision === 'number' && h.scanRevision !== state.scanRevision) {
-            state.scanRevision = h.scanRevision;
+            need = true;
+          }
+          if (typeof h.scanUpdatedAt === 'number' && h.scanUpdatedAt !== state.scanUpdatedAt) {
             need = true;
           }
           if (Boolean(h.scanning) !== state.scanning) {
@@ -722,14 +764,15 @@
           if ((h.eventCount || 0) !== state.lastEventCount) {
             need = true;
           }
-          if (need) void load({ quiet: true });
+          // When only token totals change (same event count), still refresh via periodic load
+          if (need) requestLoad({ quiet: true });
           else if (h.scanning || ((h.eventCount || 0) === 0 && state.awaitingData)) {
             scheduleScanPoll();
           }
         } catch {
           // offline
         }
-      }, 3000);
+      }, 2000);
     }
     watchLiveStream();
   </script>

@@ -124,10 +124,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               byAgent.set(agent, events);
               rebuild();
             }
+            // Touch scanUpdatedAt so UIs polling health reload when tokens change
+            // even if eventCount stays the same mid-scan.
+            scanUpdatedAt = Date.now();
             broadcastStream({
               type: "scan",
               revision: scanRevision,
-              updatedAt: Date.now(),
+              updatedAt: scanUpdatedAt,
               reason: "progress",
               agent,
               durationMs,
@@ -533,9 +536,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   void rescan().catch((err) => {
     console.error("[xlab-token] initial scan failed:", err instanceof Error ? err.message : err);
   });
+  // Rescan often enough that new agent usage shows on Dashboard without manual Refresh
   const timer = setInterval(() => {
     void rescan();
-  }, 60_000);
+  }, 30_000);
   timer.unref?.();
 
   return {
