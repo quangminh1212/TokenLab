@@ -1276,25 +1276,53 @@ html.dark .or-chip.active { color: var(--xlab-400); }
 .or-list {
   max-height: min(64vh, 680px);
   overflow: auto;
-  padding: 0.15rem 0;
+  padding: 0;
 }
-/* Single clean row — provider icon | name | rates */
+/* Column grid: Model (flex) | In | Out — same for header + each row */
+.or-head,
 .or-row {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6.25rem 6.25rem;
+  column-gap: 0.65rem;
   align-items: center;
-  padding: 0.7rem 1.1rem;
+  padding: 0.55rem 1.1rem;
   border-bottom: 1px solid var(--border-soft);
+}
+.or-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg-soft));
+  backdrop-filter: blur(8px);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 0.65rem;
+  padding-bottom: 0.55rem;
+}
+.or-head-in,
+.or-head-out {
+  text-align: right;
+  padding-right: 0.35rem;
+}
+.or-row {
   background: transparent;
   transition: background .1s ease;
 }
-.or-row:last-child { border-bottom: none; }
+.or-row:last-of-type { border-bottom: none; }
 .or-row:hover {
   background: color-mix(in srgb, var(--xlab) 5%, transparent);
 }
 .or-row.is-custom {
   background: color-mix(in srgb, var(--xlab) 4%, transparent);
+}
+.or-cell-model {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
 }
 .or-prov {
   position: relative;
@@ -1334,6 +1362,7 @@ html.dark .or-prov {
 .or-card-main {
   min-width: 0;
   flex: 1 1 auto;
+  overflow: hidden;
 }
 .or-card-title-row {
   display: flex;
@@ -1392,26 +1421,11 @@ html.dark .or-prov {
   background: color-mix(in srgb, var(--xlab) 12%, transparent);
 }
 html.dark .or-badge.custom { color: var(--xlab-400); }
-.or-card-rates {
-  display: flex;
-  flex-shrink: 0;
-  gap: 0.45rem;
-  align-items: center;
-}
-.or-rate {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-  font-size: 0.62rem;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.or-rate .price-input,
 .or-row .price-input {
-  width: 5.75rem;
-  padding: 0.35rem 0.45rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.4rem 0.5rem;
   border: 1px solid transparent;
   border-radius: 0.4rem;
   background: var(--bg-soft, var(--bg));
@@ -1420,8 +1434,6 @@ html.dark .or-badge.custom { color: var(--xlab-400); }
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
-  text-transform: none;
-  letter-spacing: normal;
   transition: border-color .12s, box-shadow .12s, background .12s;
 }
 .or-row .price-input:hover {
@@ -1474,16 +1486,15 @@ html.dark .or-badge.custom { color: var(--xlab-400); }
 .pricing-status.muted { color: var(--muted); }
 
 @media (max-width: 720px) {
+  .or-head,
   .or-row {
-    flex-wrap: wrap;
-    gap: 0.55rem;
-  }
-  .or-card-rates {
-    width: 100%;
-    padding-left: 2.75rem;
+    grid-template-columns: minmax(0, 1fr) 5rem 5rem;
+    column-gap: 0.4rem;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
   }
   .or-count { width: 100%; margin-left: 0; }
-  .or-card-name { max-width: 70vw; }
+  .or-card-name { max-width: 42vw; }
 }
 
 /* Prefer reduced motion */
