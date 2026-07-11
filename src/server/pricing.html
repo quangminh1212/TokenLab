@@ -63,9 +63,16 @@
           <button type="button" class="or-chip" data-filter="seen">Seen</button>
           <button type="button" class="or-chip" data-filter="custom">Custom</button>
         </div>
-        <select id="providerFilter" class="or-select" aria-label="Provider">
-          <option value="">All providers</option>
-        </select>
+        <div class="or-prov-dd" id="providerFilterWrap">
+          <input type="hidden" id="providerFilter" value="" />
+          <button type="button" class="or-select or-prov-dd-btn" id="providerFilterBtn"
+            aria-haspopup="listbox" aria-expanded="false" aria-label="Provider" aria-controls="providerFilterMenu">
+            <span class="or-prov-dd-lead" id="providerFilterLead" aria-hidden="true"></span>
+            <span class="or-prov-dd-label" id="providerFilterLabel">All providers</span>
+            <span class="or-prov-dd-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="or-prov-dd-menu" id="providerFilterMenu" role="listbox" hidden></div>
+        </div>
         <select id="sortFilter" class="or-select" aria-label="Sort">
           <option value="newest">Newest</option>
           <option value="name">Name</option>
@@ -400,22 +407,71 @@
       return PROV_COLORS[h % PROV_COLORS.length];
     }
 
-    function providerIconHtml(provider) {
+    function providerIconHtml(provider, opts) {
+      const sm = opts && opts.sm;
+      const sizeCls = sm ? ' or-prov-sm' : '';
       const p = providerKey(provider) || 'openrouter';
       const letter = escapeHtml((p.replace(/^[^a-z0-9]+/i, '')[0] || '?').toUpperCase());
       const srcs = providerIconSrcs(p);
       const bg = providerColor(p);
       const title = escapeHtml(p);
-      // Always a fixed 2rem box; letter is overlay inside — never inline with model name
+      // Fixed square box; letter is overlay inside — never inline with model name
       if (!srcs.length) {
-        return `<span class="or-prov is-fallback" title="${title}" style="background:${bg}" aria-hidden="true"><span class="or-prov-letter" style="background:${bg}">${letter}</span></span>`;
+        return `<span class="or-prov${sizeCls} is-fallback" title="${title}" style="background:${bg}" aria-hidden="true"><span class="or-prov-letter" style="background:${bg}">${letter}</span></span>`;
       }
       const src0 = escapeHtml(srcs[0]);
       const rest = srcs.slice(1).map((s) => escapeHtml(s)).join('|');
-      return `<span class="or-prov" title="${title}" style="--prov-bg:${bg}">
+      return `<span class="or-prov${sizeCls}" title="${title}" style="--prov-bg:${bg}">
         <img class="or-prov-img" src="${src0}" data-fallbacks="${rest}" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
         <span class="or-prov-letter" style="background:${bg}" aria-hidden="true">${letter}</span>
       </span>`;
+    }
+
+    function setProviderFilterValue(value, label) {
+      const v = value || '';
+      const lab = label || (v || 'All providers');
+      const hidden = $('providerFilter');
+      const btn = $('providerFilterBtn');
+      const lead = $('providerFilterLead');
+      const labEl = $('providerFilterLabel');
+      if (!hidden || !btn) return;
+      hidden.value = v;
+      if (labEl) labEl.textContent = lab;
+      if (lead) {
+        lead.innerHTML = v ? providerIconHtml(v, { sm: true }) : '';
+      }
+      const menu = $('providerFilterMenu');
+      if (menu) {
+        menu.querySelectorAll('[role="option"]').forEach((opt) => {
+          const on = (opt.getAttribute('data-value') || '') === v;
+          opt.setAttribute('aria-selected', on ? 'true' : 'false');
+          opt.classList.toggle('is-active', on);
+        });
+      }
+    }
+
+    function closeProviderMenu() {
+      const menu = $('providerFilterMenu');
+      const btn = $('providerFilterBtn');
+      const wrap = $('providerFilterWrap');
+      if (menu) menu.hidden = true;
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+      if (wrap) wrap.classList.remove('is-open');
+    }
+
+    function openProviderMenu() {
+      const menu = $('providerFilterMenu');
+      const btn = $('providerFilterBtn');
+      const wrap = $('providerFilterWrap');
+      if (menu) menu.hidden = false;
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+      if (wrap) wrap.classList.add('is-open');
+    }
+
+    function toggleProviderMenu() {
+      const menu = $('providerFilterMenu');
+      if (!menu || menu.hidden) openProviderMenu();
+      else closeProviderMenu();
     }
 
     // Chain OpenRouter → local → monogram letter inside icon box only
@@ -548,11 +604,23 @@
 
     function fillProviders() {
       const set = new Set(openrouter.map((m) => m.provider).filter(Boolean));
-      const sel = $('providerFilter');
-      const cur = sel.value;
-      sel.innerHTML = '<option value="">All providers</option>' +
-        [...set].sort().map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
-      if (cur && set.has(cur)) sel.value = cur;
+      const providers = [...set].sort((a, b) => a.localeCompare(b));
+      const menu = $('providerFilterMenu');
+      const cur = ($('providerFilter') && $('providerFilter').value) || '';
+      if (!menu) return;
+      const allOpt =
+        `<button type="button" class="or-prov-dd-opt" role="option" data-value="" aria-selected="${cur ? 'false' : 'true'}">` +
+        `<span class="or-prov-dd-opt-icon or-prov-dd-all" aria-hidden="true"></span>` +
+        `<span class="or-prov-dd-opt-label">All providers</span></button>`;
+      const opts = providers.map((p) => {
+        const sel = p === cur;
+        return `<button type="button" class="or-prov-dd-opt${sel ? ' is-active' : ''}" role="option" data-value="${escapeHtml(p)}" aria-selected="${sel ? 'true' : 'false'}">` +
+          `${providerIconHtml(p, { sm: true })}` +
+          `<span class="or-prov-dd-opt-label">${escapeHtml(p)}</span></button>`;
+      }).join('');
+      menu.innerHTML = allOpt + opts;
+      if (cur && set.has(cur)) setProviderFilterValue(cur, cur);
+      else setProviderFilterValue('', 'All providers');
     }
 
     async function loadMeta() {
@@ -678,8 +746,36 @@
     });
 
     $('priceSearch').oninput = scheduleRender;
-    $('providerFilter').onchange = renderList;
     $('sortFilter').onchange = renderList;
+
+    // Provider dropdown with OpenRouter icons (native <select> cannot show images)
+    const providerBtn = $('providerFilterBtn');
+    const providerMenu = $('providerFilterMenu');
+    if (providerBtn) {
+      providerBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleProviderMenu();
+      });
+    }
+    if (providerMenu) {
+      providerMenu.addEventListener('click', (e) => {
+        const opt = e.target.closest('[role="option"]');
+        if (!opt) return;
+        e.preventDefault();
+        const val = opt.getAttribute('data-value') || '';
+        const lab = opt.querySelector('.or-prov-dd-opt-label')?.textContent || val || 'All providers';
+        setProviderFilterValue(val, lab);
+        closeProviderMenu();
+        renderList();
+      });
+    }
+    document.addEventListener('click', (e) => {
+      const wrap = $('providerFilterWrap');
+      if (wrap && !wrap.contains(e.target)) closeProviderMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeProviderMenu();
+    });
 
     document.querySelector('.or-filter-group').onclick = (e) => {
       const btn = e.target.closest('.or-chip');
