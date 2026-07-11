@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agents · XLab Token</title>
+  <link rel="icon" type="image/png" href="/assets/favicon-32x32.png" />
+  <link rel="icon" href="/assets/favicon.ico" sizes="any" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <a class="brand-logo-wrap" href="/" title="XLab Token" aria-label="XLab Token">
+          <img class="brand-logo" src="/assets/logo.png" alt="XLab Token" width="140" height="56"
+            onerror="this.style.display='none'; document.querySelector('.brand-mark').style.display='flex';" />
+          <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
+        </a>
+      </div>
+      <nav class="nav" aria-label="Main">
+        <a class="nav-link" href="/">Dashboard</a>
+        <a class="nav-link active" href="/agents">Agents</a>
+      </nav>
+      <div class="top-actions">
+        <span class="meta-chip" id="meta">Loading…</span>
+        <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <h2>Agent providers</h2>
+        <p>Map local coding agents on this machine — live / detected / offline, with token &amp; cost when available.</p>
+      </div>
+      <div class="toolbar" style="margin:0">
+        <button class="btn" id="refresh" type="button">Refresh</button>
+        <button class="btn btn-primary" id="scan" type="button">Rescan</button>
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <select id="since" aria-label="Time range for cost">
+        <option value="24h">Last 24h</option>
+        <option value="7d" selected>Last 7d</option>
+        <option value="30d">Last 30d</option>
+        <option value="">All time</option>
+      </select>
+      <div class="filter-tabs" id="filterTabs" role="tablist">
+        <button type="button" data-filter="all" class="active">All</button>
+        <button type="button" data-filter="live">Live</button>
+        <button type="button" data-filter="detected">Detected</button>
+        <button type="button" data-filter="offline">Offline</button>
+      </div>
+      <input class="search" id="providerSearch" type="search" placeholder="Search agents…" />
+    </div>
+
+    <div class="muted" style="font-size:0.85rem;margin-bottom:0.85rem" id="providerSummary">—</div>
+
+    <div class="active-strip" id="activeStrip"></div>
+    <div id="providerSections"></div>
+
+    <footer>
+      <div>Provider map · brand icons from product sites</div>
+      <div>localhost only · no cloud billing APIs</div>
+    </footer>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) => {
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(Math.round(n || 0));
+    };
+    const money = (n) => '$' + (n || 0).toFixed(4);
+
+    const CATEGORIES = [
+      {
+        id: 'ide',
+        title: 'IDE & Desktop',
+        ids: ['cursor', 'windsurf', 'antigravity', 'trae', 'zed', 'warp', 'continue', 'void', 'devin'],
+      },
+      {
+        id: 'cli',
+        title: 'CLI Agents',
+        ids: [
+          'claude-code', 'codex', 'gemini', 'grok', 'opencode', 'hermes', 'openclaw',
+          'kimi', 'qwen', 'droid', 'amp', 'goose', 'pi', 'kiro', 'jcode', 'commandcode',
+          'zcode', 'opencodereview', 'aider', 'ollama', 'codewhale', 'mimocode', 'qoder',
+          'iflow', 'forge',
+        ],
+      },
+      {
+        id: 'ext',
+        title: 'Editor Extensions',
+        ids: ['copilot', 'cline', 'roocode', 'kilocode', 'codebuddy', 'workbuddy', 'junie', 'blackbox', 'amazon-q'],
+      },
+      {
+        id: 'other',
+        title: 'Other Providers',
+        ids: ['codebuff', 'mux', 'crush', 'gjc'],
+      },
+    ];
+
+    const AVATAR_COLORS = [
+      '#00A19A', '#0d9488', '#2dd4bf', '#37C88F', '#0f766e',
+      '#14b8a6', '#5eead4', '#2CA072', '#115e59', '#06b6d4',
+      '#10B981', '#0ea5e9', '#64748b', '#334155', '#475569',
+    ];
+
+    const AGENT_ICONS = {
+      'claude-code': '/assets/agents/claude-code.ico',
+      codex: '/assets/agents/codex.png',
+      cursor: '/assets/agents/cursor.png',
+      windsurf: '/assets/agents/windsurf.ico',
+      grok: '/assets/agents/grok.ico',
+      gemini: '/assets/agents/gemini.png',
+      opencode: '/assets/agents/opencode.png',
+      copilot: '/assets/agents/copilot.png',
+      hermes: '/assets/agents/hermes.png',
+      openclaw: '/assets/agents/openclaw.png',
+      pi: '/assets/agents/pi.png',
+      kimi: '/assets/agents/kimi.ico',
+      qwen: '/assets/agents/qwen.png',
+      droid: '/assets/agents/droid.ico',
+      amp: '/assets/agents/amp.png',
+      goose: '/assets/agents/goose.png',
+      cline: '/assets/agents/cline.png',
+      roocode: '/assets/agents/roocode.png',
+      kilocode: '/assets/agents/kilocode.png',
+      antigravity: '/assets/agents/antigravity.png',
+      warp: '/assets/agents/warp.png',
+      trae: '/assets/agents/trae.png',
+      zed: '/assets/agents/zed.png',
+      codebuff: '/assets/agents/codebuff.png',
+      mux: '/assets/agents/mux.png',
+      crush: '/assets/agents/crush.png',
+      kiro: '/assets/agents/kiro.png',
+      gjc: '/assets/agents/gjc.png',
+      jcode: '/assets/agents/jcode.png',
+      commandcode: '/assets/agents/commandcode.png',
+      junie: '/assets/agents/junie.png',
+      zcode: '/assets/agents/zcode.png',
+      opencodereview: '/assets/agents/opencodereview.png',
+      codebuddy: '/assets/agents/codebuddy.png',
+      workbuddy: '/assets/agents/workbuddy.png',
+      aider: '/assets/agents/aider.png',
+      continue: '/assets/agents/continue.png',
+      devin: '/assets/agents/devin.png',
+      ollama: '/assets/agents/ollama.svg',
+      codewhale: '/assets/agents/codewhale.png',
+      mimocode: '/assets/agents/mimocode.png',
+      qoder: '/assets/agents/qoder.png',
+      iflow: '/assets/agents/iflow.png',
+      blackbox: '/assets/agents/blackbox.png',
+      forge: '/assets/agents/forge.png',
+      void: '/assets/agents/void.png',
+      'amazon-q': '/assets/agents/amazon-q.png',
+    };
+
+    let agentState = [];
+    let costByAgent = {};
+    let tokensByAgent = {};
+    let currentFilter = 'all';
+
+    function applyTheme(mode) {
+      document.documentElement.classList.toggle('dark', mode === 'dark');
+      localStorage.setItem('xlab-token-theme', mode);
+      $('themeBtn').textContent = mode === 'dark' ? '☀' : '☾';
+      $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+    }
+    applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
+    $('themeBtn').onclick = () => {
+      applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    };
+
+    function colorFor(id) {
+      let h = 0;
+      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+      return AVATAR_COLORS[h % AVATAR_COLORS.length];
+    }
+    function monogram(label) {
+      const parts = String(label).replace(/[^a-zA-Z0-9 ]/g, ' ').trim().split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+      return String(label).slice(0, 2).toUpperCase();
+    }
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+    function agentKind(a) {
+      if (a.detected && (a.eventCount || 0) > 0) return 'live';
+      if (a.detected) return 'detected';
+      return 'offline';
+    }
+
+    function avatarHtml(a) {
+      const icon = AGENT_ICONS[a.id];
+      const mono = escapeHtml(monogram(a.label));
+      const bg = colorFor(a.id);
+      const fallback = `this.parentElement.classList.add('avatar-fallback');this.parentElement.style.background='${bg}';this.parentElement.textContent='${mono}';this.remove();`;
+      if (icon) {
+        return `<div class="avatar" title="${escapeHtml(a.label)}">
+          <img src="${icon}" alt="${escapeHtml(a.label)}" loading="lazy" onerror="${fallback}" />
+        </div>`;
+      }
+      return `<div class="avatar avatar-fallback" style="background:${bg}" title="${escapeHtml(a.id)}">${mono}</div>`;
+    }
+
+    function statusHtml(a) {
+      const kind = agentKind(a);
+      const events = a.eventCount || 0;
+      const cost = costByAgent[a.id];
+      const tokens = tokensByAgent[a.id];
+      if (kind === 'live') {
+        return `<span class="dot-live"></span>
+          <span class="st-live">${events} event${events === 1 ? '' : 's'}</span>
+          ${tokens != null ? `<span class="badge-soft">${fmt(tokens)} tok</span>` : ''}
+          ${cost != null ? `<span class="badge-soft badge-cost">${money(cost)}</span>` : ''}`;
+      }
+      if (kind === 'detected') {
+        return `<span class="dot-detected"></span><span class="st-detected">Detected</span>
+          <span class="badge-soft">no events yet</span>`;
+      }
+      return `<span class="st-off">No local data</span>`;
+    }
+
+    function providerCard(a) {
+      const kind = agentKind(a);
+      const cls = kind === 'live' ? 'is-live' : kind === 'offline' ? 'is-offline' : '';
+      const paths = (a.paths || []).join('\n');
+      return `<article class="provider-card ${cls}" data-id="${escapeHtml(a.id)}" data-kind="${kind}" title="${escapeHtml(paths || a.id)}">
+        ${avatarHtml(a)}
+        <div class="provider-body">
+          <div class="provider-name">${escapeHtml(a.label)}</div>
+          <div class="provider-status">${statusHtml(a)}</div>
+        </div>
+      </article>`;
+    }
+
+    function matchesFilter(a, filter, q) {
+      const kind = agentKind(a);
+      if (filter === 'live' && kind !== 'live') return false;
+      if (filter === 'detected' && kind !== 'detected') return false;
+      if (filter === 'offline' && kind !== 'offline') return false;
+      if (q) {
+        const hay = `${a.label} ${a.id}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }
+
+    function renderProviders() {
+      const q = ($('providerSearch').value || '').trim().toLowerCase();
+      const list = agentState;
+      const live = list.filter((a) => agentKind(a) === 'live');
+      const detected = list.filter((a) => agentKind(a) === 'detected');
+      const offline = list.filter((a) => agentKind(a) === 'offline');
+
+      $('providerSummary').textContent =
+        `${live.length} live · ${detected.length} detected · ${offline.length} offline · ${list.length} total`;
+
+      const top = [...live].sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0)).slice(0, 6);
+      $('activeStrip').innerHTML = top.length
+        ? top.map((a) => `
+          <div class="active-chip">
+            ${avatarHtml(a)}
+            <div class="meta">
+              <div class="name">${escapeHtml(a.label)}</div>
+              <div class="sub">
+                <span class="dot-live"></span>
+                <span class="st-live">${a.eventCount || 0} events</span>
+                ${costByAgent[a.id] != null ? `<span class="badge-soft badge-cost">${money(costByAgent[a.id])}</span>` : ''}
+              </div>
+            </div>
+          </div>`).join('')
+        : `<div class="empty" style="grid-column:1/-1">Chưa có agent live. Dùng AI tools rồi Rescan.</div>`;
+
+      const used = new Set();
+      const sections = [];
+      for (const cat of CATEGORIES) {
+        const members = cat.ids
+          .map((id) => list.find((a) => a.id === id))
+          .filter(Boolean)
+          .filter((a) => {
+            used.add(a.id);
+            return matchesFilter(a, currentFilter, q);
+          });
+        members.sort((a, b) => {
+          const rank = { live: 0, detected: 1, offline: 2 };
+          const d = rank[agentKind(a)] - rank[agentKind(b)];
+          if (d !== 0) return d;
+          return (b.eventCount || 0) - (a.eventCount || 0);
+        });
+        if (!members.length) continue;
+        sections.push(`
+          <div class="provider-section">
+            <div class="provider-section-head">
+              <h3>${escapeHtml(cat.title)}</h3>
+              <span class="count">${members.length}</span>
+            </div>
+            <div class="provider-grid">${members.map(providerCard).join('')}</div>
+          </div>`);
+      }
+
+      const rest = list.filter((a) => !used.has(a.id) && matchesFilter(a, currentFilter, q));
+      if (rest.length) {
+        rest.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
+        sections.push(`
+          <div class="provider-section">
+            <div class="provider-section-head">
+              <h3>More</h3>
+              <span class="count">${rest.length}</span>
+            </div>
+            <div class="provider-grid">${rest.map(providerCard).join('')}</div>
+          </div>`);
+      }
+
+      $('providerSections').innerHTML = sections.join('') ||
+        `<div class="empty">Không có agent khớp bộ lọc.</div>`;
+    }
+
+    async function load() {
+      const since = $('since').value;
+      const agentStatsQ = new URLSearchParams({ groupBy: 'agent', sort: 'cost' });
+      if (since) agentStatsQ.set('since', since);
+      try {
+        const [agentStats, agents, health] = await Promise.all([
+          fetch('/api/stats?' + agentStatsQ).then((r) => r.json()),
+          fetch('/api/agents').then((r) => r.json()),
+          fetch('/api/health').then((r) => r.json()),
+        ]);
+        const detected = health.agentsDetected?.length || 0;
+        $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(health.eventCount || 0)} events`;
+
+        costByAgent = {};
+        tokensByAgent = {};
+        for (const g of agentStats.groups || []) {
+          costByAgent[g.key] = g.estimatedCost || 0;
+          tokensByAgent[g.key] = g.totalTokens || 0;
+        }
+        agentState = agents.agents || [];
+        renderProviders();
+      } catch (e) {
+        $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+      }
+    }
+
+    $('filterTabs').onclick = (e) => {
+      const btn = e.target.closest('button[data-filter]');
+      if (!btn) return;
+      currentFilter = btn.dataset.filter;
+      for (const b of $('filterTabs').querySelectorAll('button')) {
+        b.classList.toggle('active', b === btn);
+      }
+      renderProviders();
+    };
+    $('providerSearch').oninput = () => renderProviders();
+    $('refresh').onclick = load;
+    $('since').onchange = load;
+    $('scan').onclick = async () => {
+      $('scan').disabled = true;
+      $('scan').textContent = 'Scanning…';
+      try {
+        await fetch('/api/scan', { method: 'POST' });
+        await load();
+      } finally {
+        $('scan').disabled = false;
+        $('scan').textContent = 'Rescan';
+      }
+    };
+    load();
+    setInterval(load, 30000);
+  </script>
+</body>
+</html>

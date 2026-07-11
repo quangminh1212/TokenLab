@@ -39,6 +39,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   await rescan();
 
   const dashboardPath = path.join(__dirname, "dashboard.html");
+  const agentsPagePath = path.join(__dirname, "agents.html");
+  const stylesPath = path.join(__dirname, "styles.css");
 
   const server = createServer(async (req, res) => {
     try {
@@ -104,11 +106,32 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       return json(res, 200, { ok: true, eventsIngested: n, durationMs: Date.now() - t0 });
     }
 
-    if (!noUi && req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
+    if (!noUi && req.method === "GET" && (pathname === "/" || pathname === "/index.html" || pathname === "/dashboard")) {
       const html = await readFile(dashboardPath, "utf8");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
       return;
+    }
+
+    if (!noUi && req.method === "GET" && (pathname === "/agents" || pathname === "/agents.html")) {
+      const html = await readFile(agentsPagePath, "utf8");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+      return;
+    }
+
+    if (!noUi && req.method === "GET" && pathname === "/styles.css") {
+      try {
+        const css = await readFile(stylesPath, "utf8");
+        res.writeHead(200, {
+          "Content-Type": "text/css; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+        res.end(css);
+        return;
+      } catch {
+        return json(res, 404, { error: { code: "NOT_FOUND", message: "styles.css not found" } });
+      }
     }
 
     if (!noUi && req.method === "GET" && pathname.startsWith("/assets/")) {

@@ -3,451 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>XLab Token</title>
+  <title>Dashboard · XLab Token</title>
   <link rel="icon" type="image/png" href="/assets/favicon-32x32.png" />
   <link rel="icon" href="/assets/favicon.ico" sizes="any" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <style>
-    /* Design tokens from C:\\Dev\\XLab_Web (tailwind + globals.css) */
-    :root {
-      --xlab: #00A19A;           /* primary.500 / xlab.500 */
-      --xlab-600: #0d9488;       /* primary.600 */
-      --xlab-400: #2dd4bf;       /* primary.400 */
-      --xlab-50: #f0fdfc;        /* primary.50 */
-      --xlab-100: #ccfbf1;
-      --secondary: #37C88F;      /* secondary.500 */
-      --bg: #FFFFFF;
-      --bg-soft: #F9FAFB;        /* gray.50 */
-      --text: #111827;           /* gray.900 */
-      --text-secondary: #374151; /* gray.700 */
-      --muted: #6B7280;          /* gray.500 */
-      --border: #E5E7EB;         /* gray.200 */
-      --border-soft: #F3F4F6;    /* gray.100 */
-      --panel: #FFFFFF;
-      --panel-soft: #F3F4F6;
-      --panel-hover: #F9FAFB;
-      --shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-      --success: #10B981;
-      --success-soft: rgba(16, 185, 129, 0.12);
-      --warn: #F59E0B;
-      --error: #EF4444;
-      --radius: 0.5rem;          /* XLab --radius */
-      --radius-lg: 0.75rem;
-      --radius-xl: 1rem;
-      --ring: rgba(0, 161, 154, 0.28);
-      --card-bg: #FFFFFF;
-      --header-bg: rgba(255, 255, 255, 0.95);
-      --header-border: #F3F4F6;
-      --teal-glow: rgba(0, 161, 154, 0.08);
-    }
-    html.dark {
-      /*
-       * Dark mode surfaces — Google Drive / Material Dark
-       * bg #1f1f1f · surface #292a2d · elevated #3c4043 · text #e8eaed
-       * Brand accent stays XLab teal
-       */
-      --xlab: #00d4aa;
-      --xlab-600: #00A19A;
-      --xlab-400: #5eead4;
-      --xlab-50: #0b1f1c;
-      --xlab-100: #115e59;
-      --secondary: #37c88f;
-      --bg: #1f1f1f;              /* Drive main background */
-      --bg-soft: #292a2d;         /* Drive surface / sidebar */
-      --text: #e8eaed;            /* Drive primary text */
-      --text-secondary: #bdc1c6;  /* Drive secondary text */
-      --muted: #9aa0a6;           /* Drive muted / icons */
-      --border: #3c4043;          /* Drive dividers */
-      --border-soft: #2d2e30;
-      --panel: #292a2d;           /* Drive cards / panels */
-      --panel-soft: #35363a;      /* slightly raised */
-      --panel-hover: #3c4043;     /* Drive hover */
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
-      --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.4);
-      --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
-      --success: #81c995;
-      --success-soft: rgba(129, 201, 149, 0.14);
-      --warn: #fdd663;
-      --error: #f28b82;
-      --ring: rgba(0, 212, 170, 0.22);
-      --card-bg: #292a2d;
-      --header-bg: rgba(31, 31, 31, 0.92);
-      --header-border: #3c4043;
-      --teal-glow: rgba(0, 161, 154, 0.05);
-      --grid-line: rgba(232, 234, 237, 0.04);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      color: var(--text);
-      background: var(--bg);
-      background-image:
-        radial-gradient(900px 420px at 0% -10%, var(--teal-glow), transparent 55%),
-        radial-gradient(700px 360px at 100% 0%, rgba(55, 200, 143, 0.04), transparent 50%);
-      -webkit-font-smoothing: antialiased;
-      transition: background-color 0.3s ease, color 0.3s ease;
-    }
-    /* Drive-like subtle grid only in dark mode */
-    html.dark body {
-      background-image:
-        linear-gradient(var(--grid-line) 1px, transparent 1px),
-        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-        radial-gradient(800px 400px at 10% -5%, var(--teal-glow), transparent 50%);
-      background-size: 40px 40px, 40px 40px, auto;
-      background-color: var(--bg);
-    }
-    .shell { max-width: 1280px; margin: 0 auto; padding: 0 1rem 2.5rem; }
-    @media (min-width: 640px) { .shell { padding-left: 1.25rem; padding-right: 1.25rem; } }
-    @media (min-width: 1024px) { .shell { padding-left: 1.5rem; padding-right: 1.5rem; } }
-
-    /* Header — mirrors XLab_Web Header.tsx */
-    .topbar {
-      position: sticky; top: 0; z-index: 50;
-      backdrop-filter: blur(12px);
-      background: var(--header-bg);
-      border-bottom: 1px solid var(--header-border);
-      box-shadow: var(--shadow);
-    }
-    html.dark .topbar {
-      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
-      background: rgba(31, 31, 31, 0.92);
-    }
-    .topbar-inner {
-      max-width: 1280px; margin: 0 auto;
-      padding: 0.65rem 1rem;
-      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-    }
-    @media (min-width: 640px) { .topbar-inner { padding: 0.7rem 1.25rem; } }
-    .brand { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
-    .brand-logo-wrap {
-      display: flex; align-items: center; justify-content: center;
-      transition: transform 0.3s ease;
-    }
-    .brand-logo-wrap:hover { transform: scale(1.05); }
-    .brand-logo {
-      height: 36px; width: auto; display: block; object-fit: contain;
-    }
-    @media (min-width: 640px) { .brand-logo { height: 40px; } }
-    @media (min-width: 1024px) { .brand-logo { height: 44px; } }
-    .brand-mark {
-      display: none; align-items: baseline; font-weight: 800; font-size: 1.55rem;
-      letter-spacing: -0.03em; line-height: 1;
-    }
-    .brand-mark .x { color: var(--text); }
-    .brand-mark .lab { color: #00A19A; }
-    html.dark .brand-mark .lab { color: #00d4aa; }
-    .top-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-    .meta-chip {
-      font-size: 0.78rem; color: var(--muted);
-      background: var(--panel-soft); border: 1px solid var(--border);
-      border-radius: 999px; padding: 0.35rem 0.7rem; white-space: nowrap;
-    }
-    .icon-btn, .btn {
-      appearance: none; border: 1px solid var(--border);
-      background: var(--panel); color: var(--text);
-      border-radius: 0.5rem; padding: 0.5rem 0.85rem;
-      font: inherit; font-size: 0.875rem; font-weight: 600;
-      cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s, color .15s, transform .1s;
-    }
-    .icon-btn {
-      padding: 0.45rem; line-height: 1; border-radius: 999px;
-      color: var(--text-secondary);
-    }
-    .icon-btn:hover {
-      color: var(--xlab); background: color-mix(in srgb, var(--xlab) 10%, transparent);
-      border-color: transparent; box-shadow: none;
-    }
-    .btn:hover { border-color: var(--xlab); color: var(--xlab); }
-    .btn:active, .icon-btn:active { transform: translateY(1px); }
-    .btn-primary {
-      background: var(--xlab); color: #fff; border-color: transparent;
-    }
-    .btn-primary:hover {
-      background: var(--xlab-600); color: #fff; border-color: transparent;
-      box-shadow: 0 0 0 3px var(--ring);
-    }
-    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-    .btn-ghost {
-      background: transparent; border-color: var(--border); color: var(--muted); font-weight: 600;
-    }
-    .btn-ghost:hover { color: var(--text); border-color: var(--xlab); }
-
-    .hero {
-      margin: 1.25rem 0 1rem;
-      padding: 1.15rem 1.25rem;
-      border-radius: var(--radius-xl);
-      border: 1px solid var(--border);
-      background:
-        linear-gradient(135deg, color-mix(in srgb, var(--xlab) 10%, transparent), transparent 55%),
-        linear-gradient(to bottom right, color-mix(in srgb, var(--secondary) 6%, transparent), transparent),
-        var(--panel);
-      box-shadow: var(--shadow-md);
-      display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center;
-    }
-    .hero h2 { margin: 0 0 0.3rem; font-size: 1.15rem; font-weight: 750; letter-spacing: -0.02em; }
-    .hero p { margin: 0; color: var(--text-secondary); font-size: 0.88rem; max-width: 54ch; line-height: 1.5; }
-
-    .toolbar {
-      display: flex; gap: 0.55rem; flex-wrap: wrap; align-items: center;
-      margin-bottom: 1rem;
-    }
-    select, .search {
-      appearance: none;
-      background: var(--panel);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 0.5rem 0.8rem;
-      font: inherit; font-size: 0.875rem; font-weight: 500;
-    }
-    select {
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-      background-repeat: no-repeat; background-position: right 0.7rem center;
-      padding-right: 2rem; cursor: pointer;
-    }
-    .search { min-width: 180px; flex: 1; max-width: 280px; }
-    .search:focus, select:focus, .btn:focus-visible, .icon-btn:focus-visible {
-      outline: none; box-shadow: 0 0 0 3px var(--ring); border-color: var(--xlab);
-    }
-
-    .grid-kpi {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 0.75rem;
-    }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 1rem 1.05rem;
-      box-shadow: var(--shadow);
-      transition: background-color 0.3s ease, border-color 0.3s ease;
-    }
-    .kpi { position: relative; overflow: hidden; transition: transform .15s, box-shadow .15s; }
-    .kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-    .kpi .label {
-      display: flex; align-items: center; gap: 0.4rem;
-      color: var(--muted); font-size: 0.74rem; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.4rem;
-    }
-    .kpi .dot {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: var(--xlab); box-shadow: 0 0 0 3px rgba(0, 161, 154, 0.15);
-    }
-    .kpi .value { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.03em; }
-    .kpi .hint { margin-top: 0.2rem; font-size: 0.72rem; color: var(--muted); }
-
-    section.block { margin-top: 1.15rem; }
-    .section-head {
-      display: flex; justify-content: space-between; align-items: center;
-      gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.7rem;
-    }
-    .section-head h3 { margin: 0; font-size: 0.98rem; font-weight: 700; }
-    .pill {
-      display: inline-flex; align-items: center; gap: 0.3rem;
-      padding: 0.2rem 0.55rem; border-radius: 999px;
-      background: color-mix(in srgb, var(--xlab) 12%, transparent);
-      color: var(--xlab); border: 1px solid color-mix(in srgb, var(--xlab) 28%, transparent);
-      font-size: 0.72rem; font-weight: 700;
-    }
-
-    table { width: 100%; border-collapse: collapse; }
-    th, td {
-      text-align: left; padding: 0.65rem 0.4rem;
-      border-bottom: 1px solid var(--border); font-size: 0.88rem; vertical-align: middle;
-    }
-    th {
-      color: var(--muted); font-weight: 650; font-size: 0.72rem;
-      text-transform: uppercase; letter-spacing: 0.04em;
-    }
-    tbody tr:hover td { background: color-mix(in srgb, var(--xlab) 5%, transparent); }
-    code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.82rem; font-weight: 600;
-      background: var(--panel-soft); border: 1px solid var(--border);
-      border-radius: 7px; padding: 0.1rem 0.38rem;
-    }
-    .bar {
-      height: 8px; background: var(--panel-soft); border-radius: 99px;
-      overflow: hidden; min-width: 84px; border: 1px solid var(--border);
-    }
-    .bar > i {
-      display: block; height: 100%;
-      background: linear-gradient(90deg, var(--xlab-600), var(--xlab-400));
-      border-radius: inherit;
-    }
-
-    /* Provider cards — 9router-inspired, optimized */
-    .active-strip {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 0.65rem;
-      margin-bottom: 1.25rem;
-    }
-    .active-chip {
-      display: flex; align-items: center; gap: 0.7rem;
-      padding: 0.7rem 0.85rem;
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border);
-      background: var(--card-bg);
-      box-shadow: var(--shadow);
-    }
-    .active-chip:hover {
-      border-color: color-mix(in srgb, var(--xlab) 40%, var(--border));
-      background: color-mix(in srgb, var(--xlab) 6%, var(--panel));
-    }
-    .active-chip .meta { min-width: 0; }
-    .active-chip .name { font-weight: 700; font-size: 0.9rem; }
-    .active-chip .sub {
-      display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
-      margin-top: 0.18rem; font-size: 0.75rem;
-    }
-
-    .provider-section { margin-top: 1.35rem; }
-    .provider-section-head {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 0.75rem; margin-bottom: 0.7rem;
-    }
-    .provider-section-head h3 {
-      margin: 0; font-size: 0.95rem; font-weight: 700; letter-spacing: -0.01em;
-    }
-    .provider-section-head .count {
-      color: var(--muted); font-size: 0.78rem; font-weight: 600;
-    }
-
-    .provider-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 0.65rem;
-    }
-    @media (max-width: 1024px) {
-      .provider-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    }
-    @media (max-width: 760px) {
-      .provider-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-    @media (max-width: 480px) {
-      .provider-grid { grid-template-columns: 1fr; }
-    }
-
-    .provider-card {
-      display: flex; align-items: center; gap: 0.7rem;
-      padding: 0.72rem 0.8rem;
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border);
-      background: var(--card-bg);
-      transition: border-color .15s, background .15s, transform .12s, box-shadow .15s;
-      min-height: 64px;
-      cursor: default;
-    }
-    .provider-card:hover {
-      border-color: color-mix(in srgb, var(--xlab) 45%, var(--border));
-      background: color-mix(in srgb, var(--xlab) 6%, var(--panel));
-      transform: translateY(-1px);
-      box-shadow: var(--shadow-md);
-    }
-    .provider-card.is-live {
-      border-color: color-mix(in srgb, var(--success) 35%, var(--border));
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 12%, transparent);
-    }
-    .provider-card.is-offline { opacity: 0.72; }
-    .provider-card.is-offline:hover { opacity: 1; }
-
-    .avatar {
-      width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
-      display: grid; place-items: center;
-      font-size: 0.72rem; font-weight: 800; letter-spacing: -0.02em;
-      color: #fff; text-transform: uppercase;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
-      overflow: hidden;
-      background: var(--panel-soft);
-    }
-    .avatar img {
-      width: 100%; height: 100%;
-      object-fit: contain;
-      display: block;
-      padding: 3px;
-      background: #fff;
-    }
-    html.dark .avatar img {
-      background: #292a2d;
-    }
-    .avatar.avatar-fallback {
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
-    }
-    .provider-body { min-width: 0; flex: 1; }
-    .provider-name {
-      font-size: 0.88rem; font-weight: 650; letter-spacing: -0.01em;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .provider-status {
-      margin-top: 0.18rem;
-      display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
-      font-size: 0.72rem; font-weight: 600;
-    }
-    .dot-live {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: var(--success);
-      box-shadow: 0 0 0 3px var(--success-soft);
-      flex-shrink: 0;
-    }
-    .dot-detected {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: var(--xlab);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--xlab) 18%, transparent);
-      flex-shrink: 0;
-    }
-    .st-live { color: var(--success); }
-    .st-detected { color: var(--xlab); }
-    .st-off { color: var(--muted); font-weight: 500; }
-    .badge-soft {
-      display: inline-flex; align-items: center;
-      padding: 0.08rem 0.4rem; border-radius: 999px;
-      background: var(--panel-soft); border: 1px solid var(--border);
-      color: var(--muted); font-size: 0.68rem; font-weight: 650;
-    }
-    .badge-cost {
-      color: var(--xlab); border-color: color-mix(in srgb, var(--xlab) 30%, transparent);
-      background: color-mix(in srgb, var(--xlab) 10%, transparent);
-    }
-
-    .filter-tabs {
-      display: inline-flex; gap: 0.25rem; padding: 0.2rem;
-      border: 1px solid var(--border); border-radius: 11px; background: var(--panel);
-    }
-    .filter-tabs button {
-      appearance: none; border: 0; background: transparent; color: var(--muted);
-      font: inherit; font-size: 0.78rem; font-weight: 650;
-      padding: 0.35rem 0.65rem; border-radius: 8px; cursor: pointer;
-    }
-    .filter-tabs button.active {
-      background: color-mix(in srgb, var(--xlab) 16%, transparent);
-      color: var(--xlab);
-    }
-
-    .muted { color: var(--muted); }
-    .err { color: var(--error); font-weight: 600; }
-    .empty {
-      text-align: center; padding: 1.4rem 0.5rem; color: var(--muted); font-size: 0.88rem;
-      border: 1px dashed var(--border); border-radius: 12px;
-    }
-    footer {
-      margin-top: 1.75rem; padding-top: 1rem;
-      border-top: 1px solid var(--border);
-      display: flex; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
-      color: var(--muted); font-size: 0.8rem;
-    }
-    footer strong { color: var(--xlab); font-weight: 700; }
-    @media (max-width: 640px) {
-      .search { max-width: none; }
-    }
-  </style>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <header class="topbar">
@@ -459,6 +21,10 @@
           <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
         </a>
       </div>
+      <nav class="nav" aria-label="Main">
+        <a class="nav-link active" href="/">Dashboard</a>
+        <a class="nav-link" href="/agents">Agents</a>
+      </nav>
       <div class="top-actions">
         <span class="meta-chip" id="meta">Loading…</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">☾</button>
@@ -470,7 +36,7 @@
     <section class="hero">
       <div>
         <h2>Usage dashboard</h2>
-        <p>Theo dõi token &amp; chi phí local theo từng agent — layout provider cards tối ưu (tham khảo 9router), giữ brand XLab.</p>
+        <p>Token totals, estimated cost, and breakdown by agent / model / day.</p>
       </div>
       <div class="toolbar" style="margin:0">
         <button class="btn" id="refresh" type="button">Refresh</button>
@@ -512,28 +78,6 @@
       </table>
     </section>
 
-    <!-- Provider map -->
-    <section class="block" id="providersBlock">
-      <div class="section-head">
-        <div>
-          <h3>Agent providers</h3>
-          <div class="muted" style="font-size:0.8rem;margin-top:0.2rem" id="providerSummary">—</div>
-        </div>
-        <div class="toolbar" style="margin:0">
-          <div class="filter-tabs" id="filterTabs" role="tablist">
-            <button type="button" data-filter="all" class="active">All</button>
-            <button type="button" data-filter="live">Live</button>
-            <button type="button" data-filter="detected">Detected</button>
-            <button type="button" data-filter="offline">Offline</button>
-          </div>
-          <input class="search" id="providerSearch" type="search" placeholder="Search agents…" />
-        </div>
-      </div>
-
-      <div class="active-strip" id="activeStrip"></div>
-      <div id="providerSections"></div>
-    </section>
-
     <footer>
       <div>Màu &amp; logo từ <strong>XLab Web</strong> · primary <strong>#00A19A</strong></div>
       <div>localhost only · no cloud billing APIs</div>
@@ -549,126 +93,6 @@
       return String(Math.round(n || 0));
     };
     const money = (n) => '$' + (n || 0).toFixed(4);
-
-    /** Categories inspired by 9router provider groups, mapped to local agents */
-    const CATEGORIES = [
-      {
-        id: 'ide',
-        title: 'IDE & Desktop',
-        ids: ['cursor', 'windsurf', 'antigravity', 'trae', 'zed', 'warp', 'continue', 'void', 'devin'],
-      },
-      {
-        id: 'cli',
-        title: 'CLI Agents',
-        ids: [
-          'claude-code', 'codex', 'gemini', 'grok', 'opencode', 'hermes', 'openclaw',
-          'kimi', 'qwen', 'droid', 'amp', 'goose', 'pi', 'kiro', 'jcode', 'commandcode',
-          'zcode', 'opencodereview', 'aider', 'ollama', 'codewhale', 'mimocode', 'qoder',
-          'iflow', 'forge',
-        ],
-      },
-      {
-        id: 'ext',
-        title: 'Editor Extensions',
-        ids: ['copilot', 'cline', 'roocode', 'kilocode', 'codebuddy', 'workbuddy', 'junie', 'blackbox', 'amazon-q'],
-      },
-      {
-        id: 'other',
-        title: 'Other Providers',
-        ids: ['codebuff', 'mux', 'crush', 'gjc'],
-      },
-    ];
-
-    /* Avatar palette (fallback monogram) — XLab teal bias */
-    const AVATAR_COLORS = [
-      '#00A19A', '#0d9488', '#2dd4bf', '#37C88F', '#0f766e',
-      '#14b8a6', '#5eead4', '#2CA072', '#115e59', '#06b6d4',
-      '#10B981', '#0ea5e9', '#64748b', '#334155', '#475569',
-    ];
-
-    /**
-     * Favicons from each product's official site title bar
-     * (homepage /icon.horse / Google favicon fallback)
-     */
-    const AGENT_ICONS = {
-      'claude-code': '/assets/agents/claude-code.ico',
-      codex: '/assets/agents/codex.png',
-      cursor: '/assets/agents/cursor.png',
-      windsurf: '/assets/agents/windsurf.ico',
-      grok: '/assets/agents/grok.ico',
-      gemini: '/assets/agents/gemini.png',
-      opencode: '/assets/agents/opencode.png',
-      copilot: '/assets/agents/copilot.png',
-      hermes: '/assets/agents/hermes.png',
-      openclaw: '/assets/agents/openclaw.png',
-      pi: '/assets/agents/pi.png',
-      kimi: '/assets/agents/kimi.ico',
-      qwen: '/assets/agents/qwen.png',
-      droid: '/assets/agents/droid.ico',
-      amp: '/assets/agents/amp.png',
-      goose: '/assets/agents/goose.png',
-      cline: '/assets/agents/cline.png',
-      roocode: '/assets/agents/roocode.png',
-      kilocode: '/assets/agents/kilocode.png',
-      antigravity: '/assets/agents/antigravity.png',
-      warp: '/assets/agents/warp.png',
-      trae: '/assets/agents/trae.png',
-      zed: '/assets/agents/zed.png',
-      codebuff: '/assets/agents/codebuff.png',
-      mux: '/assets/agents/mux.png',
-      crush: '/assets/agents/crush.png',
-      kiro: '/assets/agents/kiro.png',
-      gjc: '/assets/agents/gjc.png',
-      jcode: '/assets/agents/jcode.png',
-      commandcode: '/assets/agents/commandcode.png',
-      junie: '/assets/agents/junie.png',
-      zcode: '/assets/agents/zcode.png',
-      opencodereview: '/assets/agents/opencodereview.png',
-      codebuddy: '/assets/agents/codebuddy.png',
-      workbuddy: '/assets/agents/workbuddy.png',
-      aider: '/assets/agents/aider.png',
-      continue: '/assets/agents/continue.png',
-      // New agents — official site / 9router provider icons
-      devin: '/assets/agents/devin.png',
-      ollama: '/assets/agents/ollama.svg',
-      codewhale: '/assets/agents/codewhale.png',
-      mimocode: '/assets/agents/mimocode.png',
-      qoder: '/assets/agents/qoder.png',
-      iflow: '/assets/agents/iflow.png',
-      blackbox: '/assets/agents/blackbox.png',
-      forge: '/assets/agents/forge.png',
-      void: '/assets/agents/void.png',
-      'amazon-q': '/assets/agents/amazon-q.png',
-    };
-
-    let agentState = [];
-    let costByAgent = {};
-    let tokensByAgent = {};
-    let currentFilter = 'all';
-
-    function applyTheme(mode) {
-      document.documentElement.classList.toggle('dark', mode === 'dark');
-      localStorage.setItem('xlab-token-theme', mode);
-      $('themeBtn').textContent = mode === 'dark' ? '☀' : '☾';
-      $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
-    }
-    const saved = localStorage.getItem('xlab-token-theme');
-    // Default light like XLab Web storefront
-    applyTheme(saved === 'dark' ? 'dark' : 'light');
-    $('themeBtn').onclick = () => {
-      applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
-    };
-
-    function colorFor(id) {
-      let h = 0;
-      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-      return AVATAR_COLORS[h % AVATAR_COLORS.length];
-    }
-    function monogram(label) {
-      const parts = String(label).replace(/[^a-zA-Z0-9 ]/g, ' ').trim().split(/\s+/).filter(Boolean);
-      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-      return String(label).slice(0, 2).toUpperCase();
-    }
     function escapeHtml(s) {
       return String(s ?? '')
         .replaceAll('&', '&amp;')
@@ -676,11 +100,17 @@
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;');
     }
-    function agentKind(a) {
-      if (a.detected && (a.eventCount || 0) > 0) return 'live';
-      if (a.detected) return 'detected';
-      return 'offline';
+
+    function applyTheme(mode) {
+      document.documentElement.classList.toggle('dark', mode === 'dark');
+      localStorage.setItem('xlab-token-theme', mode);
+      $('themeBtn').textContent = mode === 'dark' ? '☀' : '☾';
+      $('themeBtn').title = mode === 'dark' ? 'Light mode' : 'Dark mode';
     }
+    applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
+    $('themeBtn').onclick = () => {
+      applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    };
 
     function kpi(label, value, hint) {
       return `<div class="card kpi">
@@ -690,152 +120,16 @@
       </div>`;
     }
 
-    function avatarHtml(a) {
-      const icon = AGENT_ICONS[a.id];
-      const mono = escapeHtml(monogram(a.label));
-      const bg = colorFor(a.id);
-      const fallback = `this.parentElement.classList.add('avatar-fallback');this.parentElement.style.background='${bg}';this.parentElement.textContent='${mono}';this.remove();`;
-      if (icon) {
-        return `<div class="avatar" title="${escapeHtml(a.label)}">
-          <img src="${icon}" alt="${escapeHtml(a.label)}" loading="lazy" onerror="${fallback}" />
-        </div>`;
-      }
-      return `<div class="avatar avatar-fallback" style="background:${bg}" title="${escapeHtml(a.id)}">${mono}</div>`;
-    }
-
-    function statusHtml(a) {
-      const kind = agentKind(a);
-      const events = a.eventCount || 0;
-      const cost = costByAgent[a.id];
-      const tokens = tokensByAgent[a.id];
-      if (kind === 'live') {
-        return `<span class="dot-live"></span>
-          <span class="st-live">${events} event${events === 1 ? '' : 's'}</span>
-          ${tokens != null ? `<span class="badge-soft">${fmt(tokens)} tok</span>` : ''}
-          ${cost != null ? `<span class="badge-soft badge-cost">${money(cost)}</span>` : ''}`;
-      }
-      if (kind === 'detected') {
-        return `<span class="dot-detected"></span><span class="st-detected">Detected</span>
-          <span class="badge-soft">no events yet</span>`;
-      }
-      return `<span class="st-off">No local data</span>`;
-    }
-
-    function providerCard(a) {
-      const kind = agentKind(a);
-      const cls = kind === 'live' ? 'is-live' : kind === 'offline' ? 'is-offline' : '';
-      const paths = (a.paths || []).join('\n');
-      return `<article class="provider-card ${cls}" data-id="${escapeHtml(a.id)}" data-kind="${kind}" title="${escapeHtml(paths || a.id)}">
-        ${avatarHtml(a)}
-        <div class="provider-body">
-          <div class="provider-name">${escapeHtml(a.label)}</div>
-          <div class="provider-status">${statusHtml(a)}</div>
-        </div>
-      </article>`;
-    }
-
-    function matchesFilter(a, filter, q) {
-      const kind = agentKind(a);
-      if (filter === 'live' && kind !== 'live') return false;
-      if (filter === 'detected' && kind !== 'detected') return false;
-      if (filter === 'offline' && kind !== 'offline') return false;
-      if (q) {
-        const hay = `${a.label} ${a.id}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    }
-
-    function renderProviders() {
-      const q = ($('providerSearch').value || '').trim().toLowerCase();
-      const list = agentState;
-      const live = list.filter((a) => agentKind(a) === 'live');
-      const detected = list.filter((a) => agentKind(a) === 'detected');
-      const offline = list.filter((a) => agentKind(a) === 'offline');
-
-      $('providerSummary').textContent =
-        `${live.length} live · ${detected.length} detected · ${offline.length} offline · ${list.length} total`;
-
-      // Active strip (top chips like 9router connected apps)
-      const top = [...live].sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0)).slice(0, 6);
-      $('activeStrip').innerHTML = top.length
-        ? top.map((a) => `
-          <div class="active-chip">
-            ${avatarHtml(a)}
-            <div class="meta">
-              <div class="name">${escapeHtml(a.label)}</div>
-              <div class="sub">
-                <span class="dot-live"></span>
-                <span class="st-live">${a.eventCount || 0} events</span>
-                ${costByAgent[a.id] != null ? `<span class="badge-soft badge-cost">${money(costByAgent[a.id])}</span>` : ''}
-              </div>
-            </div>
-          </div>`).join('')
-        : `<div class="empty" style="grid-column:1/-1">Chưa có agent live. Dùng AI tools rồi Rescan.</div>`;
-
-      // Categorized grids
-      const used = new Set();
-      const sections = [];
-      for (const cat of CATEGORIES) {
-        const members = cat.ids
-          .map((id) => list.find((a) => a.id === id))
-          .filter(Boolean)
-          .filter((a) => {
-            used.add(a.id);
-            return matchesFilter(a, currentFilter, q);
-          });
-        // sort: live > detected > offline, then events desc
-        members.sort((a, b) => {
-          const rank = { live: 0, detected: 1, offline: 2 };
-          const d = rank[agentKind(a)] - rank[agentKind(b)];
-          if (d !== 0) return d;
-          return (b.eventCount || 0) - (a.eventCount || 0);
-        });
-        if (!members.length) continue;
-        sections.push(`
-          <div class="provider-section">
-            <div class="provider-section-head">
-              <h3>${escapeHtml(cat.title)}</h3>
-              <span class="count">${members.length}</span>
-            </div>
-            <div class="provider-grid">${members.map(providerCard).join('')}</div>
-          </div>`);
-      }
-
-      // leftover agents not in categories
-      const rest = list.filter((a) => !used.has(a.id) && matchesFilter(a, currentFilter, q));
-      if (rest.length) {
-        rest.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
-        sections.push(`
-          <div class="provider-section">
-            <div class="provider-section-head">
-              <h3>More</h3>
-              <span class="count">${rest.length}</span>
-            </div>
-            <div class="provider-grid">${rest.map(providerCard).join('')}</div>
-          </div>`);
-      }
-
-      $('providerSections').innerHTML = sections.join('') ||
-        `<div class="empty">Không có agent khớp bộ lọc.</div>`;
-    }
-
     async function load() {
       const since = $('since').value;
       const groupBy = $('groupBy').value;
       const q = new URLSearchParams({ groupBy, sort: 'cost' });
       if (since) q.set('since', since);
       try {
-        const agentStatsQ = new URLSearchParams({ groupBy: 'agent', sort: 'cost' });
-        if (since) agentStatsQ.set('since', since);
-
-        const [stats, agentStats, agents, health] = await Promise.all([
+        const [stats, health] = await Promise.all([
           fetch('/api/stats?' + q).then((r) => r.json()),
-          fetch('/api/stats?' + agentStatsQ).then((r) => r.json()),
-          fetch('/api/agents').then((r) => r.json()),
           fetch('/api/health').then((r) => r.json()),
         ]);
-
         const t = stats.totals || {};
         const detected = health.agentsDetected?.length || 0;
         $('meta').textContent = `v${health.version} · ${detected} agents · ${fmt(health.eventCount || 0)} events`;
@@ -857,31 +151,10 @@
             <td><div class="bar"><i style="width:${Math.round(((g.estimatedCost || 0) / maxCost) * 100)}%"></i></div></td>
           </tr>
         `).join('') || '<tr><td colspan="4"><div class="empty">Chưa có usage. Dùng AI agents rồi bấm Rescan.</div></td></tr>';
-
-        costByAgent = {};
-        tokensByAgent = {};
-        for (const g of agentStats.groups || []) {
-          costByAgent[g.key] = g.estimatedCost || 0;
-          tokensByAgent[g.key] = g.totalTokens || 0;
-        }
-
-        agentState = agents.agents || [];
-        renderProviders();
       } catch (e) {
         $('meta').innerHTML = '<span class="err">Failed to load API</span>';
       }
     }
-
-    $('filterTabs').onclick = (e) => {
-      const btn = e.target.closest('button[data-filter]');
-      if (!btn) return;
-      currentFilter = btn.dataset.filter;
-      for (const b of $('filterTabs').querySelectorAll('button')) {
-        b.classList.toggle('active', b === btn);
-      }
-      renderProviders();
-    };
-    $('providerSearch').oninput = () => renderProviders();
 
     $('refresh').onclick = load;
     $('since').onchange = load;
