@@ -81,6 +81,31 @@
         </div>
       </section>
 
+      <!-- Timezone (Today / Yesterday boundary) -->
+      <section class="u-card settings-card">
+        <h3 class="settings-card-title">Timezone</h3>
+        <p class="settings-card-desc">
+          Calendar day for Dashboard <strong>Today</strong> / Agents period filters.
+          Does not change stored event timestamps (UTC).
+        </p>
+        <div class="settings-row">
+          <label for="timezoneSelect">Timezone</label>
+          <select id="timezoneSelect" class="or-select settings-select" aria-label="Timezone"></select>
+        </div>
+        <div class="settings-row muted-row">
+          <span>Today starts at</span>
+          <code id="todayStartsLabel">&mdash;</code>
+        </div>
+        <div class="settings-row muted-row">
+          <span>Browser local</span>
+          <code id="browserTzLabel">&mdash;</code>
+        </div>
+        <div class="settings-actions">
+          <button type="button" class="btn btn-primary" id="saveTimezone">Save timezone</button>
+          <span class="pricing-status" id="timezoneStatus"></span>
+        </div>
+      </section>
+
       <!-- Model pricing shortcut -->
       <section class="u-card settings-card">
         <h3 class="settings-card-title">Model pricing</h3>
@@ -198,12 +223,75 @@
       }
     }
 
+    const TIMEZONES = [
+      { value: 'local', label: 'Machine local (default)' },
+      { value: 'UTC', label: 'UTC' },
+      { value: 'Asia/Ho_Chi_Minh', label: 'Asia/Ho_Chi_Minh (Vietnam, UTC+7)' },
+      { value: 'Asia/Bangkok', label: 'Asia/Bangkok (UTC+7)' },
+      { value: 'Asia/Singapore', label: 'Asia/Singapore (UTC+8)' },
+      { value: 'Asia/Tokyo', label: 'Asia/Tokyo (UTC+9)' },
+      { value: 'Asia/Shanghai', label: 'Asia/Shanghai (UTC+8)' },
+      { value: 'Asia/Seoul', label: 'Asia/Seoul (UTC+9)' },
+      { value: 'Asia/Kolkata', label: 'Asia/Kolkata (UTC+5:30)' },
+      { value: 'Europe/London', label: 'Europe/London' },
+      { value: 'Europe/Paris', label: 'Europe/Paris' },
+      { value: 'Europe/Berlin', label: 'Europe/Berlin' },
+      { value: 'America/New_York', label: 'America/New_York' },
+      { value: 'America/Los_Angeles', label: 'America/Los_Angeles' },
+      { value: 'America/Chicago', label: 'America/Chicago' },
+      { value: 'Australia/Sydney', label: 'Australia/Sydney' },
+    ];
+
+    function fillTimezoneSelect(selected) {
+      const sel = $('timezoneSelect');
+      if (!sel) return;
+      const cur = selected || 'local';
+      const known = new Set(TIMEZONES.map((t) => t.value));
+      sel.innerHTML = TIMEZONES.map(
+        (t) => `<option value="${t.value}"${t.value === cur ? ' selected' : ''}>${t.label}</option>`,
+      ).join('');
+      if (cur && !known.has(cur)) {
+        const opt = document.createElement('option');
+        opt.value = cur;
+        opt.textContent = cur + ' (custom)';
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    function formatTodayStart(iso) {
+      if (!iso) return '\u2014';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString(undefined, {
+          year: 'numeric', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          timeZoneName: 'short',
+        }) + ' \u00B7 ' + iso;
+      } catch {
+        return iso;
+      }
+    }
+
     async function loadConfigUi() {
       try {
         const c = await fetch('/api/config').then((r) => r.json());
         $('configPath').textContent = c.configPath || '\u2014';
         $('currencyLabel').textContent = c.pricing?.currency || 'USD';
         $('preferRouterCost').checked = c.pricing?.preferRouterCost !== false;
+        fillTimezoneSelect(c.timezone || 'local');
+        try {
+          $('browserTzLabel').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+        } catch {
+          $('browserTzLabel').textContent = 'local';
+        }
+        // todayStartsAt from health (uses same server logic)
+        try {
+          const h = await fetch('/api/health').then((r) => r.json());
+          $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt);
+        } catch {
+          $('todayStartsLabel').textContent = '\u2014';
+        }
       } catch {
         $('configPath').textContent = '(failed to load)';
       }
@@ -228,6 +316,28 @@
         $('costSettingsStatus').textContent = 'Save failed';
       } finally {
         $('saveCostSettings').disabled = false;
+      }
+    };
+
+    $('saveTimezone').onclick = async () => {
+      $('saveTimezone').disabled = true;
+      $('timezoneStatus').textContent = 'Saving\u2026';
+      try {
+        const tz = $('timezoneSelect').value || 'local';
+        const r = await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timezone: tz }),
+        }).then((x) => x.json());
+        $('timezoneStatus').textContent = 'Saved \u00B7 Today boundary updated';
+        if (r.todayStartsAt) {
+          $('todayStartsLabel').textContent = formatTodayStart(r.todayStartsAt);
+        }
+        await loadConfigUi();
+      } catch {
+        $('timezoneStatus').textContent = 'Save failed';
+      } finally {
+        $('saveTimezone').disabled = false;
       }
     };
 

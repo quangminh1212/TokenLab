@@ -370,14 +370,9 @@
         </div>`;
     }
 
+    /** "today" uses server Settings timezone */
     function sinceParam() {
-      const v = $('since').value;
-      if (v === 'today') {
-        const d = new Date();
-        d.setHours(0, 0, 0, 0);
-        return d.toISOString();
-      }
-      return v;
+      return $('since').value || '';
     }
 
     let scanRevision = 0;

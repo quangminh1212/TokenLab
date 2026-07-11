@@ -1121,6 +1121,17 @@ a.icon-btn:hover {
   font-size: 0.88rem;
 }
 .settings-row.muted-row { color: var(--muted); font-size: 0.82rem; }
+.settings-select {
+  min-width: min(18rem, 100%);
+  max-width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.45rem;
+  background: var(--bg-soft, var(--bg));
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+}
 .settings-toggle-row {
   display: flex;
   align-items: flex-start;

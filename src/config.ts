@@ -6,6 +6,11 @@ import { appDataDir, pathExists } from "./util.js";
 export interface XlabTokenConfig {
   host?: string;
   port?: number;
+  /**
+   * IANA timezone for "Today" / "Yesterday" filters (e.g. Asia/Ho_Chi_Minh).
+   * Use "local" for the machine timezone, or "UTC".
+   */
+  timezone?: string;
   pricing?: {
     currency?: string;
     /** Prefer router-reported cost when > 0 (default true). */
@@ -16,6 +21,7 @@ export interface XlabTokenConfig {
 }
 
 const DEFAULT_CONFIG: XlabTokenConfig = {
+  timezone: "local",
   pricing: {
     currency: "USD",
     preferRouterCost: true,
@@ -89,6 +95,7 @@ function mergeConfig(base: XlabTokenConfig, over: XlabTokenConfig): XlabTokenCon
   return {
     ...base,
     ...over,
+    timezone: over.timezone ?? base.timezone ?? "local",
     pricing: {
       ...base.pricing,
       ...over.pricing,

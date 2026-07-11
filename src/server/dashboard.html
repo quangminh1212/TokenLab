@@ -223,12 +223,9 @@
       return state.period === 'today' || state.period === '24h';
     }
 
+    /** "today" is resolved on the server with Settings timezone (not browser-only). */
     function sinceParam() {
-      if (state.period === 'today') {
-        const d = new Date();
-        d.setHours(0, 0, 0, 0);
-        return d.toISOString();
-      }
+      if (state.period === 'today') return 'today';
       return state.period || '';
     }
 
