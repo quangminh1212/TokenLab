@@ -56,10 +56,22 @@ async function main(): Promise<void> {
     console.log(`API  http://${srv.host}:${srv.port}/api/health`);
     if (!noUi) console.log(`UI   http://${srv.host}:${srv.port}/`);
     console.log("Press Ctrl+C to stop");
-    process.on("SIGINT", async () => {
-      await srv.close();
-      process.exit(0);
-    });
+
+    let shuttingDown = false;
+    const shutdown = async (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      try {
+        await srv.close();
+      } catch {
+        // ignore close errors on hot-reload restart
+      }
+      process.exit(signal === "SIGTERM" ? 0 : 0);
+    };
+    process.on("SIGINT", () => void shutdown("SIGINT"));
+    process.on("SIGTERM", () => void shutdown("SIGTERM"));
+    // tsx watch / Windows sometimes sends before handlers finish
+    process.on("SIGHUP", () => void shutdown("SIGHUP"));
     return;
   }
 

@@ -114,10 +114,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     json(res, 404, { error: { code: "NOT_FOUND", message: "Not found" } });
   }
 
-  await new Promise<void>((resolve, reject) => {
-    server.listen(port, host, () => resolve());
-    server.on("error", reject);
-  });
+  // Retry listen so hot-reload (tsx watch) can reclaim the port after restart
+  await listenWithRetry(server, port, host, 25, 120);
 
   // background refresh every 60s
   const timer = setInterval(() => {
@@ -130,11 +128,52 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     port,
     close: async () => {
       clearInterval(timer);
-      await new Promise<void>((resolve, reject) => {
-        server.close((err) => (err ? reject(err) : resolve()));
+      try {
+        server.closeAllConnections?.();
+      } catch {
+        // Node < 18.2 may not have closeAllConnections
+      }
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        // hard-stop hang if peers keep sockets open
+        setTimeout(() => resolve(), 500).unref?.();
       });
     },
   };
+}
+
+async function listenWithRetry(
+  server: ReturnType<typeof createServer>,
+  port: number,
+  host: string,
+  attempts: number,
+  delayMs: number,
+): Promise<void> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          server.off("listening", onListening);
+          reject(err);
+        };
+        const onListening = () => {
+          server.off("error", onError);
+          resolve();
+        };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(port, host);
+      });
+      return;
+    } catch (err) {
+      lastErr = err;
+      const code = err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : "";
+      if (code !== "EADDRINUSE" || i === attempts - 1) break;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {

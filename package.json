@@ -15,6 +15,7 @@
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "serve": "tsx src/cli.ts serve",
+    "serve:watch": "tsx watch --watch-path=./src --watch-preserve-output --watch-kill-signal=SIGTERM src/cli.ts serve",
     "stats": "tsx src/cli.ts stats",
     "cost": "tsx src/cli.ts cost",
     "doctors": "tsx src/cli.ts doctors",

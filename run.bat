@@ -2,10 +2,10 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title XLab Token
+title XLab Token (hot reload)
 echo.
 echo  === XLab Token ===
-echo  Build + start local server
+echo  Dev server + hot reload (tsx watch)
 echo.
 
 where node >nul 2>&1
@@ -22,7 +22,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [1/3] Installing dependencies...
+echo [1/2] Installing dependencies...
 if not exist "node_modules\" (
   call npm install
   if errorlevel 1 (
@@ -34,26 +34,24 @@ if not exist "node_modules\" (
   echo       node_modules OK
 )
 
-echo [2/3] Building project...
-call npm run build
-if errorlevel 1 (
-  echo [ERROR] Build failed.
-  pause
-  exit /b 1
+if not exist "node_modules\tsx\" (
+  echo       Installing tsx...
+  call npm install
+  if errorlevel 1 (
+    echo [ERROR] npm install failed.
+    pause
+    exit /b 1
+  )
 )
 
-if not exist "dist\cli.js" (
-  echo [ERROR] dist\cli.js missing after build.
-  pause
-  exit /b 1
-)
-
-echo [3/3] Starting server on http://127.0.0.1:3737
+echo [2/2] Starting hot-reload server on http://127.0.0.1:3737
+echo       Watching: src\
+echo       Edit code -^> server auto-restarts
 echo       Press Ctrl+C to stop.
 echo.
 
 start "" cmd /c "timeout /t 2 /nobreak >nul & start http://127.0.0.1:3737"
-call node dist\cli.js serve
+call npm run serve:watch
 set EXITCODE=%ERRORLEVEL%
 
 if not "%EXITCODE%"=="0" (
