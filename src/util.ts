@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -7,10 +8,20 @@ export function stableId(...parts: string[]): string {
   return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 24);
 }
 
+/** User home — platform-aware (USERPROFILE on Windows, HOME on Unix). */
 export function homeDir(): string {
-  return process.env.USERPROFILE || process.env.HOME || process.cwd();
+  if (process.platform === "win32") {
+    return process.env.USERPROFILE || process.env.HOME || process.cwd();
+  }
+  return process.env.HOME || process.env.USERPROFILE || process.cwd();
 }
 
+/**
+ * Roaming / config-style application data root.
+ * - Windows: %APPDATA%
+ * - macOS: ~/Library/Application Support
+ * - Linux: $XDG_CONFIG_HOME || ~/.config
+ */
 export function appDataDir(): string {
   if (process.platform === "win32") {
     return process.env.APPDATA || path.join(homeDir(), "AppData", "Roaming");
@@ -19,6 +30,67 @@ export function appDataDir(): string {
     return path.join(homeDir(), "Library", "Application Support");
   }
   return process.env.XDG_CONFIG_HOME || path.join(homeDir(), ".config");
+}
+
+/**
+ * Local / machine-scoped application data root.
+ * - Windows: %LOCALAPPDATA%
+ * - macOS: ~/Library/Application Support (Electron convention)
+ * - Linux: $XDG_DATA_HOME || ~/.local/share
+ */
+export function localAppDataDir(): string {
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA || path.join(homeDir(), "AppData", "Local");
+  }
+  if (process.platform === "darwin") {
+    return path.join(homeDir(), "Library", "Application Support");
+  }
+  return process.env.XDG_DATA_HOME || path.join(homeDir(), ".local", "share");
+}
+
+/**
+ * Cache directory root.
+ * - Windows: %LOCALAPPDATA%
+ * - macOS: ~/Library/Caches
+ * - Linux: $XDG_CACHE_HOME || ~/.cache
+ */
+export function cacheDir(): string {
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA || path.join(homeDir(), "AppData", "Local");
+  }
+  if (process.platform === "darwin") {
+    return path.join(homeDir(), "Library", "Caches");
+  }
+  return process.env.XDG_CACHE_HOME || path.join(homeDir(), ".cache");
+}
+
+/** Open a URL in the default browser (best-effort, non-blocking). */
+export function openBrowser(url: string): void {
+  try {
+    let cmd: string;
+    let args: string[];
+    if (process.platform === "win32") {
+      cmd = "cmd";
+      args = ["/c", "start", "", url];
+    } else if (process.platform === "darwin") {
+      cmd = "open";
+      args = [url];
+    } else {
+      cmd = "xdg-open";
+      args = [url];
+    }
+    const child = spawn(cmd, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.on("error", () => {
+      // ignore missing xdg-open / open
+    });
+    child.unref();
+  } catch {
+    // browser open is optional
+  }
 }
 
 export function expandHome(p: string): string {
