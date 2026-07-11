@@ -44,3 +44,41 @@ test("aggregate by agent sorts by cost", () => {
   assert.equal(r.totals.totalTokens, 3600);
   assert.ok(Math.abs(r.totals.estimatedCost - 1.7) < 1e-9);
 });
+
+test("aggregate by model merges names with provider parentheses", () => {
+  const events: UsageEvent[] = [
+    {
+      ...sample[0],
+      id: "a",
+      model: "gpt-5.5 (openai-compatible-responses-edd706dd-4c64-4148-ba97-f5bddf8c0cfc)",
+      totalTokens: 100,
+      estimatedCost: 1,
+      inputTokens: 80,
+      outputTokens: 20,
+    },
+    {
+      ...sample[0],
+      id: "b",
+      model: "gpt-5.5|openai-compatible-chat-aa9b60d1",
+      totalTokens: 50,
+      estimatedCost: 0.5,
+      inputTokens: 40,
+      outputTokens: 10,
+    },
+    {
+      ...sample[0],
+      id: "c",
+      model: "gpt-5.5",
+      totalTokens: 30,
+      estimatedCost: 0.3,
+      inputTokens: 20,
+      outputTokens: 10,
+    },
+  ];
+  const r = aggregate(events, "model", "cost");
+  const gpt = r.groups.find((g) => g.key === "gpt-5.5");
+  assert.ok(gpt, `expected gpt-5.5 group, got ${r.groups.map((g) => g.key).join(",")}`);
+  assert.equal(gpt.eventCount, 3);
+  assert.equal(gpt.totalTokens, 180);
+  assert.ok(Math.abs(gpt.estimatedCost - 1.8) < 1e-9);
+});

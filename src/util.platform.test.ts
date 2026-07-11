@@ -6,6 +6,7 @@ import {
   cacheDir,
   homeDir,
   localAppDataDir,
+  normalizeModelName,
 } from "./util.js";
 import {
   jetbrainsRoots,
@@ -88,5 +89,24 @@ describe("platform path helpers", () => {
     assert.ok(bases.some((r) => r.includes("JetBrains")));
     const junie = jetbrainsRoots("Junie");
     assert.ok(junie.some((r) => r.endsWith(`${path.sep}Junie`) || r.includes(`${path.sep}Junie`)));
+  });
+});
+
+describe("normalizeModelName", () => {
+  it("strips parenthetical provider suffixes", () => {
+    assert.equal(
+      normalizeModelName(
+        "gpt-5.5 (openai-compatible-responses-edd706dd-4c64-4148-ba97-f5bddf8c0cfc)",
+      ),
+      "gpt-5.5",
+    );
+  });
+  it("strips pipe provider keys and merges path", () => {
+    assert.equal(normalizeModelName("gpt-5.5|openai-compatible-chat-aa9b"), "gpt-5.5");
+    assert.equal(normalizeModelName("openai/gpt-4.1"), "gpt-4.1");
+  });
+  it("returns null for empty", () => {
+    assert.equal(normalizeModelName(""), null);
+    assert.equal(normalizeModelName(null), null);
   });
 });
