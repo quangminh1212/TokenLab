@@ -370,8 +370,13 @@
     }
     .avatar img {
       width: 100%; height: 100%;
-      object-fit: cover;
+      object-fit: contain;
       display: block;
+      padding: 3px;
+      background: #fff;
+    }
+    html.dark .avatar img {
+      background: #292a2d;
     }
     .avatar.avatar-fallback {
       box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
@@ -581,46 +586,46 @@
     ];
 
     /**
-     * Agent icons from 9router (decolua/9router public/providers/*)
-     * Same set shown in 9router OAuth/provider UI.
+     * Favicons from each product's official site title bar
+     * (homepage /icon.horse / Google favicon fallback)
      */
     const AGENT_ICONS = {
-      'claude-code': '/assets/agents/claude-code.png',
+      'claude-code': '/assets/agents/claude-code.ico',
       codex: '/assets/agents/codex.png',
       cursor: '/assets/agents/cursor.png',
-      windsurf: '/assets/agents/windsurf.svg',
-      grok: '/assets/agents/grok.png',
+      windsurf: '/assets/agents/windsurf.ico',
+      grok: '/assets/agents/grok.ico',
       gemini: '/assets/agents/gemini.png',
       opencode: '/assets/agents/opencode.png',
       copilot: '/assets/agents/copilot.png',
       hermes: '/assets/agents/hermes.png',
       openclaw: '/assets/agents/openclaw.png',
       pi: '/assets/agents/pi.png',
-      kimi: '/assets/agents/kimi.png',
+      kimi: '/assets/agents/kimi.ico',
       qwen: '/assets/agents/qwen.png',
-      droid: '/assets/agents/droid.png',
+      droid: '/assets/agents/droid.ico',
       amp: '/assets/agents/amp.png',
       goose: '/assets/agents/goose.png',
       cline: '/assets/agents/cline.png',
       roocode: '/assets/agents/roocode.png',
       kilocode: '/assets/agents/kilocode.png',
       antigravity: '/assets/agents/antigravity.png',
-      warp: '/assets/agents/warp.jpg',
-      trae: '/assets/agents/trae.svg',
-      zed: '/assets/agents/zed.jpg',
-      codebuff: '/assets/agents/codebuff.svg',
+      warp: '/assets/agents/warp.png',
+      trae: '/assets/agents/trae.png',
+      zed: '/assets/agents/zed.png',
+      codebuff: '/assets/agents/codebuff.png',
       mux: '/assets/agents/mux.png',
       crush: '/assets/agents/crush.png',
       kiro: '/assets/agents/kiro.png',
-      gjc: '/assets/agents/gjc.svg',
+      gjc: '/assets/agents/gjc.png',
       jcode: '/assets/agents/jcode.png',
       commandcode: '/assets/agents/commandcode.png',
-      junie: '/assets/agents/junie.svg',
-      zcode: '/assets/agents/zcode.jpg',
-      opencodereview: '/assets/agents/opencodereview.svg',
+      junie: '/assets/agents/junie.png',
+      zcode: '/assets/agents/zcode.png',
+      opencodereview: '/assets/agents/opencodereview.png',
       codebuddy: '/assets/agents/codebuddy.png',
-      workbuddy: '/assets/agents/workbuddy.svg',
-      aider: '/assets/agents/aider.svg',
+      workbuddy: '/assets/agents/workbuddy.png',
+      aider: '/assets/agents/aider.png',
       continue: '/assets/agents/continue.png',
     };
 

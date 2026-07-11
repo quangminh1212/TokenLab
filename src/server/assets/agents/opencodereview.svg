@@ -1,6 +1,0 @@
-﻿<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="OpenCodeReview">
-  <rect width="64" height="64" rx="14" fill="#2563eb"/>
-  <circle cx="28" cy="28" r="10" fill="none" stroke="#fff" stroke-width="3"/>
-  <path d="M36 36l10 10" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
-  <path d="M18 46h14" stroke="#93c5fd" stroke-width="3" stroke-linecap="round"/>
-</svg>
