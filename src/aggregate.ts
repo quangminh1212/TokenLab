@@ -25,7 +25,11 @@ function add(t: TokenTotals, e: UsageEvent): void {
 
 function groupKey(e: UsageEvent, by: GroupBy): string {
   if (by === "agent") return e.agent;
-  if (by === "model") return e.model || "unknown";
+  if (by === "model") {
+    const m = (e.model || "").trim();
+    // Label missing model with agent so "unknown" is not a mystery model name
+    return m || `unknown (${e.agent})`;
+  }
   const d = new Date(e.timestamp);
   if (Number.isNaN(d.getTime())) return "unknown";
   if (by === "day") return d.toISOString().slice(0, 10);

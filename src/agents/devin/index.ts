@@ -15,6 +15,8 @@ import { parseGenericJsonl } from "../shared/generic-jsonl.js";
  */
 export async function parseDevin(roots: string[]): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
+  // Windows paths are case-insensitive — normalize to avoid double-counting
+  // e.g. %APPDATA%/devin vs %APPDATA%/Devin
   const seenDb = new Set<string>();
 
   for (const root of roots) {
@@ -23,8 +25,9 @@ export async function parseDevin(roots: string[]): Promise<UsageEvent[]> {
     // SQLite sessions
     for (const rel of ["cli/sessions.db", "sessions.db", "state.db"]) {
       const dbPath = path.join(root, rel);
-      if (await pathExists(dbPath) && !seenDb.has(dbPath)) {
-        seenDb.add(dbPath);
+      const dbKey = dbPath.toLowerCase();
+      if (await pathExists(dbPath) && !seenDb.has(dbKey)) {
+        seenDb.add(dbKey);
         events.push(...(await parseDevinSqlite(dbPath)));
       }
     }
@@ -61,7 +64,8 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
           working_directory?: string;
         }>;
         for (const s of sessions) {
-          sessionModels.set(String(s.id), typeof s.model === "string" ? s.model : null);
+          const m = typeof s.model === "string" ? s.model.trim() : "";
+          sessionModels.set(String(s.id), m || null);
         }
       } catch {
         // schema variance
@@ -104,8 +108,11 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
         if (!buckets) continue;
 
         const sid = String(row.session_id ?? "");
+        // Some Devin sessions leave model empty in sessions table (legacy / adaptive routing)
         const model =
-          extractModel(msg, msg.metadata, sessionModels.get(sid)) || sessionModels.get(sid) || null;
+          extractModel(msg, msg.metadata, sessionModels.get(sid)) ||
+          sessionModels.get(sid) ||
+          null;
         const ts =
           extractTimestamp(msg, msg.metadata, row.created_at) ||
           (typeof row.created_at === "string" ? row.created_at : new Date().toISOString());
@@ -114,7 +121,8 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
           applyPricing({
             id: stableId(
               "devin",
-              dbPath,
+              // stable across path casing so remounts don't duplicate
+              dbPath.toLowerCase(),
               sid,
               String(row.row_id),
               String(buckets.inputTokens),
