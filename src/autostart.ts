@@ -57,16 +57,55 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-/** VBS: run node cli serve with hidden window (0). */
+/** Sentinel file written by `serve` when the user quits via tray/SIGINT.
+ *  The supervisor VBS checks this after the node process exits; if present,
+ *  it stops restarting. Absent => crash/unexpected exit => restart. */
+export function stopSentinelPath(): string {
+  return path.join(dataDir(), "stop.flag");
+}
+
+export async function writeStopSentinel(): Promise<void> {
+  try {
+    await mkdir(dataDir(), { recursive: true });
+    await writeFile(stopSentinelPath(), "stop", "utf8");
+  } catch {
+    // best-effort: supervisor restart is a nicety, not critical
+  }
+}
+
+export async function clearStopSentinel(): Promise<void> {
+  try {
+    await unlink(stopSentinelPath());
+  } catch {
+    // ignore (file may not exist)
+  }
+}
+
+/** VBS supervisor: runs `node cli serve` hidden, restarts on unexpected exit
+ *  (up to maxRestarts times) with a backoff sleep. Stops when the stop
+ *  sentinel appears (tray Quit / intentional shutdown). */
 async function writeWindowsLauncher(): Promise<string> {
   const { node, cli } = resolveServeInvocation();
   await mkdir(dataDir(), { recursive: true });
   const vbsPath = launcherPath();
-  // ASCII-only comment to avoid encoding issues in cscript/wscript
+  const nodeQ = node.replace(/"/g, '""');
+  const cliQ = cli.replace(/"/g, '""');
+  const stopFile = stopSentinelPath().replace(/"/g, '""');
+  // ASCII-only to avoid cscript/wscript encoding issues
   const content = [
-    "' XLab Token autostart launcher (generated)",
+    "' XLab Token autostart supervisor (generated)",
     "Set sh = CreateObject(\"WScript.Shell\")",
-    `sh.Run """${node.replace(/"/g, '""')}"" ""${cli.replace(/"/g, '""')}"" serve", 0, False`,
+    "Set fso = CreateObject(\"Scripting.FileSystemObject\")",
+    `stopFile = "${stopFile}"`,
+    "If fso.FileExists(stopFile) Then fso.DeleteFile stopFile, True",
+    "maxRestarts = 10",
+    "retries = 0",
+    "Do While retries < maxRestarts",
+    `  exitCode = sh.Run("""${nodeQ}"" ""${cliQ}"" serve", 0, True)`,
+    "  If fso.FileExists(stopFile) Then Exit Do",
+    "  retries = retries + 1",
+    "  WScript.Sleep 3000",
+    "Loop",
     "",
   ].join("\r\n");
   await writeFile(vbsPath, content, "utf8");
@@ -138,7 +177,7 @@ async function installWindows(): Promise<AutostartResult> {
   return {
     ok: true,
     message:
-      "Autostart enabled. xlab-token serve will start when you log in to Windows (tray icon in notification area).",
+      "Autostart enabled (supervised). xlab-token serve will start when you log in to Windows and auto-restart if it crashes. Tray icon in notification area; use Quit to stop.",
     status,
   };
 }
@@ -146,7 +185,8 @@ async function installWindows(): Promise<AutostartResult> {
 async function uninstallWindows(): Promise<AutostartResult> {
   const regRemoved = await regDeleteRun();
 
-  // Remove launcher under LocalAppData
+  // Signal any running supervisor to stop, then drop the launcher.
+  await writeStopSentinel();
   const vbs = launcherPath();
   if (await pathExists(vbs)) {
     try {
