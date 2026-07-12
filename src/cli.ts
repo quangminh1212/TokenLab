@@ -8,6 +8,7 @@ import {
   writeStopSentinel,
 } from "./autostart.js";
 import { startServer } from "./server/http.js";
+import { runSetup } from "./setup.js";
 import { startTray } from "./tray.js";
 import type { GroupBy } from "./types.js";
 import { filterByPeriod, formatTokens, formatUsd, openBrowser } from "./util.js";
@@ -20,6 +21,7 @@ Local-first token API usage & cost tracker for AI agents on this machine.
 
 Usage:
   xlab-token serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open] [--no-tray]
+  xlab-token setup [--no-open] [--no-autostart] [--no-serve] [--json]
   xlab-token stats [--since 24h|7d|30d] [--by agent|model|day] [--sort tokens|cost] [--json]
   xlab-token cost  [--since 7d] [--json]
   xlab-token scan  [--json]
@@ -32,6 +34,12 @@ Serve options:
   --open       Open dashboard in browser
   --no-ui      API only (no HTML UI)
   --no-tray    Do not show system tray icon (Windows)
+
+Setup (also runs after global npm install):
+  Enables Windows login autostart and starts the dashboard if not already running.
+  --no-open       Do not open the browser
+  --no-autostart  Skip login autostart registration
+  --no-serve      Do not start the server
 
 Autostart (Windows):
   on           Start xlab-token serve at Windows login (supervised, auto-restart)
@@ -136,6 +144,43 @@ async function main(): Promise<void> {
     } catch (err) {
       console.error(err instanceof Error ? err.message : err);
       process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (cmd === "setup") {
+    const asJson = has(args, "--json");
+    const fromPostinstall = has(args, "--from-postinstall");
+    try {
+      const result = await runSetup({
+        open: !has(args, "--no-open"),
+        autostart: !has(args, "--no-autostart"),
+        serve: !has(args, "--no-serve"),
+        host: getFlag(args, "--host") || undefined,
+        port: getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined,
+      });
+      if (asJson) {
+        console.log(JSON.stringify(result, null, 2));
+      } else if (fromPostinstall) {
+        console.log(`xlab-token: ${result.message}`);
+        console.log(`xlab-token: dashboard ${result.url}`);
+      } else {
+        console.log(result.message);
+        console.log(`Dashboard: ${result.url}`);
+        if (result.autostartEnabled !== undefined) {
+          console.log(`Autostart: ${result.autostartEnabled ? "ON" : "OFF"}`);
+        }
+      }
+      if (!result.ok) process.exitCode = 1;
+    } catch (err) {
+      // Never break npm install when invoked from postinstall
+      const msg = err instanceof Error ? err.message : String(err);
+      if (fromPostinstall) {
+        console.warn(`xlab-token: setup skipped (${msg})`);
+      } else {
+        console.error(msg);
+        process.exitCode = 1;
+      }
     }
     return;
   }
