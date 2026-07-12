@@ -5,6 +5,7 @@ import {
   disableAutostart,
   enableAutostart,
   getAutostartStatus,
+  writeStopSentinel,
 } from "./autostart.js";
 import { startServer } from "./server/http.js";
 import { startTray } from "./tray.js";
@@ -33,7 +34,7 @@ Serve options:
   --no-tray    Do not show system tray icon (Windows)
 
 Autostart (Windows):
-  on           Start xlab-token serve at Windows login (Task Scheduler)
+  on           Start xlab-token serve at Windows login (supervised, auto-restart)
   off          Remove login autostart
   status       Show whether autostart is enabled
 
@@ -87,9 +88,18 @@ async function main(): Promise<void> {
 
       let shuttingDown = false;
       let trayStop: (() => void) | null = null;
-      const shutdown = async (_signal: string) => {
+      const shutdown = async (signal: string) => {
         if (shuttingDown) return;
         shuttingDown = true;
+        // Tell the autostart supervisor (if any) not to restart us.
+        // Skip on SIGHUP (tsx watch hot-reload) so dev restarts keep working.
+        if (signal !== "SIGHUP") {
+          try {
+            await writeStopSentinel();
+          } catch {
+            // non-fatal
+          }
+        }
         try {
           trayStop?.();
         } catch {
