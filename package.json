@@ -1,6 +1,6 @@
 {
   "name": "xlab-token",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Local-first token API usage and cost tracker for AI coding agents on one machine",
   "type": "module",
   "bin": {
@@ -18,6 +18,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "prepublishOnly": "npm run build && npm test",
+    "postinstall": "node scripts/postinstall.mjs",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "serve": "tsx src/cli.ts serve",
@@ -25,6 +26,7 @@
     "stats": "tsx src/cli.ts stats",
     "cost": "tsx src/cli.ts cost",
     "doctors": "tsx src/cli.ts doctors",
+    "setup": "node dist/cli.js setup",
     "test": "tsx --test src/**/*.test.ts src/**/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "npm pack --dry-run"
@@ -68,6 +70,7 @@
   },
   "files": [
     "dist",
+    "scripts/postinstall.mjs",
     "README.md",
     "LICENSE",
     "ATTRIBUTION.md",
