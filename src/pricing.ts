@@ -66,8 +66,69 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   digigo: { inputPer1M: 0, outputPer1M: 0 },
   // Cursor house models
   "cursor-small": { inputPer1M: 0.2, outputPer1M: 0.8 },
+  // Extra aliases seen in local agent usage (approx until user overrides)
+  "claude-opus-4-6": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4-6-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4-7": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4-7-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4.6-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4.7-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4-8": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4-8-medium": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-opus-4.8-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  "claude-sonnet-4-6": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  "claude-sonnet-4-6-thinking": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  "gpt-5.3-codex-high": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
+  "gpt-5.1-openai-compact": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
+  "gpt-5.2-openai-compact": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
+  "gpt-5.3-openai-compact": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
+  "gpt-5.4-openai-compact": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
+  "gpt-5.5-openai-compact": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
+  "grok-code-fast-1": { inputPer1M: 0.2, outputPer1M: 0.5, cacheReadPer1M: 0.05 },
+  "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "glm-5.0": { inputPer1M: 0.6, outputPer1M: 2.2 },
+  "swe-1-6": { inputPer1M: 0.5, outputPer1M: 2 },
+  "swe-1-7": { inputPer1M: 0.5, outputPer1M: 2 },
+  "windsurf-cascade": { inputPer1M: 1, outputPer1M: 4 },
+  adaptive: { inputPer1M: 1, outputPer1M: 4 },
   default: { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
 };
+
+/** Infer OpenRouter-style provider slug from a bare model id. */
+export function guessProvider(modelId: string): string {
+  const raw = String(modelId || "").trim().toLowerCase();
+  if (!raw) return "other";
+  if (raw.includes("/")) return raw.split("/")[0] || "other";
+  if (raw.startsWith("claude")) return "anthropic";
+  if (
+    raw.startsWith("gpt") ||
+    raw.startsWith("o1") ||
+    raw.startsWith("o3") ||
+    raw.startsWith("o4") ||
+    raw.startsWith("chatgpt") ||
+    raw.startsWith("gp-gpt")
+  ) {
+    return "openai";
+  }
+  if (raw.startsWith("gemini")) return "google";
+  if (raw.startsWith("grok")) return "x-ai";
+  if (raw.startsWith("deepseek")) return "deepseek";
+  if (raw.startsWith("glm") || raw.startsWith("chatglm")) return "z-ai";
+  if (raw.startsWith("kimi") || raw.startsWith("moonshot")) return "moonshotai";
+  if (raw.startsWith("qwen")) return "qwen";
+  if (raw.startsWith("minimax")) return "minimax";
+  if (raw.startsWith("mistral") || raw.startsWith("mixtral") || raw.startsWith("codestral")) {
+    return "mistralai";
+  }
+  if (raw.startsWith("llama") || raw.startsWith("meta-")) return "meta-llama";
+  if (raw.startsWith("command") || raw.startsWith("cohere")) return "cohere";
+  if (raw.includes("nemotron")) return "nvidia";
+  if (raw.startsWith("mimo")) return "xiaomi";
+  if (raw.includes("windsurf") || raw.startsWith("swe-") || raw === "cascade") return "windsurf";
+  if (raw.includes("cursor")) return "cursor";
+  if (raw.includes("digigo") || raw === "xlab" || raw.startsWith("9router")) return "other";
+  return "other";
+}
 
 const ALIASES: Record<string, string> = {
   "claude-sonnet-4-20250514": "claude-sonnet-4",
