@@ -27,7 +27,7 @@
     "cost": "tsx src/cli.ts cost",
     "doctors": "tsx src/cli.ts doctors",
     "setup": "node dist/cli.js setup",
-    "test": "tsx --test src/**/*.test.ts src/**/**/*.test.ts",
+    "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "npm pack --dry-run",
     "pkg:build": "npm run build && pkg . --targets node18-win-x64 --output build/xlab-token.exe",
