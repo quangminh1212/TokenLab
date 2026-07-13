@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * Convert PNG to ICO using sharp and png-to-ico
+ * Create a proper multi-size ICO file
  */
 
 import fs from 'fs';
@@ -15,8 +16,9 @@ const sourceDir = path.join(__dirname, '..', 'src', 'server', 'assets');
 
 const logoPng = path.join(sourceDir, 'logo.png');
 const icoPath = path.join(assetsDir, 'icon.ico');
+const iconPng = path.join(assetsDir, 'icon.png');
 
-console.log('🔨 Converting PNG to ICO...');
+console.log('🔨 Converting PNG to multi-size ICO...');
 
 if (!fs.existsSync(logoPng)) {
   console.error('✗ logo.png not found in src/server/assets/');
@@ -24,15 +26,17 @@ if (!fs.existsSync(logoPng)) {
 }
 
 try {
-  // First, resize to square 256x256
-  console.log('  Resizing to 256x256...');
-  const resizedBuffer = await sharp(logoPng)
+  // Create a smaller PNG for Electron (256x256 max for better performance)
+  console.log('  Creating optimized PNG for Electron...');
+  const optimizedPng = await sharp(logoPng)
     .resize(256, 256, { fit: 'cover', position: 'center' })
     .toBuffer();
+  fs.writeFileSync(iconPng, optimizedPng);
+  console.log('✓ Created optimized icon.png (256x256)');
 
-  // Convert to ICO
-  console.log('  Converting to ICO...');
-  const icoBuffer = await pngToIco(resizedBuffer);
+  // Create multi-size ICO for Windows
+  console.log('  Creating multi-size ICO...');
+  const icoBuffer = await pngToIco(optimizedPng);
   fs.writeFileSync(icoPath, icoBuffer);
   
   console.log('✓ Successfully created icon.ico (Windows icon)');

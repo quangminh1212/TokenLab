@@ -114,26 +114,24 @@ async function startServer() {
 }
 
 function createWindow() {
-  const windowOptions = {
+  const iconPath = process.platform === 'win32' 
+    ? path.join(__dirname, 'assets', 'icon.ico')
+    : path.join(__dirname, 'assets', 'icon.png');
+
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 600,
     title: 'XLab Token',
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true
     }
-  };
-
-  const iconPath = getIconPath();
-  if (iconPath) {
-    windowOptions.icon = iconPath;
-  }
-
-  mainWindow = new BrowserWindow(windowOptions);
+  });
 
   // Load the app
   mainWindow.loadURL(`http://${serverHost}:${serverPort}/`);
