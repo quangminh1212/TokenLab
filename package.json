@@ -164,7 +164,7 @@
     "scripts/postinstall.mjs",
     "README.md",
     "LICENSE",
-    "ATTRIBUTION.md",
+    "docs",
     "run.sh",
     "run.bat"
   ],

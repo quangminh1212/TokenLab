@@ -25,6 +25,7 @@ No cloud account required by default. Data stays on your machine.
 - [Privacy & security](#privacy--security)
 - [Development](#development)
 - [Roadmap](#roadmap)
+- [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -640,6 +641,19 @@ npm run electron:dev
 
 See [electron/README.md](electron/README.md) for detailed Electron documentation.
 
+---
+
+## Documentation
+
+Additional documentation is available in the [docs/](docs/) directory:
+
+- **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** - Contribution guidelines and development workflow
+- **[docs/SECURITY.md](docs/SECURITY.md)** - Security policy and vulnerability reporting
+- **[docs/CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md)** - Community code of conduct
+- **[docs/CHANGELOG.md](docs/CHANGELOG.md)** - Version history and changes
+- **[docs/AUTHORS.md](docs/AUTHORS.md)** - Project contributors and acknowledgments
+- **[docs/ATTRIBUTION.md](docs/ATTRIBUTION.md)** - Third-party attributions and licenses
+
 | OS | Dev launcher |
 |----|----------------|
 | Windows | `run.bat` |
@@ -667,7 +681,7 @@ src/
 
 ## Implementation status (v0.1.0)
 
-Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (see [`ATTRIBUTION.md`](./ATTRIBUTION.md)):
+Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (see [`docs/ATTRIBUTION.md`](docs/ATTRIBUTION.md)):
 
 | Area | Status |
 |------|--------|
@@ -712,9 +726,18 @@ npx tsx src/cli.ts serve --port 3737
 
 ## Contributing
 
-1. Fork and branch from `main`.
-2. Add parser fixtures for each agent (token fields required; cost via engine).
-3. Prefer small PRs; Conventional Commits (`feat:`, `fix:`, `docs:`).
+We welcome contributions! Please see [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) for guidelines on:
+
+- Development workflow
+- Code style and standards
+- Testing requirements
+- Pull request process
+- Adding new agent support
+
+Quick start:
+1. Fork and branch from `main`
+2. Add parser fixtures for each agent (token fields required; cost via engine)
+3. Prefer small PRs; Conventional Commits (`feat:`, `fix:`, `docs:`)
 
 ---
 
