@@ -96,26 +96,46 @@ export function extractModel(...candidates: unknown[]): string | null {
 
 export function extractTimestamp(...candidates: unknown[]): string {
   for (const c of candidates) {
+    if (c instanceof Date && !Number.isNaN(c.getTime())) return c.toISOString();
     if (typeof c === "string" && c.trim() && !Number.isNaN(Date.parse(c))) return new Date(c).toISOString();
     if (typeof c === "number" && Number.isFinite(c)) {
-      const ms = c > 1e12 ? c : c * 1000;
-      return new Date(ms).toISOString();
+      // epoch ms / sec, or treat small integers as invalid for time
+      if (c <= 0) continue;
+      const ms = c > 1e12 ? c : c > 1e9 ? c * 1000 : c;
+      if (ms < 1e11) continue; // reject non-epoch noise
+      const d = new Date(ms);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
     }
-    if (c && typeof c === "object") {
+    if (c && typeof c === "object" && !(c instanceof Date)) {
       const o = c as Record<string, unknown>;
-      for (const k of ["timestamp", "ts", "created_at", "createdAt", "started_at", "time", "date"]) {
+      for (const k of [
+        "timestamp",
+        "ts",
+        "created_at",
+        "createdAt",
+        "started_at",
+        "startedAt",
+        "completed_at",
+        "completedAt",
+        "time",
+        "date",
+        "mtime",
+      ]) {
         const v = o[k];
         if (typeof v === "string" && !Number.isNaN(Date.parse(v))) return new Date(v).toISOString();
-        if (typeof v === "number" && Number.isFinite(v)) {
-          const ms = v > 1e12 ? v : v * 1000;
-          return new Date(ms).toISOString();
+        if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+          const ms = v > 1e12 ? v : v > 1e9 ? v * 1000 : NaN;
+          if (Number.isFinite(ms)) return new Date(ms).toISOString();
         }
       }
       if (o.time && typeof o.time === "object") {
         const t = o.time as Record<string, unknown>;
-        if (typeof t.created === "string") return new Date(t.created).toISOString();
+        if (typeof t.created === "string" && !Number.isNaN(Date.parse(t.created))) {
+          return new Date(t.created).toISOString();
+        }
       }
     }
   }
+  // Prefer "unknown time" sentinel only as last resort — callers should pass file mtime
   return new Date().toISOString();
 }

@@ -127,7 +127,19 @@ export async function walkFiles(
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        // Skip VCS, deps, and common temp/fixture trees (Codex plugin fixtures etc.)
+        if (
+          entry.name === "node_modules" ||
+          entry.name === ".git" ||
+          entry.name === ".tmp" ||
+          entry.name === "tmp" ||
+          entry.name === "fixtures" ||
+          entry.name === "__tests__" ||
+          entry.name === "testdata" ||
+          entry.name === "mocks"
+        ) {
+          continue;
+        }
         await walk(full, depth + 1);
       } else if (entry.isFile()) {
         if (!options.match || options.match(entry.name, full)) out.push(full);
