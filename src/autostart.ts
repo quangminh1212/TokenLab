@@ -5,12 +5,33 @@
  */
 import { execFile } from "node:child_process";
 import { mkdir, writeFile, unlink, access } from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { localAppDataDir } from "./util.js";
 
 const execFileAsync = promisify(execFile);
+
+// Simple file logger to %LOCALAPPDATA%\xlab-token\autostart.txt
+const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "xlab-token");
+const logFile = path.join(logDir, "autostart.txt");
+
+function log(...args: unknown[]): void {
+  const message = `[${new Date().toISOString()}] ${args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ")}`;
+  try {
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    fs.appendFileSync(logFile, message + "\r\n");
+  } catch {
+    // ignore logging errors
+  }
+}
+
+function logError(...args: unknown[]): void {
+  log("[ERROR]", ...args);
+}
 
 /** HKCU Run value name (shows in Windows Startup apps) */
 export const AUTOSTART_NAME = "XLabToken";
@@ -33,6 +54,7 @@ export interface AutostartResult {
 export function resolveServeInvocation(): { node: string; cli: string; args: string[] } {
   const node = process.execPath;
   const cli = process.argv[1] ? path.resolve(process.argv[1]) : fileURLToPath(import.meta.url);
+  log("Resolved serve invocation:", { node, cli });
   return { node, cli, args: [cli, "serve"] };
 }
 
@@ -65,19 +87,21 @@ export function stopSentinelPath(): string {
 }
 
 export async function writeStopSentinel(): Promise<void> {
+  log("Writing stop sentinel:", stopSentinelPath());
   try {
     await mkdir(dataDir(), { recursive: true });
     await writeFile(stopSentinelPath(), "stop", "utf8");
-  } catch {
-    // best-effort: supervisor restart is a nicety, not critical
+  } catch (err) {
+    logError("Failed to write stop sentinel:", err instanceof Error ? err.message : err);
   }
 }
 
 export async function clearStopSentinel(): Promise<void> {
+  log("Clearing stop sentinel:", stopSentinelPath());
   try {
     await unlink(stopSentinelPath());
-  } catch {
-    // ignore (file may not exist)
+  } catch (err) {
+    logError("Failed to clear stop sentinel:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -158,14 +182,19 @@ async function regDeleteRun(): Promise<boolean> {
 }
 
 async function installWindows(): Promise<AutostartResult> {
+  log("Installing Windows autostart");
   const vbs = await writeWindowsLauncher();
   const runCmd = `wscript.exe ${quoteCmd(vbs)}`;
+  log("Launcher path:", vbs);
+  log("Run command:", runCmd);
 
   // HKCU Run — no admin, shows in Windows Settings → Apps → Startup
   try {
     await regSetRun(runCmd);
+    log("Registry Run key set successfully");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    logError("Failed to write registry Run key:", msg);
     return {
       ok: false,
       message: `Failed to write registry Run key: ${msg}`,
@@ -174,6 +203,7 @@ async function installWindows(): Promise<AutostartResult> {
   }
 
   const status = await getAutostartStatus();
+  log("Autostart installed, status:", status);
   return {
     ok: true,
     message:
@@ -183,7 +213,9 @@ async function installWindows(): Promise<AutostartResult> {
 }
 
 async function uninstallWindows(): Promise<AutostartResult> {
+  log("Uninstalling Windows autostart");
   const regRemoved = await regDeleteRun();
+  log("Registry removed:", regRemoved);
 
   // Signal any running supervisor to stop, then drop the launcher.
   await writeStopSentinel();
@@ -191,8 +223,9 @@ async function uninstallWindows(): Promise<AutostartResult> {
   if (await pathExists(vbs)) {
     try {
       await unlink(vbs);
-    } catch {
-      // ignore
+      log("Launcher removed:", vbs);
+    } catch (err) {
+      logError("Failed to remove launcher:", err instanceof Error ? err.message : err);
     }
   }
 
@@ -207,12 +240,16 @@ async function uninstallWindows(): Promise<AutostartResult> {
       "Startup",
       "XLab Token.vbs",
     );
-    if (legacy && (await pathExists(legacy))) await unlink(legacy);
-  } catch {
-    // ignore
+    if (legacy && (await pathExists(legacy))) {
+      await unlink(legacy);
+      log("Legacy startup shortcut removed:", legacy);
+    }
+  } catch (err) {
+    logError("Failed to remove legacy shortcut:", err instanceof Error ? err.message : err);
   }
 
   const status = await getAutostartStatus();
+  log("Autostart uninstalled, status:", status);
   if (!regRemoved && !status.enabled) {
     return { ok: true, message: "Autostart was already off.", status };
   }
@@ -224,10 +261,12 @@ async function uninstallWindows(): Promise<AutostartResult> {
 }
 
 export async function getAutostartStatus(): Promise<AutostartStatus> {
+  log("Getting autostart status");
   const { node, cli } = resolveServeInvocation();
   const command = `${quoteCmd(node)} ${quoteCmd(cli)} serve`;
 
   if (process.platform !== "win32") {
+    log("Autostart status: not Windows");
     return {
       platform: process.platform,
       enabled: false,
@@ -238,17 +277,21 @@ export async function getAutostartStatus(): Promise<AutostartStatus> {
 
   const reg = await regQueryRun();
   const enabled = Boolean(reg);
-  return {
+  const status = {
     platform: "win32",
     enabled,
     method: enabled ? "HKCU Run (Windows login)" : undefined,
     detail: enabled ? `Registry: ${reg}` : "Not registered for login startup.",
     command,
   };
+  log("Autostart status:", status);
+  return status;
 }
 
 export async function enableAutostart(): Promise<AutostartResult> {
+  log("enableAutostart called");
   if (process.platform !== "win32") {
+    logError("Autostart enable failed: not Windows");
     return {
       ok: false,
       message: "Autostart is currently supported on Windows only.",
@@ -259,7 +302,9 @@ export async function enableAutostart(): Promise<AutostartResult> {
 }
 
 export async function disableAutostart(): Promise<AutostartResult> {
+  log("disableAutostart called");
   if (process.platform !== "win32") {
+    logError("Autostart disable failed: not Windows");
     return {
       ok: false,
       message: "Autostart is currently supported on Windows only.",
