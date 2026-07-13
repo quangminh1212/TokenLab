@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
@@ -132,7 +132,7 @@
     ];
 
     // Cache-bust when icons are replaced (browser was sticky on short max-age)
-    const ICON_V = 'v=6';
+    const ICON_V = 'v=7';
     const AGENT_ICONS = {
       'claude-code': '/assets/agents/claude-code.png?' + ICON_V,
       codex: '/assets/agents/codex.png?' + ICON_V,
@@ -323,7 +323,7 @@
               </div>
             </div>
           </div>`).join('')
-        : `<div class="empty" style="grid-column:1/-1">Chưa có agent live. Dùng AI tools rồi Rescan.</div>`;
+        : `<div class="empty" style="grid-column:1/-1">ChÆ°a cÃ³ agent live. DÃ¹ng AI tools rá»“i Rescan.</div>`;
 
       const used = new Set();
       const sections = [];
@@ -352,7 +352,7 @@
       }
 
       $('providerSections').innerHTML = sections.join('') ||
-        `<div class="empty">Không có agent khớp bộ lọc.</div>`;
+        `<div class="empty">KhÃ´ng cÃ³ agent khá»›p bá»™ lá»c.</div>`;
     }
 
     /** Category sections default collapsed; expand on click. Auto-open when searching/filtering. */
@@ -366,7 +366,7 @@
       return `
         <div class="provider-section${collapsed}" data-section="${escapeHtml(id)}">
           <button type="button" class="provider-section-head" aria-expanded="${expanded}">
-            <span class="section-chevron" aria-hidden="true">›</span>
+            <span class="section-chevron" aria-hidden="true">â€º</span>
             <h3>${escapeHtml(title)}</h3>
             <span class="count">${members.length}</span>
           </button>
@@ -449,7 +449,7 @@
     $('refresh').onclick = async () => {
       setRefreshBusy('Scanning\u2026');
       try {
-        // Background scan — do not block UI for 10\u201320s
+        // Background scan â€” do not block UI for 10\u201320s
         await fetch('/api/scan?async=1', { method: 'POST' });
         awaitingData = true;
         scheduleScanPoll();
