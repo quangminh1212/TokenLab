@@ -165,18 +165,22 @@ export async function scanAll(
   const onAgentDone = opts.onAgentDone;
 
   type Job = { id: AgentId; label: string; roots: string[]; parse: (roots: string[]) => Promise<UsageEvent[]> };
-  const jobs: Job[] = [];
-
-  for (const mod of AGENTS) {
-    if (enabled && enabled[mod.id] === false) continue;
-    const roots: string[] = [];
-    for (const r of mod.roots()) {
-      if (await pathExists(r)) roots.push(r);
-    }
-    if (roots.length === 0) continue;
-    if (!mod.parse) continue;
-    jobs.push({ id: mod.id, label: mod.label, roots, parse: mod.parse });
-  }
+  // Probe agent roots in parallel so scan setup is not N sequential disk checks
+  const jobs = (
+    await Promise.all(
+      AGENTS.map(async (mod): Promise<Job | null> => {
+        if (enabled && enabled[mod.id] === false) return null;
+        if (!mod.parse) return null;
+        const candidateRoots = mod.roots().filter(Boolean);
+        const checks = await Promise.all(
+          candidateRoots.map(async (r) => ((await pathExists(r)) ? r : "")),
+        );
+        const roots = checks.filter(Boolean);
+        if (roots.length === 0) return null;
+        return { id: mod.id, label: mod.label, roots, parse: mod.parse };
+      }),
+    )
+  ).filter((j): j is Job => j != null);
 
   const all: UsageEvent[] = [];
   let cursor = 0;
@@ -213,21 +217,24 @@ export async function detectAgents(events: UsageEvent[] = []): Promise<AgentStat
     if (!prev || e.timestamp > prev) lastAt.set(e.agent, e.timestamp);
   }
 
-  const out: AgentStatus[] = [];
-  for (const mod of AGENTS) {
-    const paths: string[] = [];
-    for (const r of mod.roots()) {
-      if (await pathExists(r)) paths.push(r);
-    }
-    out.push({
-      id: mod.id,
-      label: mod.label,
-      detected: paths.length > 0,
-      enabled: true,
-      paths,
-      lastEventAt: lastAt.get(mod.id) ?? null,
-      eventCount: counts.get(mod.id) ?? 0,
-    });
-  }
-  return out;
+  // Parallel path checks across all agents — sequential disk probes were a major
+  // source of /api/health + /api/agents latency on every page load.
+  return Promise.all(
+    AGENTS.map(async (mod) => {
+      const roots = mod.roots().filter(Boolean);
+      const checks = await Promise.all(
+        roots.map(async (r) => ((await pathExists(r)) ? r : "")),
+      );
+      const paths = checks.filter(Boolean);
+      return {
+        id: mod.id,
+        label: mod.label,
+        detected: paths.length > 0,
+        enabled: true,
+        paths,
+        lastEventAt: lastAt.get(mod.id) ?? null,
+        eventCount: counts.get(mod.id) ?? 0,
+      };
+    }),
+  );
 }

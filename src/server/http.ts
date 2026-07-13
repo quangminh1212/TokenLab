@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
@@ -18,7 +18,7 @@ import {
   loadOpenRouterCacheFromDisk,
 } from "../openrouter-models.js";
 import { listPricingCatalog, repriceEvents } from "../pricing.js";
-import type { GroupBy, ModelRate, UsageEvent } from "../types.js";
+import type { AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
 import { filterByPeriod, normalizeModelName, startOfDayInTimeZone } from "../util.js";
 import { VERSION } from "../version.js";
 
@@ -175,6 +175,119 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const pricingPagePath = path.join(__dirname, "pricing.html");
   const stylesPath = path.join(__dirname, "styles.css");
 
+  /** In-memory file cache (mtime-aware) so page switches do not re-read disk every time. */
+  const textFileCache = new Map<string, { mtimeMs: number; size: number; body: string; etag: string }>();
+  const binFileCache = new Map<string, { mtimeMs: number; size: number; body: Buffer; etag: string }>();
+
+  async function readTextCached(filePath: string): Promise<{ body: string; etag: string; mtimeMs: number }> {
+    const st = await stat(filePath);
+    const hit = textFileCache.get(filePath);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      return { body: hit.body, etag: hit.etag, mtimeMs: hit.mtimeMs };
+    }
+    const body = await readFile(filePath, "utf8");
+    const etag = `W/"${st.mtimeMs.toString(16)}-${st.size.toString(16)}"`;
+    textFileCache.set(filePath, { mtimeMs: st.mtimeMs, size: st.size, body, etag });
+    return { body, etag, mtimeMs: st.mtimeMs };
+  }
+
+  async function readBinCached(filePath: string): Promise<{ body: Buffer; etag: string; mtimeMs: number }> {
+    const st = await stat(filePath);
+    const hit = binFileCache.get(filePath);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      return { body: hit.body, etag: hit.etag, mtimeMs: hit.mtimeMs };
+    }
+    const body = await readFile(filePath);
+    const etag = `W/"${st.mtimeMs.toString(16)}-${st.size.toString(16)}"`;
+    // Cap binary cache to avoid holding huge unexpected files (icons are tiny)
+    if (body.length <= 2 * 1024 * 1024) {
+      binFileCache.set(filePath, { mtimeMs: st.mtimeMs, size: st.size, body, etag });
+    }
+    return { body, etag, mtimeMs: st.mtimeMs };
+  }
+
+  function sendCachedText(
+    req: IncomingMessage,
+    res: ServerResponse,
+    file: { body: string; etag: string },
+    contentType: string,
+    cacheControl: string,
+  ): void {
+    if (req.headers["if-none-match"] === file.etag) {
+      res.writeHead(304, {
+        ETag: file.etag,
+        "Cache-Control": cacheControl,
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      ETag: file.etag,
+      "Cache-Control": cacheControl,
+      "Content-Length": Buffer.byteLength(file.body, "utf8"),
+    });
+    res.end(file.body);
+  }
+
+  /**
+   * detectAgents hits the filesystem for every agent root — cache path probes
+   * and only recompute event counts from memory between probes (cheap O(n)).
+   */
+  let agentsStatusCache: {
+    at: number;
+    eventCount: number;
+    agents: AgentStatus[];
+  } | null = null;
+  let agentsStatusPromise: Promise<AgentStatus[]> | null = null;
+  const AGENTS_PATH_TTL_MS = 8_000;
+
+  function refreshAgentEventCounts(base: AgentStatus[]): AgentStatus[] {
+    const counts = new Map<string, number>();
+    const lastAt = new Map<string, string>();
+    for (const e of cache) {
+      counts.set(e.agent, (counts.get(e.agent) ?? 0) + 1);
+      const prev = lastAt.get(e.agent);
+      if (!prev || e.timestamp > prev) lastAt.set(e.agent, e.timestamp);
+    }
+    return base.map((a) => ({
+      ...a,
+      eventCount: counts.get(a.id) ?? 0,
+      lastEventAt: lastAt.get(a.id) ?? null,
+    }));
+  }
+
+  async function getAgentsStatus(force = false): Promise<AgentStatus[]> {
+    const now = Date.now();
+    if (
+      !force &&
+      agentsStatusCache &&
+      now - agentsStatusCache.at < AGENTS_PATH_TTL_MS
+    ) {
+      // Paths still valid — refresh counts without disk I/O
+      if (agentsStatusCache.eventCount === cache.length) {
+        return agentsStatusCache.agents;
+      }
+      const agents = refreshAgentEventCounts(agentsStatusCache.agents);
+      agentsStatusCache = { at: agentsStatusCache.at, eventCount: cache.length, agents };
+      return agents;
+    }
+    if (!force && agentsStatusPromise) return agentsStatusPromise;
+    agentsStatusPromise = detectAgents(cache)
+      .then((agents) => {
+        agentsStatusCache = {
+          at: Date.now(),
+          eventCount: cache.length,
+          agents,
+        };
+        return agents;
+      })
+      .finally(() => {
+        agentsStatusPromise = null;
+      });
+    return agentsStatusPromise;
+  }
+
   const server = createServer(async (req, res) => {
     try {
       await handle(req, res);
@@ -190,7 +303,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     const { pathname } = url;
 
     if (req.method === "GET" && pathname === "/api/health") {
-      const agents = await detectAgents(cache);
+      const agents = await getAgentsStatus();
       const timezone = configuredTimeZone();
       return json(res, 200, {
         ok: true,
@@ -248,7 +361,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     }
 
     if (req.method === "GET" && pathname === "/api/agents") {
-      return json(res, 200, { agents: await detectAgents(cache) });
+      return json(res, 200, { agents: await getAgentsStatus() });
     }
 
     if (req.method === "POST" && pathname === "/api/scan") {
@@ -420,24 +533,23 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       });
     }
 
+    // HTML: ETag + short private cache so nav back/forward and quick switches are instant
+    const htmlCacheControl = "private, max-age=15, must-revalidate";
     if (!noUi && req.method === "GET" && (pathname === "/" || pathname === "/index.html" || pathname === "/dashboard")) {
-      const html = await readFile(dashboardPath, "utf8");
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(html);
+      const file = await readTextCached(dashboardPath);
+      sendCachedText(req, res, file, "text/html; charset=utf-8", htmlCacheControl);
       return;
     }
 
     if (!noUi && req.method === "GET" && (pathname === "/agents" || pathname === "/agents.html")) {
-      const html = await readFile(agentsPagePath, "utf8");
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(html);
+      const file = await readTextCached(agentsPagePath);
+      sendCachedText(req, res, file, "text/html; charset=utf-8", htmlCacheControl);
       return;
     }
 
     if (!noUi && req.method === "GET" && (pathname === "/settings" || pathname === "/settings.html")) {
-      const html = await readFile(settingsPagePath, "utf8");
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(html);
+      const file = await readTextCached(settingsPagePath);
+      sendCachedText(req, res, file, "text/html; charset=utf-8", htmlCacheControl);
       return;
     }
 
@@ -449,9 +561,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         pathname === "/pricing" ||
         pathname === "/pricing.html")
     ) {
-      const html = await readFile(pricingPagePath, "utf8");
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(html);
+      const file = await readTextCached(pricingPagePath);
+      sendCachedText(req, res, file, "text/html; charset=utf-8", htmlCacheControl);
       return;
     }
 
@@ -601,12 +712,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
     if (!noUi && req.method === "GET" && pathname === "/styles.css") {
       try {
-        const css = await readFile(stylesPath, "utf8");
-        res.writeHead(200, {
-          "Content-Type": "text/css; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
-        res.end(css);
+        const file = await readTextCached(stylesPath);
+        // Revalidate each nav (ETag → 304) but keep body in memory for fast hits
+        sendCachedText(req, res, file, "text/css; charset=utf-8", "public, max-age=0, must-revalidate");
         return;
       } catch {
         return json(res, 404, { error: { code: "NOT_FOUND", message: "styles.css not found" } });
@@ -624,13 +732,20 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         return json(res, 400, { error: { code: "BAD_PATH", message: "Invalid asset path" } });
       }
       try {
-        const data = await readFile(file);
+        const data = await readBinCached(file);
+        const cacheControl = "public, max-age=3600, must-revalidate";
+        if (req.headers["if-none-match"] === data.etag) {
+          res.writeHead(304, { ETag: data.etag, "Cache-Control": cacheControl });
+          res.end();
+          return;
+        }
         res.writeHead(200, {
           "Content-Type": contentTypeFor(path.basename(file)),
-          // Short cache so agent icons update after replace (browser was sticky on 1h)
-          "Cache-Control": "public, max-age=60, must-revalidate",
+          ETag: data.etag,
+          "Cache-Control": cacheControl,
+          "Content-Length": data.body.length,
         });
-        res.end(data);
+        res.end(data.body);
         return;
       } catch {
         return json(res, 404, { error: { code: "NOT_FOUND", message: "Asset not found" } });
@@ -818,10 +933,12 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
-  const data = JSON.stringify(body, null, 2);
+  // Compact JSON — pretty-print roughly doubles payload for large event lists
+  const data = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
+    "Content-Length": Buffer.byteLength(data, "utf8"),
   });
   res.end(data);
 }
