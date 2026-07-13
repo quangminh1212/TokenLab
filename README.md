@@ -220,6 +220,17 @@ Parsers ship incrementally; `xlab-token doctors` reports which agents are detect
 
 Works on **Windows**, **macOS**, and **Linux** (Node.js 20+).
 
+### Desktop App (Recommended)
+
+Download the desktop app for your platform from the [Releases](https://github.com/quangminh1212/XLab_Token/releases) page.
+
+**Available platforms:**
+- Windows: NSIS installer or portable executable
+- macOS: DMG or ZIP archive  
+- Linux: AppImage, deb, or rpm package
+
+The desktop app automatically handles server startup and provides a native window experience.
+
 ### One-shot
 
 ```bash
@@ -584,6 +595,50 @@ npm test
 npm run build
 npm start
 ```
+
+### Building Desktop App
+
+#### Generate placeholder icons
+
+```bash
+npm run generate-icons
+```
+
+For production, convert the generated SVG to proper formats:
+- `electron/assets/icon.png` (256x256 PNG for Linux)
+- `electron/assets/icon.ico` (256x256 ICO for Windows)
+- `electron/assets/icon.icns` (ICNS for macOS)
+
+#### Build for current platform
+
+```bash
+npm run electron:build
+```
+
+#### Build for specific platforms
+
+**Windows:**
+```bash
+npm run electron:build:win
+```
+
+**macOS:**
+```bash
+npm run electron:build:mac
+```
+
+**Linux:**
+```bash
+npm run electron:build:linux
+```
+
+#### Development mode
+
+```bash
+npm run electron:dev
+```
+
+See [electron/README.md](electron/README.md) for detailed Electron documentation.
 
 | OS | Dev launcher |
 |----|----------------|

@@ -2,11 +2,29 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const net = require('net');
+const fs = require('fs');
 
 let mainWindow;
 let serverProcess;
 let serverPort = 3737;
 let serverHost = '127.0.0.1';
+
+// Get platform-specific icon
+function getIconPath() {
+  const iconDir = path.join(__dirname, 'assets');
+  
+  if (process.platform === 'win32') {
+    const winIcon = path.join(iconDir, 'icon.ico');
+    if (fs.existsSync(winIcon)) return winIcon;
+  } else if (process.platform === 'darwin') {
+    const macIcon = path.join(iconDir, 'icon.icns');
+    if (fs.existsSync(macIcon)) return macIcon;
+  }
+  
+  // Default to PNG for Linux and fallback
+  const pngIcon = path.join(iconDir, 'icon.png');
+  return fs.existsSync(pngIcon) ? pngIcon : undefined;
+}
 
 // Check if port is available
 function isPortAvailable(port, host) {
@@ -40,11 +58,21 @@ async function startServer() {
       const args = ['serve', '--host', serverHost, '--port', String(serverPort), '--no-tray'];
       
       console.log('Starting server on', serverHost + ':' + serverPort);
+      console.log('Server path:', serverPath);
       
-      serverProcess = spawn('node', [serverPath, ...args], {
+      // Use platform-specific node executable
+      const nodeCmd = process.platform === 'win32' ? 'node.exe' : 'node';
+      const spawnOptions = {
         stdio: 'inherit',
-        shell: true
-      });
+        detached: false
+      };
+
+      // On Windows, we might need shell: true for proper path resolution
+      if (process.platform === 'win32') {
+        spawnOptions.shell = true;
+      }
+
+      serverProcess = spawn(nodeCmd, [serverPath, ...args], spawnOptions);
 
       serverProcess.on('error', (err) => {
         console.error('Failed to start server:', err);
@@ -86,7 +114,7 @@ async function startServer() {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const windowOptions = {
     width: 1200,
     height: 800,
     minWidth: 800,
@@ -96,9 +124,15 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true
-    },
-    icon: path.join(__dirname, 'assets', 'icon.png')
-  });
+    }
+  };
+
+  const iconPath = getIconPath();
+  if (iconPath) {
+    windowOptions.icon = iconPath;
+  }
+
+  mainWindow = new BrowserWindow(windowOptions);
 
   // Load the app
   mainWindow.loadURL(`http://${serverHost}:${serverPort}/`);
@@ -143,7 +177,16 @@ app.on('before-quit', () => {
 function stopServer() {
   if (serverProcess) {
     console.log('Stopping server...');
-    serverProcess.kill('SIGTERM');
+    try {
+      // Use platform-specific signal
+      if (process.platform === 'win32') {
+        serverProcess.kill();
+      } else {
+        serverProcess.kill('SIGTERM');
+      }
+    } catch (err) {
+      console.error('Error stopping server:', err);
+    }
     serverProcess = null;
   }
 }
