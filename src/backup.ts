@@ -80,6 +80,44 @@ export function mirrorsRoot(): string {
   return path.join(dataRoot(), "mirrors");
 }
 
+/** Persisted events from other machines / restores — merged into scan cache by id. */
+export function importedEventsPath(): string {
+  return path.join(dataRoot(), "imported-events.json");
+}
+
+/** Union events by `id` (first wins for duplicates). */
+export function mergeEventsById(...lists: UsageEvent[][]): UsageEvent[] {
+  const byId = new Map<string, UsageEvent>();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const e of list) {
+      if (!e || typeof e.id !== "string" || !e.id) continue;
+      if (!byId.has(e.id)) byId.set(e.id, e);
+    }
+  }
+  return [...byId.values()];
+}
+
+export async function loadImportedEvents(): Promise<UsageEvent[]> {
+  const p = importedEventsPath();
+  try {
+    if (!(await pathExists(p))) return [];
+    const raw = JSON.parse(await readFile(p, "utf8")) as unknown;
+    return sanitizeEvents(raw) || [];
+  } catch (err) {
+    logError("loadImportedEvents failed:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+export async function saveImportedEvents(events: UsageEvent[]): Promise<void> {
+  const p = importedEventsPath();
+  await mkdir(path.dirname(p), { recursive: true });
+  const clean = sanitizeEvents(events) || [];
+  await writeFile(p, JSON.stringify(clean), "utf8");
+  log("saveImportedEvents:", clean.length, "→", p);
+}
+
 async function listFilesRecursive(dir: string, base = dir): Promise<string[]> {
   const out: string[] = [];
   if (!(await pathExists(dir))) return out;

@@ -7,7 +7,10 @@ import { detectAgents, scanAll } from "../agents/index.js";
 import {
   buildFullBackup,
   buildSettingsBackup,
+  loadImportedEvents,
+  mergeEventsById,
   restoreBackup,
+  saveImportedEvents,
   uploadBackupToGist,
 } from "../backup.js";
 import { loadConfig, saveConfig, setCustomRates, configPath, getConfigSync } from "../config.js";
@@ -43,6 +46,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const startedAt = Date.now();
 
   let cache: UsageEvent[] = [];
+  /** Events from other machines / restore — survive local rescan (merged by id). */
+  let importedEvents: UsageEvent[] = await loadImportedEvents();
+  if (importedEvents.length > 0) {
+    cache = importedEvents.slice();
+    console.log(`[xlab-token] loaded ${importedEvents.length} imported events`);
+  }
   let scanning = false;
   /** Shared promise so concurrent /api/scan waits for the in-flight scan (not empty cache). */
   let scanPromise: Promise<number> | null = null;
@@ -118,11 +127,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         byAgent.set(e.agent, list);
       }
       const rebuild = (): void => {
-        const next: UsageEvent[] = [];
+        const scanned: UsageEvent[] = [];
         for (const list of byAgent.values()) {
-          for (const e of list) next.push(e);
+          for (const e of list) scanned.push(e);
         }
-        cache = next;
+        // Always union local scan with imported (other machines / restore)
+        cache = mergeEventsById(scanned, importedEvents);
       };
       try {
         // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+
@@ -644,7 +654,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         const result = await restoreBackup(payload);
         // Full restore: replace in-memory event cache when present
         if (result.events && result.events.length > 0) {
-          cache = repriceEvents(result.events, {
+          // Persist so the next local rescan does not drop other-machine events
+          importedEvents = mergeEventsById(importedEvents, result.events);
+          await saveImportedEvents(importedEvents);
+          cache = repriceEvents(mergeEventsById(result.events, importedEvents), {
             forceTable: result.config.pricing?.preferRouterCost === false,
           });
           bumpScan("restore");
