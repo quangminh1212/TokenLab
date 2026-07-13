@@ -3,7 +3,7 @@
  * Windows (no admin): Startup folder + HKCU Run registry.
  * Other platforms: not implemented yet.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdir, writeFile, unlink, access } from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -299,6 +299,63 @@ export async function enableAutostart(): Promise<AutostartResult> {
     };
   }
   return installWindows();
+}
+
+/** True when the login supervisor VBS is already running. */
+export async function isSupervisorRunning(): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  const vbs = launcherPath().toLowerCase().replace(/\//g, "\\");
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_Process -Filter \"Name='wscript.exe' OR Name='cscript.exe'\" | Select-Object -ExpandProperty CommandLine",
+      ],
+      { windowsHide: true, timeout: 8000 },
+    );
+    const hay = String(stdout || "").toLowerCase().replace(/\//g, "\\");
+    return hay.includes("autostart.vbs") || (vbs.length > 8 && hay.includes(vbs));
+  } catch (err) {
+    logError("isSupervisorRunning failed:", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+/**
+ * Start the Windows supervisor VBS now (same process as login autostart).
+ * Keeps serve + tray alive and restarts on crash. No-op if already running.
+ */
+export async function launchSupervisorNow(): Promise<{ ok: boolean; message: string; already?: boolean }> {
+  if (process.platform !== "win32") {
+    return { ok: false, message: "Supervisor is Windows-only" };
+  }
+  try {
+    // Ensure launcher exists (setup may call this after enableAutostart, but be safe)
+    if (!(await pathExists(launcherPath()))) {
+      await writeWindowsLauncher();
+    }
+    if (await isSupervisorRunning()) {
+      log("Supervisor already running");
+      return { ok: true, message: "Supervisor already running", already: true };
+    }
+    await clearStopSentinel();
+    const vbs = launcherPath();
+    const child = spawn("wscript.exe", [vbs], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
+    log("Supervisor launched, pid:", child.pid, "vbs:", vbs);
+    return { ok: true, message: `Supervisor started (pid ${child.pid ?? "?"})` };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("launchSupervisorNow failed:", msg);
+    return { ok: false, message: msg };
+  }
 }
 
 export async function disableAutostart(): Promise<AutostartResult> {

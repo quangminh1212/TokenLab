@@ -8,6 +8,7 @@ import {
   clearStopSentinel,
   enableAutostart,
   getAutostartStatus,
+  launchSupervisorNow,
   resolveServeInvocation,
 } from "./autostart.js";
 import { openBrowser } from "./util.js";
@@ -115,10 +116,21 @@ export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
     } else {
       // Allow a fresh start even if user previously Quit (stop.flag present).
       await clearStopSentinel();
-      startServeDetached({ open, host, port });
+      // Windows: start the same supervised VBS used at login so serve + tray
+      // stay alive and auto-restart. Plain detached node often dies with no tray.
+      if (process.platform === "win32") {
+        const sup = await launchSupervisorNow();
+        parts.push(sup.ok ? sup.message : `supervisor: ${sup.message}`);
+        if (!sup.ok) {
+          // Fallback: direct serve (no restart) if VBS cannot start
+          startServeDetached({ open, host, port });
+        }
+      } else {
+        startServeDetached({ open, host, port });
+      }
       serverStarted = true;
       // Wait until listen (cold start can take a few seconds)
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 50; i++) {
         await new Promise((r) => setTimeout(r, 200));
         if (await isServerReachable(host, port)) {
           serverRunning = true;
@@ -127,9 +139,16 @@ export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
       }
       parts.push(
         serverRunning
-          ? `started server at ${url}`
+          ? `started server + tray at ${url}`
           : `started server in background (dashboard: ${url})`,
       );
+      if (open && serverRunning) {
+        try {
+          openBrowser(url);
+        } catch {
+          // ignore
+        }
+      }
     }
   }
 

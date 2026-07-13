@@ -4,8 +4,9 @@
  * Other platforms: no-op (returns null).
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, mkdir, writeFile, unlink } from "node:fs/promises";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openBrowser } from "./util.js";
@@ -49,9 +50,9 @@ function assetsDir(): string {
 async function resolveIconPath(): Promise<string | null> {
   const base = assetsDir();
   const candidates = [
+    path.join(base, "favicon.ico"),
     path.join(base, "logo.png"),
     path.join(base, "favicon-32x32.png"),
-    path.join(base, "favicon.ico"),
   ];
   for (const p of candidates) {
     try {
@@ -82,26 +83,27 @@ function buildPsScript(opts: {
 
   return `
 $ErrorActionPreference = 'Continue'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $icon = New-Object System.Windows.Forms.NotifyIcon
-$icon.Text = '${tooltip}'.Substring(0, [Math]::Min(63, '${tooltip}'.Length))
+$tip = '${tooltip}'
+if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
+$icon.Text = $tip
 $icon.Visible = $true
 
-$iconPath = '${icon}'
+$iconPath = '${icon}'.Trim()
 $loadedIcon = $false
-if ($iconPath -ne '') {
-  $iconPath = $iconPath.Trim()
-}
 if ($iconPath -ne '' -and (Test-Path -LiteralPath $iconPath)) {
   try {
     if ($iconPath.ToLower().EndsWith('.ico')) {
       $icon.Icon = New-Object System.Drawing.Icon($iconPath)
     } else {
       $bmp = [System.Drawing.Image]::FromFile($iconPath)
-      $icon.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap $bmp).GetHicon())
+      $h = (New-Object System.Drawing.Bitmap $bmp).GetHicon()
+      $icon.Icon = [System.Drawing.Icon]::FromHandle($h)
     }
     $loadedIcon = $true
     [Console]::Out.WriteLine("icon-loaded:$iconPath")
@@ -114,18 +116,14 @@ if ($iconPath -ne '' -and (Test-Path -LiteralPath $iconPath)) {
 if (-not $loadedIcon) {
   $icon.Icon = [System.Drawing.SystemIcons]::Application
 }
+$icon.Visible = $true
 [Console]::Out.WriteLine("tray-visible")
 
-# Show a balloon tip so the user notices the tray icon on first run
-$icon.ShowBalloonTip(3000, '${title}', 'XLab Token is running. Click to open dashboard.', [System.Windows.Forms.ToolTipIcon]::Info)
-
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-$openItem = New-Object System.Windows.Forms.ToolStripMenuItem('${title} — Open')
-$dashItem = New-Object System.Windows.Forms.ToolStripMenuItem('Open Dashboard')
+$openItem = New-Object System.Windows.Forms.ToolStripMenuItem('Open Dashboard')
 $sep = New-Object System.Windows.Forms.ToolStripSeparator
 $quitItem = New-Object System.Windows.Forms.ToolStripMenuItem('Quit')
 [void]$menu.Items.Add($openItem)
-[void]$menu.Items.Add($dashItem)
 [void]$menu.Items.Add($sep)
 [void]$menu.Items.Add($quitItem)
 $icon.ContextMenuStrip = $menu
@@ -135,32 +133,42 @@ function Emit-Open {
   [Console]::Out.Flush()
 }
 function Emit-Quit {
-  $icon.Visible = $false
-  $icon.Dispose()
+  try { $icon.Visible = $false; $icon.Dispose() } catch {}
   [Console]::Out.WriteLine('quit')
   [Console]::Out.Flush()
   [System.Windows.Forms.Application]::Exit()
 }
 
-$handlerOpen = { Emit-Open }
-$openItem.add_Click($handlerOpen)
-$dashItem.add_Click($handlerOpen)
-$icon.add_DoubleClick($handlerOpen)
+$openItem.add_Click({ Emit-Open })
+$icon.add_DoubleClick({ Emit-Open })
+$icon.add_Click({
+  param($sender, $e)
+  if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Emit-Open }
+})
 $quitItem.add_Click({ Emit-Quit })
 
-# Create a hidden form to host the message loop and ensure NotifyIcon shows reliably
+# Hidden form hosts the WinForms message loop (required for NotifyIcon)
 $form = New-Object System.Windows.Forms.Form
+$form.Text = '${title}'
 $form.WindowState = 'Minimized'
 $form.ShowInTaskbar = $false
-$form.Visible = $false
-$form.add_Load({ [Console]::Out.WriteLine('form-loaded') })
-$form.add_FormClosing({
-  $icon.Visible = $false
-  $icon.Dispose()
-  Emit-Quit
+$form.Opacity = 0
+$form.ShowIcon = $false
+$form.FormBorderStyle = 'FixedToolWindow'
+$form.Size = New-Object System.Drawing.Size(1, 1)
+$form.add_Load({
+  $icon.Visible = $true
+  try {
+    $icon.ShowBalloonTip(5000, '${title}', 'XLab Token is running. Click the tray icon to open the dashboard.', [System.Windows.Forms.ToolTipIcon]::Info)
+  } catch {}
+  [Console]::Out.WriteLine('form-loaded')
+  [Console]::Out.Flush()
 })
+$form.add_FormClosing({
+  try { $icon.Visible = $false; $icon.Dispose() } catch {}
+})
+$form.add_Shown({ $form.Hide() })
 
-# Keep process alive for tray message loop
 [System.Windows.Forms.Application]::Run($form)
 `.trim();
 }
@@ -186,7 +194,19 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
     tooltip,
     iconPath,
   });
-  log("PowerShell script length:", script.length);
+
+  // Write script to a temp .ps1 — more reliable than -Command with long scripts
+  let scriptPath = "";
+  try {
+    const dir = path.join(os.tmpdir(), "xlab-token");
+    await mkdir(dir, { recursive: true });
+    scriptPath = path.join(dir, `tray-${process.pid}.ps1`);
+    await writeFile(scriptPath, script, "utf8");
+    log("Tray script written:", scriptPath, "bytes:", script.length);
+  } catch (err) {
+    logError("Failed to write tray script:", err instanceof Error ? err.message : err);
+    return null;
+  }
 
   let child: ChildProcess | null = null;
   let stopped = false;
@@ -202,20 +222,24 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
       }
     }
     child = null;
+    if (scriptPath) {
+      void unlink(scriptPath).catch(() => {});
+    }
   };
 
   try {
+    // -STA is required for WinForms NotifyIcon message pump
     child = spawn(
       "powershell.exe",
       [
         "-NoProfile",
-        "-NonInteractive",
+        "-STA",
         "-ExecutionPolicy",
         "Bypass",
         "-WindowStyle",
         "Hidden",
-        "-Command",
-        script,
+        "-File",
+        scriptPath,
       ],
       {
         stdio: ["ignore", "pipe", "pipe"],
@@ -225,6 +249,7 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
     log("PowerShell child spawned, pid:", child.pid);
   } catch (err) {
     logError("Failed to spawn PowerShell tray:", err instanceof Error ? err.message : err);
+    void unlink(scriptPath).catch(() => {});
     return null;
   }
 
@@ -257,6 +282,9 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
   child.on("exit", (code) => {
     log("Tray child exited with code:", code);
     child = null;
+    if (scriptPath) {
+      void unlink(scriptPath).catch(() => {});
+    }
   });
 
   return { stop };
