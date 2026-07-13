@@ -10,10 +10,13 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
   <link rel="shortcut icon" href="/assets/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="prefetch" href="/" as="document" />
+  <link rel="prefetch" href="/agents" as="document" />
+  <link rel="prefetch" href="/model" as="document" />
+  <script>
+    try { if (localStorage.getItem('xlab-token-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -549,6 +552,18 @@
 
     loadConfigUi();
     setInterval(loadHealth, 10000);
+
+    document.querySelectorAll('a.nav-link, a.settings-btn, a.brand-logo-wrap').forEach((a) => {
+      a.addEventListener('pointerenter', () => {
+        const href = a.getAttribute('href');
+        if (!href || href.startsWith('#')) return;
+        const link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.as = 'document';
+        link.href = href;
+        document.head.appendChild(link);
+      }, { once: true, passive: true });
+    });
   </script>
 </body>
 </html>
