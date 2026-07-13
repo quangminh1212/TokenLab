@@ -48,9 +48,11 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "gpt-5.5-xhigh": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
   "gpt-5.5-openai-compact": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
   "gp-gpt-5.5": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
-  // GPT-5.4 short-context standard (common published card)
+  // GPT-5.4 short-context standard
   "gpt-5.4": { inputPer1M: 2.5, outputPer1M: 15, cacheReadPer1M: 0.25 },
   "gpt-5.4-openai-compact": { inputPer1M: 2.5, outputPer1M: 15, cacheReadPer1M: 0.25 },
+  "gpt-5.4-mini": { inputPer1M: 0.75, outputPer1M: 4.5, cacheReadPer1M: 0.075 },
+  "gpt-5.4-nano": { inputPer1M: 0.2, outputPer1M: 1.25, cacheReadPer1M: 0.02 },
   // Codex family
   "gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
   "gpt-5.3-codex-high": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
@@ -64,11 +66,13 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "gpt-4.1-mini": { inputPer1M: 0.4, outputPer1M: 1.6, cacheReadPer1M: 0.1 },
   "gpt-4o": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 1.25 },
   "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6, cacheReadPer1M: 0.075 },
-  "o3": { inputPer1M: 10, outputPer1M: 40, cacheReadPer1M: 2.5 },
+  // o3 post price-cut (was $10/$40)
+  "o3": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
+  "o3-pro": { inputPer1M: 20, outputPer1M: 80 },
   "o4-mini": { inputPer1M: 1.1, outputPer1M: 4.4, cacheReadPer1M: 0.275 },
 
-  // --- Google (match common OR list prices for offline) ---
-  "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10, cacheReadPer1M: 0.315 },
+  // --- Google (ai.google.dev pricing, short context) ---
+  "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10, cacheReadPer1M: 0.125 },
   "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
   "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4, cacheReadPer1M: 0.025 },
 
@@ -80,31 +84,38 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "grok-4-fast-reasoning": { inputPer1M: 0.2, outputPer1M: 0.5, cacheReadPer1M: 0.05 },
   "grok-3": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.75 },
   "grok-3-mini": { inputPer1M: 0.3, outputPer1M: 0.5, cacheReadPer1M: 0.075 },
-  // grok-build-0.1 aliases (docs.x.ai): $1 in / $2 out / $0.20 cache (not legacy $0.20/$1.50)
+  // grok-build-0.1 aliases: $1 in / $2 out / $0.20 cache
   "grok-build": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
   "grok-build-0.1": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
   "grok-code-fast-1": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
   "grok-code-fast": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
 
-  // --- DeepSeek ---
+  // --- DeepSeek (api-docs.deepseek.com) ---
   "deepseek-v3": { inputPer1M: 0.27, outputPer1M: 1.1 },
   "deepseek-v3.2": { inputPer1M: 0.28, outputPer1M: 0.42 },
-  "deepseek-v4-flash": { inputPer1M: 0.14, outputPer1M: 0.28 },
-  "deepseek-v4-pro": { inputPer1M: 1.0, outputPer1M: 3.0 },
-  "deepseek-chat": { inputPer1M: 0.27, outputPer1M: 1.1 },
-  "deepseek-reasoner": { inputPer1M: 0.55, outputPer1M: 2.19 },
+  // Official: cache-miss $0.14 / out $0.28; cache-hit $0.0028
+  "deepseek-v4-flash": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028 },
+  // Official: cache-miss $0.435 / out $0.87; cache-hit $0.003625
+  "deepseek-v4-pro": { inputPer1M: 0.435, outputPer1M: 0.87, cacheReadPer1M: 0.003625 },
+  // Legacy aliases → v4-flash (non-thinking / thinking), same rates
+  "deepseek-chat": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028 },
+  "deepseek-reasoner": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028 },
 
-  // --- GLM / Zhipu ---
-  "glm-5": { inputPer1M: 0.6, outputPer1M: 2.2 },
-  "glm-5.0": { inputPer1M: 0.6, outputPer1M: 2.2 },
-  "glm-5.1": { inputPer1M: 0.6, outputPer1M: 2.2 },
-  "glm-5-2": { inputPer1M: 0.6, outputPer1M: 2.2 },
+  // --- GLM / Zhipu (docs.z.ai official) ---
+  "glm-5": { inputPer1M: 1, outputPer1M: 3.2, cacheReadPer1M: 0.2 },
+  "glm-5.0": { inputPer1M: 1, outputPer1M: 3.2, cacheReadPer1M: 0.2 },
+  "glm-5.1": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26 },
+  "glm-5.2": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26 },
+  "glm-5-2": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26 },
   "glm-4.5": { inputPer1M: 0.6, outputPer1M: 2.2 },
 
   // --- MiniMax / Moonshot ---
-  "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2 },
+  // MiniMax paygo (≤512k, 50% promo): $0.30 / $1.20 / cache $0.06
+  "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06 },
   "minimax-m2.7": { inputPer1M: 0.3, outputPer1M: 1.2 },
   "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41 },
+  "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025 },
 
   // --- Agent / router house models (still approx) ---
   "cursor-small": { inputPer1M: 0.2, outputPer1M: 0.8 },
