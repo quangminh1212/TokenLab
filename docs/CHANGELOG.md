@@ -7,23 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Electron desktop app with cross-platform support (Windows, macOS, Linux)
-- Platform-specific icon detection and loading
-- Cross-platform server spawning and signal handling
-- Icon generation script for development
-- Comprehensive Electron documentation
-- Desktop app installation instructions in README
+## [1.0.5] - 2026-07-13
 
 ### Changed
-- Improved cross-platform compatibility for Electron app
-- Enhanced build configuration for multi-architecture support
-- Updated .gitignore to exclude build outputs and temporary files
+- Align offline bundled model rates with official vendor pricing (Anthropic, OpenAI, xAI, DeepSeek, GLM)
+- Expand Model catalog with seen models, bundled aliases, and provider icons
 
 ### Fixed
-- Node.js server spawning for Windows, macOS, and Linux
-- Platform-specific signal handling for server shutdown
-- Icon loading issues on different platforms
+- Agent brand icons (ZCode, Open Code Review, Windsurf, etc.)
+- Codex plugin fixture noise that faked “Just now” usage
+- Chart timeline labels across multi-year ranges
+- UI mojibake / encoding issues
 
 ## [1.0.4] - 2026-07-13
 
