@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import path from "node:path";
-import { pathExists } from "../../util.js";
-import { parseRouterUsage } from "./router-usage.js";
-import { nineRouterRoots } from "../9router/index.js";
-import { xlabRouterRoots } from "../xlabrouter/index.js";
+import { pathExists } from "../src/util.js";
+import { parseRouterUsage } from "../src/agents/shared/router-usage.js";
+import { nineRouterRoots } from "../src/agents/9router/index.js";
+import { xlabRouterRoots } from "../src/agents/xlabrouter/index.js";
 
 describe("router usage parsers", () => {
   it("discovers at least one 9router root with data on this machine (or skips)", async () => {

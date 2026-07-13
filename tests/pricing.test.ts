@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { priceTokens, resolveModelKey } from "./pricing.js";
+import { priceTokens, resolveModelKey } from "../src/pricing.js";
 
 test("resolveModelKey maps claude sonnet aliases", () => {
   assert.equal(resolveModelKey("claude-sonnet-4-20250514"), "claude-sonnet-4");

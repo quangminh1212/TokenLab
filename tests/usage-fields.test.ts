@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractModel, extractTokenBuckets } from "./usage-fields.js";
+import { extractModel, extractTokenBuckets } from "../src/agents/shared/usage-fields.js";
 
 test("extractTokenBuckets reads anthropic-style usage", () => {
   const b = extractTokenBuckets({

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { restoreBackup, mirrorsRoot } from "./backup.js";
-import { pathExists } from "./util.js";
+import { restoreBackup, mirrorsRoot } from "../src/backup.js";
+import { pathExists } from "../src/util.js";
 
 test("restore mirrors blocks path traversal", async () => {
   const root = mirrorsRoot();
