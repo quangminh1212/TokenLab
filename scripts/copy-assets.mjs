@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const serverSrc = path.join(root, "src", "server");
-const serverDist = path.join(root, "dist", "server");
+const serverDist = path.join(root, "installer", "dist", "server");
 mkdirSync(serverDist, { recursive: true });
 
 const files = ["dashboard.html", "agents.html", "settings.html", "pricing.html", "styles.css"];
@@ -15,7 +15,7 @@ for (const name of files) {
     continue;
   }
   cpSync(from, path.join(serverDist, name));
-  console.log(`copied ${name} -> dist/server/`);
+  console.log(`copied ${name} -> installer/dist/server/`);
 }
 
 const assetsFrom = path.join(serverSrc, "assets");
@@ -23,5 +23,5 @@ const assetsTo = path.join(serverDist, "assets");
 if (existsSync(assetsFrom)) {
   mkdirSync(assetsTo, { recursive: true });
   cpSync(assetsFrom, assetsTo, { recursive: true });
-  console.log("copied assets/ -> dist/server/assets/");
+  console.log("copied assets/ -> installer/dist/server/assets/");
 }

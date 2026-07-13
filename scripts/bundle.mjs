@@ -3,8 +3,8 @@ import { copyFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 
 const entryPoint = 'src/cli.ts';
-const outFile = 'dist/bundle.cjs';
-const assetsDir = 'dist/server/assets';
+const outFile = 'installer/dist/bundle.cjs';
+const assetsDir = 'installer/dist/server/assets';
 
 // Build the bundle
 await esbuild.build({

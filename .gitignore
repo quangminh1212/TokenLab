@@ -1,13 +1,15 @@
 .DS_Store
 node_modules
-dist/
+installer/dist/
 package-lock.json
 *.tsbuildinfo
 .xlab-token/
 
 # Build outputs
 build/
-dist-electron/
+installer/build/
+installer/dist-electron/
+installer/dist/
 
 # Benchmark results (except .gitkeep)
 packages/benchmarks/results/*

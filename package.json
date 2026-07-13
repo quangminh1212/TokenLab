@@ -4,15 +4,15 @@
   "description": "Local-first token API usage and cost tracker for AI coding agents on one machine",
   "type": "module",
   "bin": {
-    "xlab-token": "dist/cli.js"
+    "xlab-token": "installer/dist/cli.js"
   },
   "main": "./installer/electron/main.js",
-  "types": "./dist/index.d.ts",
+  "types": "./installer/dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "types": "./installer/dist/index.d.ts",
+      "import": "./installer/dist/index.js",
+      "default": "./installer/dist/index.js"
     }
   },
   "scripts": {
@@ -20,20 +20,20 @@
     "prepublishOnly": "npm run build && npm test",
     "postinstall": "node scripts/postinstall.mjs",
     "dev": "tsx src/cli.ts",
-    "start": "node dist/cli.js",
+    "start": "node installer/dist/cli.js",
     "serve": "tsx src/cli.ts serve",
     "serve:watch": "tsx watch --watch-path=./src --watch-preserve-output --clear-screen=false src/cli.ts serve",
     "stats": "tsx src/cli.ts stats",
     "cost": "tsx src/cli.ts cost",
     "doctors": "tsx src/cli.ts doctors",
-    "setup": "node dist/cli.js setup",
+    "setup": "node installer/dist/cli.js setup",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "npm pack --dry-run",
-    "pkg:build": "npm run build && pkg . --targets node18-win-x64 --output build/xlab-token.exe",
-    "nexe:build": "npm run build && nexe dist/cli.js -o build/xlab-token.exe --build",
+    "pkg:build": "npm run build && pkg . --targets node18-win-x64 --output installer/build/xlab-token.exe",
+    "nexe:build": "npm run build && nexe installer/dist/cli.js -o installer/build/xlab-token.exe --build",
     "bundle": "node scripts/bundle.mjs",
-    "exe:build": "npm run bundle && pkg dist/bundle.cjs --targets node18-win-x64 --output build/xlab-token.exe --public",
+    "exe:build": "npm run bundle && pkg installer/dist/bundle.cjs --targets node18-win-x64 --output installer/build/xlab-token.exe --public",
     "electron:dev": "electron .",
     "electron:build": "npm run build && npm run build-icons && electron-builder",
     "electron:build:win": "npm run build && npm run build-icons && electron-builder --win",
@@ -83,23 +83,23 @@
   },
   "pkg": {
     "assets": [
-      "dist/**/*",
+      "installer/dist/**/*",
       "src/server/assets/**/*"
     ],
     "scripts": [
       "scripts/postinstall.mjs"
     ],
-    "outputPath": "build"
+    "outputPath": "installer/build"
   },
   "build": {
     "appId": "com.xlab.token",
     "productName": "XLab Token",
     "directories": {
-      "output": "dist-electron"
+      "output": "installer/dist-electron"
     },
     "files": [
       "installer/electron/**/*",
-      "dist/**/*",
+      "installer/dist/**/*",
       "package.json"
     ],
     "asar": true,

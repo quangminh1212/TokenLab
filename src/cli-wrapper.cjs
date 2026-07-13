@@ -5,9 +5,9 @@ const { fileURLToPath } = require('url');
 
 // Try multiple possible paths for the dist folder
 const possiblePaths = [
-  path.join(__dirname, 'dist', 'cli.js'),
-  path.join(__dirname, '..', 'dist', 'cli.js'),
-  path.join(process.cwd(), 'dist', 'cli.js'),
+  path.join(__dirname, 'installer', 'dist', 'cli.js'),
+  path.join(__dirname, '..', 'installer', 'dist', 'cli.js'),
+  path.join(process.cwd(), 'installer', 'dist', 'cli.js'),
   path.join(__dirname, 'cli.js'), // If bundled together
 ];
 
