@@ -639,7 +639,7 @@ npm run electron:build:linux
 npm run electron:dev
 ```
 
-See [electron/README.md](electron/README.md) for detailed Electron documentation.
+See [installer/electron/README.md](installer/electron/README.md) for detailed Electron documentation.
 
 ---
 

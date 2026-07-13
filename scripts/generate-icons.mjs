@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const assetsDir = path.join(__dirname, '..', 'electron', 'assets');
+const assetsDir = path.join(__dirname, '..', 'installer', 'electron', 'assets');
 const sourceDir = path.join(__dirname, '..', 'src', 'server', 'assets');
 
 // Ensure assets directory exists
