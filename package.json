@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build": "npm run generate-favicons && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "prepublishOnly": "npm run build && npm test",
     "postinstall": "node scripts/postinstall.mjs",
     "dev": "tsx src/cli.ts",
@@ -41,7 +41,8 @@
     "electron:build:linux": "npm run build && npm run build-icons && electron-builder --linux",
     "generate-icons": "node scripts/generate-icons.mjs",
     "build-icons": "node scripts/build-icons.mjs",
-    "convert-icon": "node scripts/convert-icon.mjs"
+    "convert-icon": "node scripts/convert-icon.mjs",
+    "generate-favicons": "node scripts/generate-favicons.mjs"
   },
   "engines": {
     "node": ">=20"
