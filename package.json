@@ -103,9 +103,6 @@
       "package.json"
     ],
     "asar": true,
-    "asarUnpack": [
-      "installer/electron/assets"
-    ],
     "extraMetadata": {
       "main": "installer/electron/main.js"
     },
