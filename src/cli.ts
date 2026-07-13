@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
 import { aggregate, costReport } from "./aggregate.js";
 import { detectAgents, scanAll } from "./agents/index.js";
 import {
@@ -13,6 +15,26 @@ import { startTray } from "./tray.js";
 import type { GroupBy } from "./types.js";
 import { filterByPeriod, formatTokens, formatUsd, openBrowser } from "./util.js";
 import { VERSION } from "./version.js";
+
+// Simple file logger to %LOCALAPPDATA%\xlab-token\server.txt
+const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "xlab-token");
+const logFile = path.join(logDir, "server.txt");
+
+function log(...args: unknown[]): void {
+  const message = `[${new Date().toISOString()}] ${args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ")}`;
+  try {
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    fs.appendFileSync(logFile, message + "\r\n");
+  } catch {
+    // ignore logging errors
+  }
+}
+
+function logError(...args: unknown[]): void {
+  log("[ERROR]", ...args);
+}
 
 function printHelp(): void {
   console.log(`xlab-token v${VERSION}
@@ -76,6 +98,9 @@ async function main(): Promise<void> {
   }
 
   if (cmd === "serve") {
+    log("CLI serve command started");
+    log("Args:", args.join(" "));
+
     const host = getFlag(args, "--host") || undefined;
     const port = getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined;
     const noUi = has(args, "--no-ui");
@@ -85,8 +110,10 @@ async function main(): Promise<void> {
       process.env.XLAB_TOKEN_NO_TRAY === "1" ||
       noUi;
     try {
+      log("Starting server with host:", host, "port:", port, "noUi:", noUi);
       const srv = await startServer({ host, port, noUi });
       const uiUrl = `http://${srv.host}:${srv.port}/`;
+      log("Server started at", `${srv.host}:${srv.port}`);
       console.log(`XLab Token v${VERSION}  (${process.platform}/${process.arch})`);
       console.log(`API  http://${srv.host}:${srv.port}/api/health`);
       if (!noUi) console.log(`UI   ${uiUrl}`);
@@ -98,6 +125,7 @@ async function main(): Promise<void> {
       let trayStop: (() => void) | null = null;
       const shutdown = async (signal: string) => {
         if (shuttingDown) return;
+        log("Shutdown signal received:", signal);
         shuttingDown = true;
         // Tell the autostart supervisor (if any) not to restart us.
         // Skip on SIGHUP (tsx watch hot-reload) so dev restarts keep working.
@@ -115,6 +143,7 @@ async function main(): Promise<void> {
         }
         try {
           await srv.close();
+          log("Server closed");
         } catch {
           // ignore close errors on hot-reload restart
         }
@@ -135,13 +164,16 @@ async function main(): Promise<void> {
           });
           if (tray) {
             trayStop = tray.stop;
+            log("Tray icon enabled");
             console.log("Tray icon enabled (double-click or menu → Open Dashboard)");
           }
-        } catch {
+        } catch (err) {
+          logError("Failed to start tray:", err instanceof Error ? err.message : err);
           // tray is optional
         }
       }
     } catch (err) {
+      logError("Failed to start server:", err instanceof Error ? err.message : err);
       console.error(err instanceof Error ? err.message : err);
       process.exitCode = 1;
     }

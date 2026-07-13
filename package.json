@@ -6,7 +6,7 @@
   "bin": {
     "xlab-token": "installer/dist/cli.js"
   },
-  "main": "./installer/electron/main.cjs",
+  "main": "./installer/dist/cli.js",
   "types": "./installer/dist/index.d.ts",
   "exports": {
     ".": {
@@ -30,18 +30,6 @@
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "npm pack --dry-run",
-    "pkg:build": "npm run build && pkg . --targets node18-win-x64 --output installer/build/xlab-token.exe",
-    "nexe:build": "npm run build && nexe installer/dist/cli.js -o installer/build/xlab-token.exe --build",
-    "bundle": "node scripts/bundle.mjs",
-    "exe:build": "npm run bundle && pkg installer/dist/bundle.cjs --targets node18-win-x64 --output installer/build/xlab-token.exe --public",
-    "electron:dev": "electron .",
-    "electron:build": "npm run build && npm run build-icons && electron-builder",
-    "electron:build:win": "npm run build && npm run build-icons && electron-builder --win",
-    "electron:build:mac": "npm run build && npm run build-icons && electron-builder --mac",
-    "electron:build:linux": "npm run build && npm run build-icons && electron-builder --linux",
-    "generate-icons": "node scripts/generate-icons.mjs",
-    "build-icons": "node scripts/build-icons.mjs",
-    "convert-icon": "node scripts/convert-icon.mjs",
     "generate-favicons": "node scripts/generate-favicons.mjs"
   },
   "engines": {
@@ -81,111 +69,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "pkg": {
-    "assets": [
-      "installer/dist/**/*",
-      "src/server/assets/**/*"
-    ],
-    "scripts": [
-      "scripts/postinstall.mjs"
-    ],
-    "outputPath": "installer/build"
-  },
-  "build": {
-    "appId": "com.xlab.token",
-    "productName": "XLab Token",
-    "directories": {
-      "output": "installer/dist-electron"
-    },
-    "files": [
-      "installer/electron/**/*",
-      "installer/dist/**/*",
-      "package.json"
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "installer/dist/**/*"
-    ],
-    "extraMetadata": {
-      "main": "installer/electron/main.cjs",
-      "type": "commonjs"
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "installer/electron/assets/icon.ico"
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "installer/electron/assets/icon.png",
-      "category": "public.app-category.developer-tools",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false
-    },
-    "linux": {
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "rpm",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "installer/electron/assets/icon.png",
-      "category": "Development",
-      "maintainer": "XLab",
-      "vendor": "XLab"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "installer/electron/assets/icon.ico",
-      "uninstallerIcon": "installer/electron/assets/icon.ico",
-      "installerHeaderIcon": "installer/electron/assets/icon.ico",
-      "deleteAppDataOnUninstall": false
-    }
-  },
   "files": [
-    "dist",
+    "installer/dist",
     "scripts/postinstall.mjs",
     "README.md",
     "LICENSE",
@@ -195,12 +80,6 @@
   ],
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "electron": "^43.1.0",
-    "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.1",
-    "nexe": "^5.0.0-beta.4",
-    "pkg": "^5.8.1",
-    "png-to-ico": "^3.0.2",
     "sharp": "^0.35.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
