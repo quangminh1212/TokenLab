@@ -1,11 +1,31 @@
 import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
 import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
+
+/** Skip Codex plugin fixtures / temp trees (fake usage with no real timestamps). */
+function isNoisePath(full: string): boolean {
+  const n = full.replace(/\\/g, "/").toLowerCase();
+  const bad = [
+    "/.tmp/",
+    "/tmp/",
+    "/fixtures/",
+    "/fixture/",
+    "/plugin-eval/",
+    "/observed-usage/",
+    "/__tests__/",
+    "/testdata/",
+    "/mocks/",
+    "/vendor_imports/",
+    "/node_modules/",
+  ];
+  return bad.some((b) => n.includes(b));
+}
 
 // Deep Codex support:
 // - ~/.codex/sessions (rollout-*.jsonl date tree)
@@ -20,42 +40,61 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
-    const scanRoots = [
+    // Prefer real session trees; only fall back to root when those are absent
+    const preferred = [
       path.join(root, "sessions"),
       path.join(root, "archived_sessions"),
       path.join(root, "session_index"),
       path.join(root, "history"),
       path.join(root, "logs"),
-      root,
     ];
+    const existingPreferred: string[] = [];
+    for (const p of preferred) {
+      if (await pathExists(p)) existingPreferred.push(p);
+    }
+    const scanRoots = existingPreferred.length > 0 ? existingPreferred : [root];
 
     for (const base of scanRoots) {
       if (!(await pathExists(base))) continue;
+      if (isNoisePath(base)) continue;
       const files = await walkFiles(base, {
         maxDepth: 12,
-        match: (n) =>
-          n.endsWith(".jsonl") ||
-          n.startsWith("rollout-") ||
-          (n.includes("session") && (n.endsWith(".json") || n.endsWith(".jsonl"))),
+        match: (n, full) => {
+          if (isNoisePath(full)) return false;
+          return (
+            n.endsWith(".jsonl") ||
+            n.startsWith("rollout-") ||
+            (n.includes("session") && (n.endsWith(".json") || n.endsWith(".jsonl")))
+          );
+        },
       });
 
       for (const file of files) {
         if (seen.has(file)) continue;
+        if (isNoisePath(file)) continue;
         seen.add(file);
         const text = await readText(file);
         if (!text) continue;
 
+        let fileMtime = new Date(0);
+        try {
+          const st = await stat(file);
+          fileMtime = st.mtime;
+        } catch {
+          // ignore
+        }
+
         if (file.endsWith(".json") && !file.endsWith(".jsonl")) {
           try {
             const data = JSON.parse(text) as unknown;
-            collectFromJson(events, data, file);
+            collectFromJson(events, data, file, fileMtime);
           } catch {
             // ignore
           }
           continue;
         }
 
-        parseJsonlFile(events, text, file);
+        parseJsonlFile(events, text, file, fileMtime);
       }
     }
   }
@@ -63,7 +102,12 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
   return events;
 }
 
-function parseJsonlFile(events: UsageEvent[], text: string, file: string): void {
+function parseJsonlFile(
+  events: UsageEvent[],
+  text: string,
+  file: string,
+  fileMtime: Date,
+): void {
   const rows = parseJsonl(text);
   let idx = 0;
   let lastIn = 0;
@@ -132,12 +176,14 @@ function parseJsonlFile(events: UsageEvent[], text: string, file: string): void 
 
     if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) continue;
 
-    const ts = extractTimestamp(r, r.payload, usageObj);
+    // Prefer event time; never use "now" for fixtures-without-ts (causes perpetual "Just now")
+    const ts = extractTimestamp(r, r.payload, usageObj, fileMtime);
     const rowModel = extractModel(r, r.payload, usageObj, model);
 
     events.push(
       applyPricing({
-        id: stableId("codex", file, String(idx), String(inputTokens), String(outputTokens), ts),
+        // Stable id without wall-clock "now" so rescans do not multiply rows
+        id: stableId("codex", file, String(idx), String(inputTokens), String(outputTokens)),
         agent: "codex",
         model: rowModel,
         timestamp: ts,
@@ -186,7 +232,12 @@ function findUsageObject(r: Record<string, unknown>, type: string): unknown {
   return null;
 }
 
-function collectFromJson(events: UsageEvent[], data: unknown, file: string): void {
+function collectFromJson(
+  events: UsageEvent[],
+  data: unknown,
+  file: string,
+  fileMtime: Date,
+): void {
   if (Array.isArray(data)) {
     data.forEach((row, i) => {
       if (!row || typeof row !== "object") return;
@@ -198,7 +249,7 @@ function collectFromJson(events: UsageEvent[], data: unknown, file: string): voi
           id: stableId("codex", file, "json", String(i), String(buckets.inputTokens)),
           agent: "codex",
           model: extractModel(r),
-          timestamp: extractTimestamp(r),
+          timestamp: extractTimestamp(r, fileMtime),
           ...buckets,
           workspace: pickString(r, ["cwd", "workspace"]),
           sourcePath: file,
@@ -209,8 +260,8 @@ function collectFromJson(events: UsageEvent[], data: unknown, file: string): voi
   }
   if (data && typeof data === "object") {
     const o = data as Record<string, unknown>;
-    if (Array.isArray(o.events)) collectFromJson(events, o.events, file);
-    if (Array.isArray(o.sessions)) collectFromJson(events, o.sessions, file);
+    if (Array.isArray(o.events)) collectFromJson(events, o.events, file, fileMtime);
+    if (Array.isArray(o.sessions)) collectFromJson(events, o.sessions, file, fileMtime);
   }
 }
 
