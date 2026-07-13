@@ -5,6 +5,10 @@ package-lock.json
 *.tsbuildinfo
 .xlab-token/
 
+# Build outputs
+build/
+dist-electron/
+
 # Benchmark results (except .gitkeep)
 packages/benchmarks/results/*
 !packages/benchmarks/results/.gitkeep
@@ -37,6 +41,8 @@ self-host/
 .next/
 .vercel
 .env*.local
+.tmp-stats-*.json
+check_paths.mjs
 
 # Screenshots
 *.png
@@ -46,6 +52,11 @@ self-host/
 !src/server/assets/**/*.jpeg
 !src/server/assets/**/*.svg
 !src/server/assets/**/*.ico
+
+# Electron
+electron/assets/icon.png
+electron/assets/icon.ico
+electron/assets/icon.icns
 
 .npmrc
 
