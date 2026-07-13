@@ -6,7 +6,7 @@
   "bin": {
     "xlab-token": "dist/cli.js"
   },
-  "main": "./electron/main.js",
+  "main": "./installer/electron/main.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -98,16 +98,16 @@
       "output": "dist-electron"
     },
     "files": [
-      "electron/**/*",
+      "installer/electron/**/*",
       "dist/**/*",
       "package.json"
     ],
     "asar": true,
     "asarUnpack": [
-      "electron/assets"
+      "installer/electron/assets"
     ],
     "extraMetadata": {
-      "main": "electron/main.js"
+      "main": "installer/electron/main.js"
     },
     "win": {
       "target": [
@@ -124,7 +124,7 @@
           ]
         }
       ],
-      "icon": "electron/assets/icon.ico"
+      "icon": "installer/electron/assets/icon.ico"
     },
     "mac": {
       "target": [
@@ -143,7 +143,7 @@
           ]
         }
       ],
-      "icon": "electron/assets/icon.png",
+      "icon": "installer/electron/assets/icon.png",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "gatekeeperAssess": false
@@ -169,7 +169,7 @@
           ]
         }
       ],
-      "icon": "electron/assets/icon.png",
+      "icon": "installer/electron/assets/icon.png",
       "category": "Development",
       "maintainer": "XLab",
       "vendor": "XLab"
@@ -177,9 +177,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "electron/assets/icon.ico",
-      "uninstallerIcon": "electron/assets/icon.ico",
-      "installerHeaderIcon": "electron/assets/icon.ico",
+      "installerIcon": "installer/electron/assets/icon.ico",
+      "uninstallerIcon": "installer/electron/assets/icon.ico",
+      "installerHeaderIcon": "installer/electron/assets/icon.ico",
       "deleteAppDataOnUninstall": false
     }
   },

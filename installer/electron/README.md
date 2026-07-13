@@ -75,9 +75,9 @@ npm run generate-icons
 
 This creates a placeholder SVG icon. For production, convert it to the required formats:
 
-- `electron/assets/icon.png` (256x256 PNG for Linux)
-- `electron/assets/icon.ico` (256x256 ICO for Windows)  
-- `electron/assets/icon.icns` (ICNS for macOS)
+- `installer/electron/assets/icon.png` (256x256 PNG for Linux)
+- `installer/electron/assets/icon.ico` (256x256 ICO for Windows)  
+- `installer/electron/assets/icon.icns` (ICNS for macOS)
 
 ### Icon conversion tools
 

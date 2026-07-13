@@ -11,7 +11,7 @@ import sharp from 'sharp';
 import pngToIco from 'png-to-ico';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const assetsDir = path.join(__dirname, '..', 'electron', 'assets');
+const assetsDir = path.join(__dirname, '..', 'installer', 'electron', 'assets');
 const sourceDir = path.join(__dirname, '..', 'src', 'server', 'assets');
 
 const logoPng = path.join(sourceDir, 'logo.png');
