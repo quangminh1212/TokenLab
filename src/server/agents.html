@@ -323,7 +323,7 @@
               </div>
             </div>
           </div>`).join('')
-        : `<div class="empty" style="grid-column:1/-1">ChÆ°a cÃ³ agent live. DÃ¹ng AI tools rá»“i Rescan.</div>`;
+        : `<div class="empty" style="grid-column:1/-1">Chua co agent live. Dung AI tools roi Rescan.</div>`;
 
       const used = new Set();
       const sections = [];
@@ -352,7 +352,7 @@
       }
 
       $('providerSections').innerHTML = sections.join('') ||
-        `<div class="empty">KhÃ´ng cÃ³ agent khá»›p bá»™ lá»c.</div>`;
+        `<div class="empty">Khong co agent khop bo loc.</div>`;
     }
 
     /** Category sections default collapsed; expand on click. Auto-open when searching/filtering. */
@@ -363,10 +363,11 @@
       const collapsed = forceOpen ? '' : ' is-collapsed';
       const expanded = forceOpen ? 'true' : 'false';
       const hidden = forceOpen ? '' : ' hidden';
+      // Chevron via HTML entity (avoids UTF-8 file corruption)
       return `
         <div class="provider-section${collapsed}" data-section="${escapeHtml(id)}">
           <button type="button" class="provider-section-head" aria-expanded="${expanded}">
-            <span class="section-chevron" aria-hidden="true">â€º</span>
+            <span class="section-chevron" aria-hidden="true">&#8250;</span>
             <h3>${escapeHtml(title)}</h3>
             <span class="count">${members.length}</span>
           </button>
@@ -449,7 +450,7 @@
     $('refresh').onclick = async () => {
       setRefreshBusy('Scanning\u2026');
       try {
-        // Background scan â€” do not block UI for 10\u201320s
+        // Background scan - do not block UI for 10-20s
         await fetch('/api/scan?async=1', { method: 'POST' });
         awaitingData = true;
         scheduleScanPoll();
