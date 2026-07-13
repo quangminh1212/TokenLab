@@ -6,7 +6,7 @@
   "bin": {
     "xlab-token": "installer/dist/cli.js"
   },
-  "main": "./installer/electron/main.js",
+  "main": "./installer/electron/main.cjs",
   "types": "./installer/dist/index.d.ts",
   "exports": {
     ".": {
@@ -103,8 +103,12 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "installer/dist/**/*"
+    ],
     "extraMetadata": {
-      "main": "installer/electron/main.js"
+      "main": "installer/electron/main.cjs",
+      "type": "commonjs"
     },
     "win": {
       "target": [
