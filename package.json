@@ -102,6 +102,10 @@
       "dist/**/*",
       "package.json"
     ],
+    "asar": true,
+    "asarUnpack": [
+      "electron/assets"
+    ],
     "extraMetadata": {
       "main": "electron/main.js"
     },
@@ -175,7 +179,8 @@
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "electron/assets/icon.ico",
       "uninstallerIcon": "electron/assets/icon.ico",
-      "installerHeaderIcon": "electron/assets/icon.ico"
+      "installerHeaderIcon": "electron/assets/icon.ico",
+      "deleteAppDataOnUninstall": false
     }
   },
   "files": [
