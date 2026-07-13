@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aggregate } from "./aggregate.js";
-import type { UsageEvent } from "./types.js";
+import { aggregate } from "../src/aggregate.js";
+import type { UsageEvent } from "../src/types.js";
 
 const sample: UsageEvent[] = [
   {

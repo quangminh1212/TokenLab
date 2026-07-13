@@ -27,7 +27,7 @@
     "cost": "tsx src/cli.ts cost",
     "doctors": "tsx src/cli.ts doctors",
     "setup": "node installer/dist/cli.js setup",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "npm pack --dry-run",
     "generate-favicons": "node scripts/generate-favicons.mjs"

@@ -7,14 +7,14 @@ import {
   homeDir,
   localAppDataDir,
   normalizeModelName,
-} from "./util.js";
+} from "../src/util.js";
 import {
   jetbrainsRoots,
   pathEnv,
   unique,
   vscodeGlobalStorage,
   vscodeUserDataRoots,
-} from "./agents/shared/env.js";
+} from "../src/agents/shared/env.js";
 
 describe("platform path helpers", () => {
   it("homeDir returns a non-empty absolute-ish path", () => {
