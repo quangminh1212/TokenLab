@@ -35,11 +35,12 @@
     "bundle": "node scripts/bundle.mjs",
     "exe:build": "npm run bundle && pkg dist/bundle.cjs --targets node18-win-x64 --output build/xlab-token.exe --public",
     "electron:dev": "electron .",
-    "electron:build": "npm run build && electron-builder",
-    "electron:build:win": "npm run build && electron-builder --win",
-    "electron:build:mac": "npm run build && electron-builder --mac",
-    "electron:build:linux": "npm run build && electron-builder --linux",
-    "generate-icons": "node scripts/generate-icons.mjs"
+    "electron:build": "npm run build && npm run build-icons && electron-builder",
+    "electron:build:win": "npm run build && npm run build-icons && electron-builder --win",
+    "electron:build:mac": "npm run build && npm run build-icons && electron-builder --mac",
+    "electron:build:linux": "npm run build && npm run build-icons && electron-builder --linux",
+    "generate-icons": "node scripts/generate-icons.mjs",
+    "build-icons": "node scripts/build-icons.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -112,8 +113,7 @@
           "target": "portable",
           "arch": ["x64"]
         }
-      ],
-      "icon": "electron/assets/icon.ico"
+      ]
     },
     "mac": {
       "target": [
@@ -126,7 +126,6 @@
           "arch": ["x64", "arm64"]
         }
       ],
-      "icon": "electron/assets/icon.icns",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "gatekeeperAssess": false
@@ -146,17 +145,13 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "electron/assets/icon.png",
       "category": "Development",
       "maintainer": "XLab",
       "vendor": "XLab"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "electron/assets/icon.ico",
-      "uninstallerIcon": "electron/assets/icon.ico",
-      "installerHeaderIcon": "electron/assets/icon.ico"
+      "allowToChangeInstallationDirectory": true
     }
   },
   "files": [

@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * Simple icon generator script
- * This creates placeholder icons for development
- * For production, use proper icon design tools
+ * Icon generator script for XLab Token
+ * This script copies the project logo to the required icon formats
  */
 
 import fs from 'fs';
@@ -11,30 +10,41 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const assetsDir = path.join(__dirname, '..', 'electron', 'assets');
-
-// Create a simple SVG icon
-const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <rect width="256" height="256" fill="#4F46E5" rx="32"/>
-  <text x="128" y="140" font-family="Arial, sans-serif" font-size="80" font-weight="bold" fill="white" text-anchor="middle">X</text>
-  <text x="128" y="200" font-family="Arial, sans-serif" font-size="40" fill="white" text-anchor="middle">Token</text>
-</svg>`;
+const sourceDir = path.join(__dirname, '..', 'src', 'server', 'assets');
 
 // Ensure assets directory exists
 if (!fs.existsSync(assetsDir)) {
   fs.mkdirSync(assetsDir, { recursive: true });
 }
 
-// Write SVG icon
-const svgPath = path.join(assetsDir, 'icon.svg');
-fs.writeFileSync(svgPath, svgIcon);
-console.log('Created placeholder SVG icon:', svgPath);
+// Copy existing logo files
+const logoPng = path.join(sourceDir, 'logo.png');
+const logoSvg = path.join(sourceDir, 'logo.svg');
 
-console.log('\nNote: This is a placeholder icon for development.');
-console.log('For production, convert this SVG to proper formats:');
-console.log('- icon.png (256x256 PNG for Linux)');
+if (fs.existsSync(logoPng)) {
+  const targetPng = path.join(assetsDir, 'icon.png');
+  fs.copyFileSync(logoPng, targetPng);
+  console.log('✓ Copied logo.png to icon.png (Linux icon)');
+} else {
+  console.log('✗ logo.png not found in src/server/assets/');
+}
+
+if (fs.existsSync(logoSvg)) {
+  const targetSvg = path.join(assetsDir, 'icon.svg');
+  fs.copyFileSync(logoSvg, targetSvg);
+  console.log('✓ Copied logo.svg to icon.svg (source for conversion)');
+} else {
+  console.log('✗ logo.svg not found in src/server/assets/');
+}
+
+console.log('\nIcon files prepared for development!');
+console.log('\nFor production, you need to convert the SVG/ PNG to:');
 console.log('- icon.ico (256x256 ICO for Windows)');
 console.log('- icon.icns (ICNS for macOS)');
-console.log('\nRecommended tools:');
-console.log('- https://cloudconvert.com/svg-to-png');
-console.log('- https://cloudconvert.com/svg-to-ico');
-console.log('- https://cloudconvert.com/svg-to-icns');
+console.log('\nRecommended conversion tools:');
+console.log('- https://cloudconvert.com/png-to-ico');
+console.log('- https://cloudconvert.com/png-to-icns');
+console.log('- https://www.favicon-generator.org/');
+console.log('\nOr use ImageMagick:');
+console.log('  magick convert icon.png -define icon:auto-resize=256,128,96,64,48,32,16 icon.ico');
+console.log('  (For macOS, use iconutil or online converter)');

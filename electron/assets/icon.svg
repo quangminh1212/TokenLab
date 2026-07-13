@@ -1,0 +1,6 @@
+<svg width="200" height="80" viewBox="0 0 200 80" xmlns="http://www.w3.org/2000/svg">
+  <!-- X màu đen -->
+  <text x="20" y="55" font-family="Arial, sans-serif" font-weight="bold" font-size="50" fill="#000000">X</text>
+  <!-- Lab màu xanh ngọc -->
+  <text x="65" y="55" font-family="Arial, sans-serif" font-weight="bold" font-size="50" fill="#00A19A">Lab</text>
+</svg> 
