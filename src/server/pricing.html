@@ -287,6 +287,10 @@
       '01-ai': gFav('https://www.01.ai/'),
       perceptron: gFav('https://www.perceptron.inc/'),
       ollama: gFav('https://ollama.com/'),
+      // Synthetic / agent-seen providers
+      windsurf: gFav('https://windsurf.com/'),
+      cursor: gFav('https://cursor.com/'),
+      other: gFav('https://openrouter.ai/'),
     };
 
     /** Offline fallback only (used if OpenRouter/favicon fails) */
@@ -382,6 +386,8 @@
       kilocode: 'kilocode.png',
       kiro: 'kiro.png',
       ollama: 'ollama.png',
+      windsurf: 'windsurf.png',
+      other: 'openrouter.png',
     };
 
     const PROV_COLORS = [
@@ -556,11 +562,11 @@
         $('modelList').innerHTML = '<div class="empty">No models match filters.</div>';
         return;
       }
-      // Cap DOM for performance; search narrows list quickly
-      const MAX = 200;
+      // Cap DOM for performance; search / provider filter narrows quickly
+      const MAX = 800;
       const slice = list.slice(0, MAX);
       const more = list.length > MAX
-        ? `<div class="or-more muted">Showing ${MAX} of ${list.length} \u2014 refine search</div>`
+        ? `<div class="or-more muted">Showing ${MAX} of ${list.length} \u2014 refine search or provider filter</div>`
         : '';
 
       const head = `<div class="or-head" aria-hidden="true">
@@ -584,6 +590,8 @@
                 <h3 class="or-card-name" title="${escapeHtml(m.name)}">${displayName}</h3>
                 ${free ? '<span class="or-badge free">Free</span>' : ''}
                 ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
+                ${src === 'seen' ? '<span class="or-badge custom">seen</span>' : ''}
+                ${src === 'bundled' ? '<span class="or-badge">bundled</span>' : ''}
               </div>
               <div class="or-card-meta">
                 <code class="or-id">${id}</code>
@@ -661,9 +669,12 @@
         const when = data.openrouterFetchedAt
           ? new Date(data.openrouterFetchedAt).toLocaleString()
           : '\u2014';
-        setStatus(`${openrouter.length} models \u00B7 ${Object.keys(customRates).length} custom`);
+        const providers = new Set(openrouter.map((m) => m.provider).filter(Boolean)).size;
+        setStatus(
+          `${openrouter.length} models \u00B7 ${providers} providers \u00B7 ${Object.keys(customRates).length} custom`,
+        );
         if (!openrouter.length) {
-          $('modelList').innerHTML = '<div class="empty">No OpenRouter models yet. Click Refresh.</div>';
+          $('modelList').innerHTML = '<div class="empty">No models yet. Click Refresh to fetch OpenRouter catalog.</div>';
         }
       } catch (err) {
         console.error('[model] loadPricing', err);

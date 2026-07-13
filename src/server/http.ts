@@ -20,7 +20,7 @@ import {
   getOpenRouterModelsSync,
   loadOpenRouterCacheFromDisk,
 } from "../openrouter-models.js";
-import { listPricingCatalog, repriceEvents } from "../pricing.js";
+import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
 import type { AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
 import { filterByPeriod, normalizeModelName, startOfDayInTimeZone } from "../util.js";
 import { VERSION } from "../version.js";
@@ -397,20 +397,44 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     }
 
     if (req.method === "GET" && pathname === "/api/pricing") {
-      const models = [...new Set(cache.map((e) => normalizeModelName(e.model) || e.model || "").filter(Boolean))];
+      const models = [
+        ...new Set(
+          cache
+            .map((e) => normalizeModelName(e.model) || e.model || "")
+            .filter(Boolean) as string[],
+        ),
+      ];
       const cfg = await loadConfig();
       const forceOr = url.searchParams.get("refreshOpenRouter") === "1";
-      if (forceOr || getOpenRouterModelsSync().length === 0) {
+      // Auto-refresh stale OpenRouter catalog (>6h) so Model page stays complete
+      const fetchedAt = getOpenRouterFetchedAt();
+      const stale = !fetchedAt || Date.now() - fetchedAt > 6 * 60 * 60 * 1000;
+      if (forceOr || getOpenRouterModelsSync().length === 0 || stale) {
         try {
-          await fetchOpenRouterModels({ force: forceOr });
+          await fetchOpenRouterModels({ force: forceOr || stale });
         } catch {
           // keep empty / stale; UI can show offline
         }
       }
       const openrouter = getOpenRouterModelsSync();
       const custom = cfg.pricing?.customRates || {};
+      type CatalogRow = {
+        id: string;
+        name: string;
+        provider: string;
+        slug: string;
+        contextLength: number;
+        modality: string;
+        free: boolean;
+        source: "custom" | "openrouter" | "bundled" | "seen";
+        inputPer1M: number;
+        outputPer1M: number;
+        cacheReadPer1M?: number;
+        cacheWritePer1M?: number;
+        created?: number;
+      };
       // Merge OpenRouter rows with effective rates (custom overrides)
-      const openrouterCatalog = openrouter.map((m) => {
+      const openrouterCatalog: CatalogRow[] = openrouter.map((m) => {
         const cKey = m.id.toLowerCase();
         const sKey = m.slug.toLowerCase();
         const cust = custom[cKey] || custom[sKey];
@@ -430,6 +454,73 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           created: m.created,
         };
       });
+
+      // Index existing catalog for merge
+      const byId = new Map(openrouterCatalog.map((m) => [m.id.toLowerCase(), m]));
+      const bySlug = new Map<string, CatalogRow>();
+      for (const m of openrouterCatalog) {
+        if (m.slug) bySlug.set(m.slug.toLowerCase(), m);
+      }
+
+      const addSynthetic = (
+        rawName: string,
+        source: "bundled" | "seen" | "custom",
+      ): void => {
+        const name = String(rawName || "").trim();
+        if (!name || name === "default") return;
+        // skip router aggregate placeholders
+        if (/^9router-/i.test(name) || name === "mixed" || name === "XLab") return;
+        const norm = normalizeModelName(name) || name;
+        const key = norm.toLowerCase();
+        if (byId.has(key) || bySlug.has(key)) return;
+        // also skip if any OR id ends with /slug
+        for (const id of byId.keys()) {
+          if (id.endsWith("/" + key) || id === key) return;
+        }
+        const { rate, source: rateSource } = getRateForModel(name);
+        const provider = guessProvider(norm);
+        const slug = norm.includes("/") ? norm.slice(norm.indexOf("/") + 1) : norm;
+        const id = norm.includes("/") ? norm : `${provider}/${slug}`;
+        if (byId.has(id.toLowerCase())) return;
+        const cust = custom[key] || custom[id.toLowerCase()] || custom[slug.toLowerCase()];
+        const entry: CatalogRow = {
+          id,
+          name: norm,
+          provider,
+          slug,
+          contextLength: 0,
+          modality: "text->text",
+          free:
+            (cust?.inputPer1M ?? rate.inputPer1M) === 0 &&
+            (cust?.outputPer1M ?? rate.outputPer1M) === 0,
+          source: cust
+            ? "custom"
+            : rateSource === "bundled"
+              ? "bundled"
+              : source === "custom"
+                ? "custom"
+                : source,
+          inputPer1M: cust?.inputPer1M ?? rate.inputPer1M,
+          outputPer1M: cust?.outputPer1M ?? rate.outputPer1M,
+          cacheReadPer1M: cust?.cacheReadPer1M ?? rate.cacheReadPer1M,
+          cacheWritePer1M: cust?.cacheWritePer1M ?? rate.cacheWritePer1M,
+          created: 0,
+        };
+        openrouterCatalog.push(entry);
+        byId.set(id.toLowerCase(), entry);
+        bySlug.set(slug.toLowerCase(), entry);
+      };
+
+      // Bundled offline rates first, then models seen in local usage
+      for (const k of Object.keys(BUNDLED_RATES)) addSynthetic(k, "bundled");
+      for (const k of Object.keys(custom)) addSynthetic(k, "custom");
+      for (const m of models) addSynthetic(m, "seen");
+
+      // Newest OpenRouter first, then synthetic (created=0) alphabetically
+      openrouterCatalog.sort(
+        (a, b) => (b.created || 0) - (a.created || 0) || a.name.localeCompare(b.name),
+      );
+
       return json(res, 200, {
         configPath: configPath(),
         currency: cfg.pricing?.currency || "USD",
