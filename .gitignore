@@ -52,10 +52,8 @@ check_paths.mjs
 !src/server/assets/**/*.png
 !src/server/assets/**/*.jpg
 !src/server/assets/**/*.jpeg
-!src/server/assets/**/*.svg
 !src/server/assets/**/*.ico
 !installer/electron/assets/icon.png
-!installer/electron/assets/icon.svg
 !installer/electron/assets/icon.ico
 
 

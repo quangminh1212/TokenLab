@@ -19,7 +19,6 @@ if (!fs.existsSync(assetsDir)) {
 
 // Copy existing logo files
 const logoPng = path.join(sourceDir, 'logo.png');
-const logoSvg = path.join(sourceDir, 'logo.svg');
 
 if (fs.existsSync(logoPng)) {
   const targetPng = path.join(assetsDir, 'icon.png');
@@ -27,14 +26,6 @@ if (fs.existsSync(logoPng)) {
   console.log('✓ Copied logo.png to icon.png (Linux icon)');
 } else {
   console.log('✗ logo.png not found in src/server/assets/');
-}
-
-if (fs.existsSync(logoSvg)) {
-  const targetSvg = path.join(assetsDir, 'icon.svg');
-  fs.copyFileSync(logoSvg, targetSvg);
-  console.log('✓ Copied logo.svg to icon.svg (source for conversion)');
-} else {
-  console.log('✗ logo.svg not found in src/server/assets/');
 }
 
 console.log('\nIcon files prepared for development!');

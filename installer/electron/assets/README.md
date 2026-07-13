@@ -4,9 +4,14 @@ This directory contains the application icons for the XLab Token desktop app.
 
 ## Current Icons
 
-- `icon.png` - Linux icon (copied from project logo)
-- `icon.svg` - Source SVG (copied from project logo)
-- `icon.ico` - Windows icon (needs to be generated)
+- `icon.png` - Linux icon (generated from project logo)
+- `icon.ico` - Windows icon (generated from project logo)
+- `icon.svg` - Source SVG (not used - we use PNG directly)
+
+## Icon Source
+
+The icons are generated from the project logo located in `src/server/assets/logo.png`.
+This logo is the same icon used in XLab_Web (`topup.png`) for consistent branding across projects.
 - `icon.icns` - macOS icon (needs to be generated)
 
 ## Icon Generation
