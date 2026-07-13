@@ -9,6 +9,7 @@ import {
   getAutostartStatus,
   writeStopSentinel,
 } from "./autostart.js";
+import { downloadBackupFromGist, uploadBackupToGist } from "./backup.js";
 import { startServer } from "./server/http.js";
 import { runSetup } from "./setup.js";
 import { startTray } from "./tray.js";
@@ -49,6 +50,9 @@ Usage:
   xlab-token scan  [--json]
   xlab-token doctors [--json]
   xlab-token autostart [on|off|status] [--json]
+  xlab-token backup upload [--token <token>] [--gist <id>] [--public] [--save-token] [--json]
+  xlab-token backup download [--token <token>] [--gist <id>] [--json]
+  xlab-token backup status
   xlab-token --version
   xlab-token --help
 
@@ -56,6 +60,12 @@ Serve options:
   --open       Open dashboard in browser
   --no-ui      API only (no HTML UI)
   --no-tray    Do not show system tray icon (Windows)
+
+Backup options:
+  --token      GitHub personal access token
+  --gist       Gist id to update/download
+  --public     Make the Gist public (default: secret)
+  --save-token Save the token to local config
 
 Setup (also runs after global npm install):
   Enables Windows login autostart and starts the dashboard if not already running.
@@ -218,6 +228,7 @@ async function main(): Promise<void> {
   }
 
   if (cmd === "autostart") {
+    log("Autostart command received:", args.join(" "));
     const sub = (args[1] || "status").toLowerCase();
     const asJson = has(args, "--json");
     if (sub === "on" || sub === "enable" || sub === "install") {
@@ -256,6 +267,88 @@ async function main(): Promise<void> {
     console.error(`Unknown autostart subcommand: ${sub}`);
     console.error("Use: xlab-token autostart on|off|status");
     process.exitCode = 1;
+    return;
+  }
+
+  if (cmd === "backup") {
+    const sub = (args[1] || "status").toLowerCase();
+    const asJson = has(args, "--json");
+    const token = getFlag(args, "--token") || null;
+    const gistId = getFlag(args, "--gist") || null;
+    const isPublic = has(args, "--public");
+    const saveToken = has(args, "--save-token");
+
+    try {
+      if (sub === "upload" || sub === "up") {
+        log("Backup upload requested");
+        const events = await scanAll();
+        const result = await uploadBackupToGist({
+          token,
+          gistId,
+          public: isPublic,
+          saveToken,
+          events,
+        });
+        const body = {
+          ok: true,
+          gistId: result.gist.id,
+          htmlUrl: result.gist.htmlUrl,
+          scope: result.scope,
+          eventCount: result.backup.events?.length ?? 0,
+          updated: result.gist.updated,
+        };
+        if (asJson) {
+          console.log(JSON.stringify(body, null, 2));
+        } else {
+          console.log(`Backup uploaded: ${body.htmlUrl}`);
+          console.log(`Scope: ${body.scope} · Events: ${body.eventCount}`);
+          console.log(`Gist ID: ${body.gistId}`);
+        }
+      } else if (sub === "download" || sub === "down" || sub === "restore") {
+        log("Backup download requested");
+        const result = await downloadBackupFromGist({ token, gistId });
+        const body = {
+          ok: true,
+          gistId: result.backup.exportedAt,
+          scope: result.restored.scope,
+          eventCount: result.restored.events?.length ?? 0,
+          customRateCount: result.restored.customRateCount,
+          mirrorsRestored: result.restored.mirrorsRestored,
+        };
+        if (asJson) {
+          console.log(JSON.stringify(body, null, 2));
+        } else {
+          console.log("Backup downloaded and restored.");
+          console.log(`Scope: ${body.scope} · Events: ${body.eventCount} · Custom rates: ${body.customRateCount} · Mirrors: ${body.mirrorsRestored}`);
+        }
+      } else if (sub === "status" || sub === "show") {
+        const { getConfigSync } = await import("./config.js");
+        const cfg = getConfigSync();
+        const body = {
+          ok: true,
+          gistId: cfg.backup?.gistId || null,
+          gistUrl: cfg.backup?.gistUrl || null,
+          lastBackupAt: cfg.backup?.lastBackupAt || null,
+          githubTokenSaved: Boolean(cfg.backup?.githubToken),
+        };
+        if (asJson) {
+          console.log(JSON.stringify(body, null, 2));
+        } else {
+          console.log(`Saved Gist ID: ${body.gistId || "none"}`);
+          console.log(`Last backup: ${body.lastBackupAt || "never"}`);
+          console.log(`GitHub token saved: ${body.githubTokenSaved ? "yes" : "no"}`);
+          if (body.gistUrl) console.log(`URL: ${body.gistUrl}`);
+        }
+      } else {
+        console.error(`Unknown backup subcommand: ${sub}`);
+        console.error("Use: xlab-token backup upload|download|status");
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      logError("Backup command failed:", err instanceof Error ? err.message : err);
+      console.error(err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
     return;
   }
 

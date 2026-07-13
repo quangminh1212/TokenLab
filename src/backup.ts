@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
 import type { XlabTokenConfig } from "./config.js";
 import { getConfigSync, loadConfig, saveConfig } from "./config.js";
@@ -11,6 +12,26 @@ import {
 import type { UsageEvent } from "./types.js";
 import { appDataDir, pathExists } from "./util.js";
 import { VERSION } from "./version.js";
+
+// Simple file logger to %LOCALAPPDATA%\xlab-token\backup.txt
+const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "xlab-token");
+const logFile = path.join(logDir, "backup.txt");
+
+function log(...args: unknown[]): void {
+  const message = `[${new Date().toISOString()}] ${args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ")}`;
+  try {
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    fs.appendFileSync(logFile, message + "\r\n");
+  } catch {
+    // ignore logging errors
+  }
+}
+
+function logError(...args: unknown[]): void {
+  log("[ERROR]", ...args);
+}
 
 export const BACKUP_FORMAT = "xlab-token-backup" as const;
 /** v1 = settings only · v2 = full project data */
@@ -466,12 +487,17 @@ export async function uploadBackupToGist(opts: {
   scope?: BackupScope;
   events?: UsageEvent[];
 }): Promise<{ backup: XlabBackup; gist: GistUploadResult; scope: BackupScope }> {
+  log("uploadBackupToGist called");
+  log("Options gistId:", opts.gistId, "public:", opts.public, "saveToken:", opts.saveToken, "events:", opts.events?.length ?? 0);
+
   const token = githubToken(opts.token);
   if (!token) {
+    logError("Missing GitHub token");
     throw new Error(
       "Missing GitHub token. Pass token, set XLAB_GITHUB_TOKEN / GITHUB_TOKEN, or save one in Settings.",
     );
   }
+  log("GitHub token resolved (length):", token.length);
 
   // Always prefer full usage on Gist when we have the event cache
   let backup: XlabBackup;
@@ -486,6 +512,7 @@ export async function uploadBackupToGist(opts: {
     });
     scope = "settings";
   }
+  log("Backup built, scope:", scope, "events:", backup.events?.length ?? 0);
 
   // Compact JSON (no pretty-print) to maximize room for usage rows
   let content = JSON.stringify(backup);
@@ -598,6 +625,94 @@ export async function uploadBackupToGist(opts: {
       ...(opts.saveToken && token ? { githubToken: token } : {}),
     },
   });
+  log("Backup config saved, gistId:", gist.id, "gistUrl:", gist.htmlUrl);
 
   return { backup, gist, scope };
+}
+
+/**
+ * Download a backup from a GitHub Gist and restore it locally.
+ * If gistId is omitted, uses the one saved in config.
+ */
+export async function downloadBackupFromGist(opts: {
+  token?: string | null;
+  gistId?: string | null;
+}): Promise<{ backup: XlabBackup; restored: RestoreResult }> {
+  log("downloadBackupFromGist called");
+  const token = githubToken(opts.token);
+  if (!token) {
+    logError("Missing GitHub token for download");
+    throw new Error(
+      "Missing GitHub token. Pass token, set XLAB_GITHUB_TOKEN / GITHUB_TOKEN, or save one in Settings.",
+    );
+  }
+
+  const gistId = (opts.gistId && String(opts.gistId).trim()) || getConfigSync().backup?.gistId;
+  if (!gistId) {
+    logError("No gistId provided or saved in config");
+    throw new Error("No gistId provided or saved in config.");
+  }
+  log("Downloading gist:", gistId);
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${token}`,
+    "User-Agent": `xlab-token/${VERSION}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+
+  const res = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
+    method: "GET",
+    headers,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    logError("GitHub Gist download failed:", res.status, text.slice(0, 240));
+    throw new Error(`GitHub Gist API ${res.status}: ${text.slice(0, 240) || res.statusText}`);
+  }
+
+  const data = (await res.json()) as {
+    files?: Record<string, { content?: string }>;
+    html_url?: string;
+  };
+  const filename = "xlab-token-backup.json";
+  const file = data.files?.[filename] ?? Object.values(data.files || {})[0];
+  if (!file || !file.content) {
+    logError("Gist has no usable backup file");
+    throw new Error("Gist has no usable backup file.");
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(file.content);
+  } catch (err) {
+    logError("Failed to parse backup JSON:", err instanceof Error ? err.message : err);
+    throw new Error("Failed to parse backup JSON from Gist.");
+  }
+
+  if (!isXlabBackup(raw)) {
+    logError("Downloaded file is not a valid XLab backup");
+    throw new Error("Downloaded file is not a valid XLab backup.");
+  }
+
+  log("Backup downloaded, events:", raw.events?.length ?? 0, "scope:", raw.scope);
+  const restored = await restoreBackup(raw);
+  log("Backup restored, scope:", restored.scope);
+
+  // Save gist metadata to config if not present
+  const cfg = await loadConfig();
+  if (!cfg.backup?.gistId && gistId) {
+    await saveConfig({
+      ...cfg,
+      backup: {
+        ...cfg.backup,
+        gistId,
+        gistUrl: data.html_url,
+      },
+    });
+    log("Saved gist metadata to config");
+  }
+
+  return { backup: raw, restored };
 }
