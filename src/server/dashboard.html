@@ -272,6 +272,41 @@
       return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
     }
 
+    /** Parse day key `YYYY-MM-DD` (UTC date bucket from aggregate). */
+    function parseDayKey(key) {
+      const s = String(key || '');
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!m) return null;
+      return { year: m[1], month: m[2], day: m[3], iso: `${m[1]}-${m[2]}-${m[3]}` };
+    }
+
+    /**
+     * Chart X labels for day series.
+     * When data spans multiple years (or not the current year), include year so
+     * "07-19" then "04-30" is not read as July-before-April in the same year.
+     */
+    function formatDayLabel(key, showYear) {
+      const p = parseDayKey(key);
+      if (!p) {
+        const s = String(key || '');
+        return s.length >= 10 ? s.slice(5, 10) : s;
+      }
+      if (showYear) return `${p.year.slice(2)}-${p.month}-${p.day}`; // YY-MM-DD
+      return `${p.month}-${p.day}`; // MM-DD
+    }
+
+    function daySeriesNeedsYear(series) {
+      const years = new Set();
+      for (const d of series || []) {
+        const p = parseDayKey(d.key);
+        if (p) years.add(p.year);
+      }
+      if (years.size === 0) return false;
+      if (years.size > 1) return true;
+      const only = [...years][0];
+      return only !== String(new Date().getFullYear());
+    }
+
     /** Strip provider suffixes so "gpt-5.5 (openai-compatible-\u2026)" \u2192 "gpt-5.5" */
     function normalizeModelName(model) {
       if (model == null) return '';
@@ -454,13 +489,16 @@
           <text x="${PL - 6}" y="${y + 3}" class="chart-tick" text-anchor="end">${label}</text>`;
       }).join('');
 
+      const showYear = !state.chartByHour && daySeriesNeedsYear(series);
       const xLabels = series.map((d, i) => {
         const step = n > 14 ? Math.ceil(n / 8) : (n > 10 ? 2 : 1);
         if (n > 8 && i % step !== 0 && i !== n - 1 && i !== 0) return '';
         const label = state.chartByHour
           ? formatHourLabel(d.key, false)
-          : String(d.key || '').slice(5); // MM-DD
-        return `<text x="${xAt(i)}" y="${H - 8}" class="chart-tick" text-anchor="middle">${escapeHtml(label)}</text>`;
+          : formatDayLabel(d.key, showYear);
+        // Edge ticks: avoid clipping first/last labels off the chart
+        const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+        return `<text x="${xAt(i)}" y="${H - 8}" class="chart-tick" text-anchor="${anchor}">${escapeHtml(label)}</text>`;
       }).join('');
 
       $('chartBody').innerHTML = `
@@ -571,7 +609,12 @@
         }
         state.groups = groups;
 
-        const rawSeries = (seriesStats.groups || []).slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+        // Chronological sort by date key (ISO YYYY-MM-DD / hour keys sort lexicographically)
+        const rawSeries = (seriesStats.groups || []).slice().sort((a, b) => {
+          const ka = String(a.key || '');
+          const kb = String(b.key || '');
+          return ka < kb ? -1 : ka > kb ? 1 : 0;
+        });
         state.daySeries = hourly ? fillHourSeries(rawSeries, state.period) : rawSeries;
 
         const eventCount = health.eventCount || 0;
