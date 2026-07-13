@@ -3,94 +3,120 @@ import { getConfigSync } from "./config.js";
 import { lookupOpenRouterRate } from "./openrouter-models.js";
 import { normalizeModelName } from "./util.js";
 
-/** Bundled offline rates (USD per 1M tokens). Public / LiteLLM-style snapshots. */
+/**
+ * Bundled offline rates (USD per 1M tokens).
+ * Prefer official vendor list prices when known (Anthropic / OpenAI / xAI docs, 2026).
+ * Models only on OpenRouter still take live OR rates at runtime via lookupOpenRouterRate.
+ */
 export const BUNDLED_RATES: Record<string, ModelRate> = {
-  // Anthropic
+  // --- Anthropic (platform.claude.com/docs pricing) ---
+  // Legacy Opus 4 / 4.1
   "claude-opus-4": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4.7": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
+  // Current Opus 4.5–4.8 family: $5 / $25 (not legacy $15/$75)
+  "claude-opus-4.5": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4.6": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4.7": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4.8": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4-6": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4-6-thinking": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4.6-thinking": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4-7": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4-7-thinking": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4.7-thinking": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4-8": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4-8-medium": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  "claude-opus-4.8-thinking": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
+  // Opus 4.8 fast mode (standard tier $10/$50)
+  "claude-opus-4.8-fast": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
+  "claude-opus-4-8-fast": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5 },
+  // Sonnet
   "claude-sonnet-4": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
   "claude-sonnet-4.5": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
   "claude-sonnet-4.5-lite": { inputPer1M: 0.3, outputPer1M: 1.5, cacheReadPer1M: 0.03, cacheWritePer1M: 0.375 },
   "claude-sonnet-4.6": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  "claude-sonnet-4-6": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  "claude-sonnet-4-6-thinking": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
   "claude-3-5-sonnet": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
+  // Haiku
   "claude-3-5-haiku": { inputPer1M: 0.8, outputPer1M: 4, cacheReadPer1M: 0.08, cacheWritePer1M: 1 },
   "claude-haiku-4": { inputPer1M: 1, outputPer1M: 5, cacheReadPer1M: 0.1, cacheWritePer1M: 1.25 },
-  // OpenAI / GPT family
-  "gpt-5.5": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
-  "gpt-5.5-high": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
-  "gpt-5.5-xhigh": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
-  "gpt-5.4": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
-  "gpt-5.3": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
-  "gpt-5.3-codex": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
-  "gpt-5.3-codex-xhigh": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
-  "gpt-5.2": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
+  "claude-haiku-4.5": { inputPer1M: 1, outputPer1M: 5, cacheReadPer1M: 0.1, cacheWritePer1M: 1.25 },
+
+  // --- OpenAI (developers.openai.com/api/docs/pricing) ---
+  "gpt-5.5": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
+  "gpt-5.5-high": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
+  "gpt-5.5-xhigh": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
+  "gpt-5.5-openai-compact": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
+  "gp-gpt-5.5": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
+  // GPT-5.4 short-context standard (common published card)
+  "gpt-5.4": { inputPer1M: 2.5, outputPer1M: 15, cacheReadPer1M: 0.25 },
+  "gpt-5.4-openai-compact": { inputPer1M: 2.5, outputPer1M: 15, cacheReadPer1M: 0.25 },
+  // Codex family
+  "gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "gpt-5.3-codex-high": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "gpt-5.3-codex-xhigh": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "gpt-5.3": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "gpt-5.3-openai-compact": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "gpt-5.2": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "gpt-5.2-openai-compact": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "gpt-5.1-openai-compact": { inputPer1M: 1.25, outputPer1M: 10, cacheReadPer1M: 0.125 },
   "gpt-4.1": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
   "gpt-4.1-mini": { inputPer1M: 0.4, outputPer1M: 1.6, cacheReadPer1M: 0.1 },
   "gpt-4o": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 1.25 },
   "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6, cacheReadPer1M: 0.075 },
   "o3": { inputPer1M: 10, outputPer1M: 40, cacheReadPer1M: 2.5 },
   "o4-mini": { inputPer1M: 1.1, outputPer1M: 4.4, cacheReadPer1M: 0.275 },
-  // Google
+
+  // --- Google (match common OR list prices for offline) ---
   "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10, cacheReadPer1M: 0.315 },
-  "gemini-2.5-flash": { inputPer1M: 0.15, outputPer1M: 0.6, cacheReadPer1M: 0.0375 },
+  "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
   "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4, cacheReadPer1M: 0.025 },
-  // xAI
-  "grok-4.5": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.75 },
+
+  // --- xAI (docs.x.ai / x.ai pricing) ---
+  "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5 },
+  "grok-4.3": { inputPer1M: 1.25, outputPer1M: 2.5, cacheReadPer1M: 0.2 },
   "grok-4": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.75 },
   "grok-4-fast": { inputPer1M: 0.2, outputPer1M: 0.5, cacheReadPer1M: 0.05 },
   "grok-4-fast-reasoning": { inputPer1M: 0.2, outputPer1M: 0.5, cacheReadPer1M: 0.05 },
   "grok-3": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.75 },
   "grok-3-mini": { inputPer1M: 0.3, outputPer1M: 0.5, cacheReadPer1M: 0.075 },
-  "grok-build": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.75 },
-  // DeepSeek
+  // grok-build-0.1 aliases (docs.x.ai): $1 in / $2 out / $0.20 cache (not legacy $0.20/$1.50)
+  "grok-build": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
+  "grok-build-0.1": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
+  "grok-code-fast-1": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
+  "grok-code-fast": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
+
+  // --- DeepSeek ---
   "deepseek-v3": { inputPer1M: 0.27, outputPer1M: 1.1 },
   "deepseek-v3.2": { inputPer1M: 0.28, outputPer1M: 0.42 },
   "deepseek-v4-flash": { inputPer1M: 0.14, outputPer1M: 0.28 },
   "deepseek-v4-pro": { inputPer1M: 1.0, outputPer1M: 3.0 },
   "deepseek-chat": { inputPer1M: 0.27, outputPer1M: 1.1 },
   "deepseek-reasoner": { inputPer1M: 0.55, outputPer1M: 2.19 },
-  // GLM / Zhipu
+
+  // --- GLM / Zhipu ---
   "glm-5": { inputPer1M: 0.6, outputPer1M: 2.2 },
+  "glm-5.0": { inputPer1M: 0.6, outputPer1M: 2.2 },
   "glm-5.1": { inputPer1M: 0.6, outputPer1M: 2.2 },
   "glm-5-2": { inputPer1M: 0.6, outputPer1M: 2.2 },
   "glm-4.5": { inputPer1M: 0.6, outputPer1M: 2.2 },
-  // MiniMax
+
+  // --- MiniMax / Moonshot ---
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2 },
   "minimax-m2.7": { inputPer1M: 0.3, outputPer1M: 1.2 },
-  // Misc aliases seen in router traffic (approx / free tier = 0 until user sets)
-  "gp-gpt-5.5": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
-  "mimo-auto": { inputPer1M: 0.2, outputPer1M: 0.8 },
-  "big-pickle": { inputPer1M: 0, outputPer1M: 0 },
-  "nemotron-3-ultra-free": { inputPer1M: 0, outputPer1M: 0 },
-  Digigo: { inputPer1M: 0, outputPer1M: 0 },
-  digigo: { inputPer1M: 0, outputPer1M: 0 },
-  // Cursor house models
-  "cursor-small": { inputPer1M: 0.2, outputPer1M: 0.8 },
-  // Extra aliases seen in local agent usage (approx until user overrides)
-  "claude-opus-4-6": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4-6-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4-7": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4-7-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4.6-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4.7-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4-8": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4-8-medium": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-opus-4.8-thinking": { inputPer1M: 15, outputPer1M: 75, cacheReadPer1M: 1.5, cacheWritePer1M: 18.75 },
-  "claude-sonnet-4-6": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
-  "claude-sonnet-4-6-thinking": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
-  "gpt-5.3-codex-high": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
-  "gpt-5.1-openai-compact": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
-  "gpt-5.2-openai-compact": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
-  "gpt-5.3-openai-compact": { inputPer1M: 2, outputPer1M: 8, cacheReadPer1M: 0.5 },
-  "gpt-5.4-openai-compact": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
-  "gpt-5.5-openai-compact": { inputPer1M: 2.5, outputPer1M: 10, cacheReadPer1M: 0.625 },
-  "grok-code-fast-1": { inputPer1M: 0.2, outputPer1M: 0.5, cacheReadPer1M: 0.05 },
   "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5 },
-  "glm-5.0": { inputPer1M: 0.6, outputPer1M: 2.2 },
+
+  // --- Agent / router house models (still approx) ---
+  "cursor-small": { inputPer1M: 0.2, outputPer1M: 0.8 },
+  "mimo-auto": { inputPer1M: 0.2, outputPer1M: 0.8 },
   "swe-1-6": { inputPer1M: 0.5, outputPer1M: 2 },
   "swe-1-7": { inputPer1M: 0.5, outputPer1M: 2 },
   "windsurf-cascade": { inputPer1M: 1, outputPer1M: 4 },
   adaptive: { inputPer1M: 1, outputPer1M: 4 },
+  "big-pickle": { inputPer1M: 0, outputPer1M: 0 },
+  "nemotron-3-ultra-free": { inputPer1M: 0, outputPer1M: 0 },
+  Digigo: { inputPer1M: 0, outputPer1M: 0 },
+  digigo: { inputPer1M: 0, outputPer1M: 0 },
   default: { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
 };
 
@@ -139,7 +165,7 @@ const ALIASES: Record<string, string> = {
   "gpt-4.1-2025-04-14": "gpt-4.1",
   "chatgpt-4o-latest": "gpt-4o",
   "grok-4-latest": "grok-4",
-  "grok-build": "grok-4.5",
+  "grok-code-fast-1-0825": "grok-code-fast-1",
   composer: "default",
   "deep-seek-v4-flash": "deepseek-v4-flash",
   "deep-seek-v4-pro": "deepseek-v4-pro",
