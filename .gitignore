@@ -52,11 +52,12 @@ check_paths.mjs
 !src/server/assets/**/*.jpeg
 !src/server/assets/**/*.svg
 !src/server/assets/**/*.ico
+!electron/assets/icon.png
+!electron/assets/icon.svg
+!electron/assets/icon.ico
 
-# Electron
-electron/assets/icon.png
-electron/assets/icon.ico
-electron/assets/icon.icns
+
+electron/assets/icon.svg
 
 .npmrc
 
