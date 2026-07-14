@@ -130,8 +130,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
   /**
    * Rescan local agent usage into memory.
-   * - full: true  → historical full pass (no per-agent timeout). Used on boot + manual /api/scan
-   *                 so heavy agents (devin, routers, …) are not cut off and miss history.
+   * - full: true  → historical full pass (long per-agent cap, default 5 min). Used on boot +
+   *                 manual /api/scan so heavy agents are not cut off mid-history, but cannot hang forever.
    * - full: false → periodic refresh with soft timeout (keeps UI snappy).
    */
   async function rescan(opts: { full?: boolean } = {}): Promise<number> {
@@ -178,7 +178,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // short/partial pass never deletes usage we already discovered.
         await scanAll({
           concurrency: full ? 3 : 4,
-          timeoutMs: full ? 0 : 90_000,
+          // Full: hard cap so a stuck parser cannot freeze the process forever.
+          // Periodic: shorter soft timeout; results are always unioned with previous.
+          timeoutMs: full ? 300_000 : 90_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
             const prevForAgent = byAgent.get(agent) ?? [];
             if (error && events.length === 0) {
@@ -951,8 +953,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       );
     });
 
-  // Boot: full historical scan (all local usage, no per-agent timeout) so nothing is missed.
-  // Periodic: quick union refresh; every 5 minutes another full pass (timeout 0).
+  // Boot: full historical scan (long per-agent cap) so history is not missed.
+  // Periodic: quick union refresh; every 5 minutes another full pass.
   void rescan({ full: true }).catch((err) => {
     console.error("[xlab-token] initial full scan failed:", err instanceof Error ? err.message : err);
   });
@@ -961,7 +963,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     periodicTick += 1;
     // Full thorough pass every 10 ticks (≈5 min) — catches heavy agents that need minutes.
     const doFull = periodicTick % 10 === 0;
-    void rescan({ full: doFull });
+    void rescan({ full: doFull }).catch((err) => {
+      console.error(
+        "[xlab-token] periodic scan failed:",
+        err instanceof Error ? err.message : err,
+      );
+    });
   }, 30_000);
   timer.unref?.();
 
