@@ -4,7 +4,7 @@
  * Other platforms: not implemented yet.
  */
 import { execFile, spawn } from "node:child_process";
-import { mkdir, writeFile, unlink, access } from "node:fs/promises";
+import { mkdir, writeFile, unlink, access, copyFile } from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,6 +64,29 @@ function dataDir(): string {
 
 function launcherPath(): string {
   return path.join(dataDir(), "autostart.vbs");
+}
+
+/** One-click desktop launcher (starts setup: server + tray + open dashboard). */
+function desktopLauncherPath(): string {
+  return path.join(dataDir(), "desktop-launch.vbs");
+}
+
+function desktopIconPath(): string {
+  return path.join(dataDir(), "app.ico");
+}
+
+/** Resolve package favicon.ico next to dist CLI (installer/dist/server/assets). */
+function resolvePackageIcon(): string | null {
+  const { cli } = resolveServeInvocation();
+  const candidates = [
+    path.join(path.dirname(cli), "server", "assets", "favicon.ico"),
+    path.join(path.dirname(cli), "assets", "favicon.ico"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "server", "assets", "favicon.ico"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
 function quoteCmd(s: string): string {
@@ -369,4 +392,187 @@ export async function disableAutostart(): Promise<AutostartResult> {
     };
   }
   return uninstallWindows();
+}
+
+/**
+ * Write a hidden desktop launcher VBS:
+ * runs `node cli setup` (start serve+tray if needed, open dashboard) without a console flash.
+ */
+async function writeDesktopLauncherVbs(): Promise<string> {
+  const { node, cli } = resolveServeInvocation();
+  await mkdir(dataDir(), { recursive: true });
+  const vbsPath = desktopLauncherPath();
+  const nodeQ = node.replace(/"/g, '""');
+  const cliQ = cli.replace(/"/g, '""');
+  // setup: ensure autostart, start supervised serve + tray, open browser (hidden console)
+  const content = [
+    "' XLab Token desktop launcher (generated)",
+    "Set sh = CreateObject(\"WScript.Shell\")",
+    `sh.Run """${nodeQ}"" ""${cliQ}"" setup", 0, False`,
+    "",
+  ].join("\r\n");
+  await writeFile(vbsPath, content, "utf8");
+  log("Desktop launcher written:", vbsPath);
+  return vbsPath;
+}
+
+async function resolveWindowsDesktopDir(): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[Environment]::GetFolderPath('Desktop')",
+      ],
+      { windowsHide: true, timeout: 8000 },
+    );
+    const dir = String(stdout || "").trim();
+    if (dir && fs.existsSync(dir)) return dir;
+  } catch (err) {
+    logError("GetFolderPath Desktop failed:", err instanceof Error ? err.message : err);
+  }
+  // Fallbacks (OneDrive Desktop is common on modern Windows)
+  const candidates = [
+    process.env.OneDrive ? path.join(process.env.OneDrive, "Desktop") : "",
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "Desktop") : "",
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "OneDrive", "Desktop") : "",
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return process.env.USERPROFILE
+    ? path.join(process.env.USERPROFILE, "Desktop")
+    : path.join(osHomedirFallback(), "Desktop");
+}
+
+function osHomedirFallback(): string {
+  return process.env.HOME || process.env.USERPROFILE || process.cwd();
+}
+
+/**
+ * Create/refresh "XLab Token.lnk" on the user Desktop (Windows).
+ * Called from setup / global npm postinstall so users can double-click to start the app.
+ */
+export async function installDesktopShortcut(): Promise<{
+  ok: boolean;
+  message: string;
+  path?: string;
+}> {
+  log("installDesktopShortcut called");
+  if (process.platform !== "win32") {
+    // Best-effort Linux .desktop; macOS gets a simple .command launcher
+    return installDesktopShortcutNonWindows();
+  }
+
+  try {
+    const vbs = await writeDesktopLauncherVbs();
+    // Stable icon under %LOCALAPPDATA% so the .lnk keeps working after package updates
+    const iconSrc = resolvePackageIcon();
+    let icon = desktopIconPath();
+    if (iconSrc) {
+      try {
+        await copyFile(iconSrc, icon);
+        log("Desktop icon copied:", iconSrc, "->", icon);
+      } catch (err) {
+        logError("Icon copy failed:", err instanceof Error ? err.message : err);
+        icon = iconSrc;
+      }
+    } else {
+      icon = "";
+      log("Package icon not found; shortcut will use default icon");
+    }
+
+    const desktop = await resolveWindowsDesktopDir();
+    await mkdir(desktop, { recursive: true });
+    const lnkPath = path.join(desktop, "XLab Token.lnk");
+
+    const ps = [
+      "$ErrorActionPreference = 'Stop'",
+      `$desktop = ${JSON.stringify(desktop)}`,
+      `$lnkPath = ${JSON.stringify(lnkPath)}`,
+      `$vbs = ${JSON.stringify(vbs)}`,
+      `$icon = ${JSON.stringify(icon)}`,
+      "$w = New-Object -ComObject WScript.Shell",
+      "$s = $w.CreateShortcut($lnkPath)",
+      "$s.TargetPath = 'wscript.exe'",
+      "$s.Arguments = '\"' + $vbs + '\"'",
+      "$s.WorkingDirectory = [IO.Path]::GetDirectoryName($vbs)",
+      "$s.WindowStyle = 7",
+      "$s.Description = 'XLab Token — start local usage dashboard'",
+      "if ($icon -and (Test-Path -LiteralPath $icon)) { $s.IconLocation = $icon }",
+      "$s.Save()",
+      "Write-Output $lnkPath",
+    ].join("; ");
+
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-STA", "-Command", ps],
+      { windowsHide: true, timeout: 15000 },
+    );
+    const created = String(stdout || "").trim() || lnkPath;
+    log("Desktop shortcut created:", created);
+    return {
+      ok: true,
+      message: `Desktop shortcut: ${created}`,
+      path: created,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("installDesktopShortcut failed:", msg);
+    return { ok: false, message: `Desktop shortcut failed: ${msg}` };
+  }
+}
+
+async function installDesktopShortcutNonWindows(): Promise<{
+  ok: boolean;
+  message: string;
+  path?: string;
+}> {
+  try {
+    const { node, cli } = resolveServeInvocation();
+    const home = process.env.HOME || osHomedirFallback();
+    const desktop = path.join(home, "Desktop");
+    if (!fs.existsSync(desktop)) {
+      return { ok: false, message: "Desktop folder not found" };
+    }
+
+    if (process.platform === "darwin") {
+      const cmdPath = path.join(desktop, "XLab Token.command");
+      const body = [
+        "#!/bin/bash",
+        `cd ${JSON.stringify(path.dirname(cli))}`,
+        `exec ${JSON.stringify(node)} ${JSON.stringify(cli)} setup`,
+        "",
+      ].join("\n");
+      await writeFile(cmdPath, body, { encoding: "utf8", mode: 0o755 });
+      try {
+        await execFileAsync("chmod", ["+x", cmdPath]);
+      } catch {
+        // ignore
+      }
+      return { ok: true, message: `Desktop launcher: ${cmdPath}`, path: cmdPath };
+    }
+
+    // Linux .desktop
+    const desktopFile = path.join(desktop, "xlab-token.desktop");
+    const iconSrc = resolvePackageIcon();
+    const lines = [
+      "[Desktop Entry]",
+      "Type=Application",
+      "Name=XLab Token",
+      "Comment=Local AI token usage & cost dashboard",
+      `Exec=${JSON.stringify(node)} ${JSON.stringify(cli)} setup`,
+      "Terminal=false",
+      "Categories=Utility;Development;",
+      iconSrc ? `Icon=${iconSrc}` : "",
+      "",
+    ].filter(Boolean);
+    await writeFile(desktopFile, lines.join("\n"), { encoding: "utf8", mode: 0o755 });
+    return { ok: true, message: `Desktop launcher: ${desktopFile}`, path: desktopFile };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: `Desktop shortcut failed: ${msg}` };
+  }
 }
