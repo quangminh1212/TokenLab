@@ -103,23 +103,34 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
   }
 
-  async function rescan(): Promise<number> {
+  /**
+   * Rescan local agent usage into memory.
+   * - full: true  → historical full pass (no per-agent timeout). Used on boot + manual /api/scan
+   *                 so heavy agents (devin, routers, …) are not cut off and miss history.
+   * - full: false → periodic refresh with soft timeout (keeps UI snappy).
+   */
+  async function rescan(opts: { full?: boolean } = {}): Promise<number> {
     // Coalesce concurrent rescans — never return mid-scan empty cache to callers.
     if (scanPromise) return scanPromise;
+    const full = opts.full === true;
     scanning = true;
     // Keep previous cache visible until first progressive batch arrives
     broadcastStream({
       type: "scan",
       revision: scanRevision,
       updatedAt: Date.now(),
-      reason: "start",
+      reason: full ? "start-full" : "start",
       eventCount: cache.length,
       scanning: true,
       pricingRevision,
     });
+    if (full) {
+      console.log("[xlab-token] full historical scan started (all agent usage on disk)…");
+    }
     scanPromise = (async () => {
       const prev = cache;
       const byAgent = new Map<string, UsageEvent[]>();
+      const agentStats: Array<{ agent: string; events: number; durationMs: number; error?: string }> = [];
       // Seed with previous events so UI does not flash to 0 while scanning
       for (const e of prev) {
         const list = byAgent.get(e.agent) ?? [];
@@ -136,15 +147,23 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       };
       try {
         // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+
+        // Full boot/manual scan: no timeout — read complete history so nothing is missed.
+        // Periodic scan: soft 25s/agent so one stuck parser cannot block forever.
         await scanAll({
-          concurrency: 4,
-          timeoutMs: 25_000,
+          concurrency: full ? 4 : 4,
+          timeoutMs: full ? 0 : 25_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
             // On timeout/error with empty batch, keep previous events for that agent
             if (!error || events.length > 0) {
               byAgent.set(agent, events);
               rebuild();
             }
+            agentStats.push({
+              agent,
+              events: events.length,
+              durationMs,
+              error: error || undefined,
+            });
             // Touch scanUpdatedAt so UIs polling health reload when tokens change
             // even if eventCount stays the same mid-scan.
             scanUpdatedAt = Date.now();
@@ -160,10 +179,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               scanning: true,
               pricingRevision,
             });
+            if (full) {
+              const status = error ? `error: ${error}` : `${events.length} events`;
+              console.log(
+                `[xlab-token]   ${agent}: ${status} (${durationMs}ms)`,
+              );
+            }
           },
         });
         rebuild();
-        bumpScan("complete");
+        bumpScan(full ? "complete-full" : "complete");
+        if (full) {
+          const failed = agentStats.filter((s) => s.error);
+          console.log(
+            `[xlab-token] full historical scan done: ${cache.length} events` +
+              ` from ${agentStats.length} agents` +
+              (failed.length ? ` (${failed.length} failed: ${failed.map((f) => f.agent).join(", ")})` : ""),
+          );
+        }
         return cache.length;
       } catch (err) {
         // Keep last progressive cache rather than wiping
@@ -376,24 +409,31 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
     if (req.method === "POST" && pathname === "/api/scan") {
       const t0 = Date.now();
+      // Manual refresh always does a full historical pass (no per-agent timeout).
       // async=1: start scan in background and return immediately (UI stays responsive)
       const asyncMode =
         url.searchParams.get("async") === "1" ||
         url.searchParams.get("wait") === "0";
       if (asyncMode) {
-        void rescan().catch((err) => {
+        void rescan({ full: true }).catch((err) => {
           console.error("[xlab-token] async scan failed:", err instanceof Error ? err.message : err);
         });
         return json(res, 202, {
           ok: true,
           accepted: true,
+          full: true,
           scanning: true,
           eventCount: cache.length,
           scanRevision,
         });
       }
-      const n = await rescan();
-      return json(res, 200, { ok: true, eventsIngested: n, durationMs: Date.now() - t0 });
+      const n = await rescan({ full: true });
+      return json(res, 200, {
+        ok: true,
+        full: true,
+        eventsIngested: n,
+        durationMs: Date.now() - t0,
+      });
     }
 
     if (req.method === "GET" && pathname === "/api/pricing") {
@@ -875,13 +915,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       );
     });
 
-  // Initial scan + periodic refresh in background
-  void rescan().catch((err) => {
-    console.error("[xlab-token] initial scan failed:", err instanceof Error ? err.message : err);
+  // Boot: full historical scan (all local usage, no per-agent timeout) so nothing is missed.
+  // Periodic: lighter rescan with soft timeout for fresh deltas without blocking forever.
+  void rescan({ full: true }).catch((err) => {
+    console.error("[xlab-token] initial full scan failed:", err instanceof Error ? err.message : err);
   });
   // Rescan often enough that new agent usage shows on Dashboard without manual Refresh
   const timer = setInterval(() => {
-    void rescan();
+    void rescan({ full: false });
   }, 30_000);
   timer.unref?.();
 
