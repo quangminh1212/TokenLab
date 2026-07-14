@@ -10,6 +10,7 @@ import {
   loadImportedEvents,
   loadScanCache,
   mergeEventsById,
+  mergeEventsByIdPreferRicher,
   restoreBackup,
   saveImportedEvents,
   saveScanCache,
@@ -52,7 +53,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let importedEvents: UsageEvent[] = await loadImportedEvents();
   /** Last local scan snapshot — unioned so incomplete/timeout passes never wipe known usage. */
   const diskScanCache = await loadScanCache();
-  cache = mergeEventsById(diskScanCache, importedEvents);
+  cache = mergeEventsByIdPreferRicher(diskScanCache, importedEvents);
   if (diskScanCache.length > 0) {
     console.log(`[xlab-token] loaded ${diskScanCache.length} cached scan events`);
   }
@@ -163,15 +164,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       }
       const rebuild = (): void => {
         const scanned: UsageEvent[] = [];
-        const localAgentsWithData = new Set<string>();
-        for (const [agent, list] of byAgent) {
-          if (list.length > 0) localAgentsWithData.add(agent);
+        for (const list of byAgent.values()) {
           for (const e of list) scanned.push(e);
         }
-        // Local scan wins per agent: drop imported rows for agents we already
-        // rescanned successfully (avoids double-counting stale 9router mirrors).
-        const importedKeep = importedEvents.filter((e) => !localAgentsWithData.has(e.agent));
-        cache = mergeEventsById(scanned, importedKeep);
+        // Always keep imported + local. Prefer richer row on same id so a short
+        // re-scan cannot wipe all-time hermes/router/devin totals.
+        cache = mergeEventsByIdPreferRicher(scanned, importedEvents);
       };
       try {
         // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+
@@ -188,14 +186,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             } else if (events.length === 0 && prevForAgent.length > 0) {
               // Parser returned empty but we already had data — keep previous
               // (empty often means path flaky / lock, not "agent deleted history")
-            } else if (full && events.length > 0) {
-              // Full success: replace agent slice so daily rollups do not stack on top of
-              // stale per-request rows (would double-count 9router/xlabrouter).
-              byAgent.set(agent, events);
-              rebuild();
             } else {
-              // Periodic: union new + previous so short passes never drop known usage
-              byAgent.set(agent, mergeEventsById(events, prevForAgent));
+              // Union scan + previous for this agent; prefer richer rows on same id.
+              // Full and periodic both keep history — never shrink all-time totals.
+              byAgent.set(agent, mergeEventsByIdPreferRicher(events, prevForAgent));
               rebuild();
             }
             agentStats.push({
