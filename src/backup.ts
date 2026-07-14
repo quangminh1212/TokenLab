@@ -85,6 +85,16 @@ export function importedEventsPath(): string {
   return path.join(dataRoot(), "imported-events.json");
 }
 
+function eventTokenWeight(e: UsageEvent): number {
+  if (typeof e.totalTokens === "number" && Number.isFinite(e.totalTokens)) return e.totalTokens;
+  return (
+    (Number(e.inputTokens) || 0) +
+    (Number(e.outputTokens) || 0) +
+    (Number(e.cacheReadTokens) || 0) +
+    (Number(e.cacheWriteTokens) || 0)
+  );
+}
+
 /** Union events by `id` (first wins for duplicates). */
 export function mergeEventsById(...lists: UsageEvent[][]): UsageEvent[] {
   const byId = new Map<string, UsageEvent>();
@@ -93,6 +103,33 @@ export function mergeEventsById(...lists: UsageEvent[][]): UsageEvent[] {
     for (const e of list) {
       if (!e || typeof e.id !== "string" || !e.id) continue;
       if (!byId.has(e.id)) byId.set(e.id, e);
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
+ * Union by id, but when the same id appears in multiple lists keep the richer row
+ * (more tokens, then higher cost). Prevents a partial re-scan from shrinking all-time totals.
+ */
+export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEvent[] {
+  const byId = new Map<string, UsageEvent>();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const e of list) {
+      if (!e || typeof e.id !== "string" || !e.id) continue;
+      const prev = byId.get(e.id);
+      if (!prev) {
+        byId.set(e.id, e);
+        continue;
+      }
+      const pt = eventTokenWeight(prev);
+      const et = eventTokenWeight(e);
+      if (et > pt) {
+        byId.set(e.id, e);
+      } else if (et === pt && (Number(e.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0)) {
+        byId.set(e.id, e);
+      }
     }
   }
   return [...byId.values()];
