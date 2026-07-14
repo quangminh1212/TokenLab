@@ -127,6 +127,15 @@ export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
   let serverRunning = await isServerReachable(host, port);
   let serverStarted = false;
 
+  async function waitForServer(ms: number): Promise<boolean> {
+    const steps = Math.max(1, Math.ceil(ms / 250));
+    for (let i = 0; i < steps; i++) {
+      if (await isServerReachable(host, port)) return true;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return isServerReachable(host, port);
+  }
+
   if (wantServe) {
     if (serverRunning) {
       parts.push("server already running");
@@ -143,24 +152,29 @@ export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
       // Windows: start the same supervised VBS used at login so serve + tray
       // stay alive and auto-restart. Plain detached node often dies with no tray.
       if (process.platform === "win32") {
-        const sup = await launchSupervisorNow();
+        let sup = await launchSupervisorNow();
         parts.push(sup.ok ? sup.message : `supervisor: ${sup.message}`);
-        if (!sup.ok) {
-          // Fallback: direct serve (no restart) if VBS cannot start
-          startServeDetached({ open, host, port });
+        // Supervisor may be stuck in a dual-instance crash loop — wait briefly,
+        // then force a single clean supervisor if health never comes up.
+        serverRunning = await waitForServer(12_000);
+        if (!serverRunning) {
+          // Dual/zombie supervisors can loop forever without binding :3737
+          sup = await launchSupervisorNow({ forceRestart: true });
+          parts.push(
+            sup.ok
+              ? "supervisor force-restarted"
+              : `supervisor force-restart failed: ${sup.message}`,
+          );
+          if (!sup.ok) {
+            startServeDetached({ open, host, port });
+          }
+          serverRunning = await waitForServer(15_000);
         }
       } else {
         startServeDetached({ open, host, port });
+        serverRunning = await waitForServer(10_000);
       }
       serverStarted = true;
-      // Wait until listen (cold start can take a few seconds)
-      for (let i = 0; i < 50; i++) {
-        await new Promise((r) => setTimeout(r, 200));
-        if (await isServerReachable(host, port)) {
-          serverRunning = true;
-          break;
-        }
-      }
       parts.push(
         serverRunning
           ? `started server + tray at ${url}`

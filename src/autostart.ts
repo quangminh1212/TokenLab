@@ -196,10 +196,69 @@ async function writeWindowsLauncher(): Promise<string> {
     "  On Error Goto 0",
     "End Sub",
     "",
+    "' Keep only the oldest wscript/cscript running autostart.vbs (prevents dual crash loops).",
+    "Sub EnsureSingleInstance()",
+    "  On Error Resume Next",
+    "  Dim col, p, cmd, minPid, n",
+    "  minPid = 0",
+    "  n = 0",
+    "  Set col = wmi.ExecQuery(\"SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='wscript.exe' OR Name='cscript.exe'\")",
+    "  For Each p In col",
+    "    cmd = LCase(p.CommandLine & \"\")",
+    "    If InStr(cmd, \"autostart.vbs\") > 0 Then",
+    "      n = n + 1",
+    "      If minPid = 0 Or p.ProcessId < minPid Then minPid = p.ProcessId",
+    "    End If",
+    "  Next",
+    "  If n <= 1 Or minPid = 0 Then Exit Sub",
+    "  LogLine \"duplicate supervisors=\" & n & \" - keep pid=\" & minPid",
+    "  For Each p In col",
+    "    cmd = LCase(p.CommandLine & \"\")",
+    "    If InStr(cmd, \"autostart.vbs\") > 0 Then",
+    "      If p.ProcessId <> minPid Then",
+    "        LogLine \"killing duplicate supervisor pid=\" & p.ProcessId",
+    "        KillPid p.ProcessId",
+    "      End If",
+    "    End If",
+    "  Next",
+    "  WScript.Sleep 400",
+    "  On Error Goto 0",
+    "End Sub",
+    "",
+    "EnsureSingleInstance",
+    "If fso.FileExists(stopFile) Then",
+    "  LogLine \"stop.flag after single-instance check - exit\"",
+    "  WScript.Quit 0",
+    "End If",
+    "",
+    "Function FindExistingServe()",
+    "  FindExistingServe = 0",
+    "  On Error Resume Next",
+    "  Dim col, p, cmd",
+    "  Set col = wmi.ExecQuery(\"SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='node.exe'\")",
+    "  For Each p In col",
+    "    cmd = LCase(p.CommandLine & \"\")",
+    "    If InStr(cmd, \"cli.js\") > 0 Then",
+    "      If InStr(cmd, \" serve\") > 0 Or Right(cmd, 5) = \"serve\" Then",
+    "        FindExistingServe = p.ProcessId",
+    "        Exit Function",
+    "      End If",
+    "    End If",
+    "  Next",
+    "  On Error Goto 0",
+    "End Function",
+    "",
     "Function StartServe()",
     "  StartServe = 0",
     "  On Error Resume Next",
-    "  Dim startup, proc, ret, pid",
+    "  Dim startup, proc, ret, pid, existing",
+    "  existing = FindExistingServe()",
+    "  If existing > 0 Then",
+    "    StartServe = existing",
+    "    LogLine \"adopt existing serve pid=\" & existing",
+    "    On Error Goto 0",
+    "    Exit Function",
+    "  End If",
     "  pid = 0",
     "  Set startup = wmi.Get(\"Win32_ProcessStartup\").SpawnInstance_()",
     "  startup.ShowWindow = 0",
@@ -220,7 +279,7 @@ async function writeWindowsLauncher(): Promise<string> {
     "  If IsNumeric(line) Then",
     "    ms = CDbl(line)",
     "    nowMs = CDbl(DateDiff(\"s\", \"1/1/1970\", Now)) * 1000",
-    "    ' DateDiff is local-time based; heartbeat is UTC epoch — compare file mtime instead",
+    "    ' DateDiff is local-time based; heartbeat is UTC epoch - compare file mtime instead",
     "  End If",
     "  HeartbeatAgeMs = DateDiff(\"s\", fso.GetFile(hbFile).DateLastModified, Now) * 1000",
     "  If HeartbeatAgeMs < 0 Then HeartbeatAgeMs = 0",
@@ -230,8 +289,9 @@ async function writeWindowsLauncher(): Promise<string> {
     "retries = 0",
     "LogLine \"supervisor started\"",
     "Do",
+    "  EnsureSingleInstance",
     "  If fso.FileExists(stopFile) Then",
-    "    LogLine \"stop.flag present — exit\"",
+    "    LogLine \"stop.flag present - exit\"",
     "    Exit Do",
     "  End If",
     "  If fso.FileExists(hbFile) Then",
@@ -254,7 +314,7 @@ async function writeWindowsLauncher(): Promise<string> {
     "    Do",
     "      WScript.Sleep 5000",
     "      If fso.FileExists(stopFile) Then",
-    "        LogLine \"stop.flag — killing serve pid=\" & pid",
+    "        LogLine \"stop.flag - killing serve pid=\" & pid",
     "        KillPid pid",
     "        Exit Do",
     "      End If",
@@ -268,7 +328,7 @@ async function writeWindowsLauncher(): Promise<string> {
     "      If uptimeSec >= 90 Then",
     "        age = HeartbeatAgeMs()",
     "        If age < 0 Or age > 120000 Then",
-    "          LogLine \"hang detected pid=\" & pid & \" hbAgeMs=\" & age & \" — killing\"",
+    "          LogLine \"hang detected pid=\" & pid & \" hbAgeMs=\" & age & \" - killing\"",
     "          KillPid pid",
     "          hung = True",
     "          Exit Do",
@@ -278,7 +338,7 @@ async function writeWindowsLauncher(): Promise<string> {
     "      If uptimeSec >= 60 And retries > 0 Then retries = 0",
     "    Loop",
     "    If fso.FileExists(stopFile) Then",
-    "      LogLine \"stop.flag — supervisor exit\"",
+    "      LogLine \"stop.flag - supervisor exit\"",
     "      Exit Do",
     "    End If",
     "    retries = retries + 1",
@@ -464,10 +524,9 @@ export async function enableAutostart(): Promise<AutostartResult> {
   return installWindows();
 }
 
-/** True when the login supervisor VBS is already running. */
-export async function isSupervisorRunning(): Promise<boolean> {
-  if (process.platform !== "win32") return false;
-  const vbs = launcherPath().toLowerCase().replace(/\//g, "\\");
+/** List PIDs of wscript/cscript hosting autostart.vbs. */
+export async function listSupervisorPids(): Promise<number[]> {
+  if (process.platform !== "win32") return [];
   try {
     const { stdout } = await execFileAsync(
       "powershell.exe",
@@ -475,32 +534,89 @@ export async function isSupervisorRunning(): Promise<boolean> {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Get-CimInstance Win32_Process -Filter \"Name='wscript.exe' OR Name='cscript.exe'\" | Select-Object -ExpandProperty CommandLine",
+        "Get-CimInstance Win32_Process -Filter \"Name='wscript.exe' OR Name='cscript.exe'\" | Where-Object { $_.CommandLine -match 'autostart\\.vbs' } | Select-Object -ExpandProperty ProcessId",
       ],
       { windowsHide: true, timeout: 8000 },
     );
-    const hay = String(stdout || "").toLowerCase().replace(/\//g, "\\");
-    return hay.includes("autostart.vbs") || (vbs.length > 8 && hay.includes(vbs));
+    return String(stdout || "")
+      .split(/\r?\n/)
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
   } catch (err) {
-    logError("isSupervisorRunning failed:", err instanceof Error ? err.message : err);
-    return false;
+    logError("listSupervisorPids failed:", err instanceof Error ? err.message : err);
+    return [];
   }
+}
+
+/** True when the login supervisor VBS is already running. */
+export async function isSupervisorRunning(): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  const pids = await listSupervisorPids();
+  return pids.length > 0;
+}
+
+/**
+ * Kill all supervisor host processes (wscript/cscript autostart.vbs).
+ * Does not write stop.flag — caller may clearStopSentinel + relaunch.
+ */
+export async function killAllSupervisors(): Promise<number> {
+  if (process.platform !== "win32") return 0;
+  const pids = await listSupervisorPids();
+  if (pids.length === 0) return 0;
+  log("Killing supervisors:", pids.join(","));
+  for (const pid of pids) {
+    try {
+      await execFileAsync("taskkill", ["/F", "/PID", String(pid), "/T"], {
+        windowsHide: true,
+        timeout: 8000,
+      });
+    } catch (err) {
+      logError("taskkill supervisor failed:", pid, err instanceof Error ? err.message : err);
+    }
+  }
+  // Brief settle so process table / port release
+  await new Promise((r) => setTimeout(r, 400));
+  return pids.length;
 }
 
 /**
  * Start the Windows supervisor VBS now (same process as login autostart).
- * Keeps serve + tray alive and restarts on crash. No-op if already running.
+ * Keeps serve + tray alive and restarts on crash.
+ * @param forceRestart when true, kill existing supervisors first then start fresh
  */
-export async function launchSupervisorNow(): Promise<{ ok: boolean; message: string; already?: boolean }> {
+export async function launchSupervisorNow(opts?: {
+  forceRestart?: boolean;
+}): Promise<{ ok: boolean; message: string; already?: boolean }> {
   if (process.platform !== "win32") {
     return { ok: false, message: "Supervisor is Windows-only" };
   }
   try {
     // Always refresh launcher so anti-crash/hang improvements apply after upgrades
     await writeWindowsLauncher();
-    if (await isSupervisorRunning()) {
+    const force = opts?.forceRestart === true;
+    if (!force && (await isSupervisorRunning())) {
+      // Collapse duplicates without dropping the primary instance
+      const pids = await listSupervisorPids();
+      if (pids.length > 1) {
+        const keep = Math.min(...pids);
+        log("Multiple supervisors; keeping", keep, "killing extras");
+        for (const pid of pids) {
+          if (pid === keep) continue;
+          try {
+            await execFileAsync("taskkill", ["/F", "/PID", String(pid), "/T"], {
+              windowsHide: true,
+              timeout: 8000,
+            });
+          } catch {
+            // ignore
+          }
+        }
+      }
       log("Supervisor already running (launcher refreshed on disk)");
       return { ok: true, message: "Supervisor already running", already: true };
+    }
+    if (force) {
+      await killAllSupervisors();
     }
     await clearStopSentinel();
     const vbs = launcherPath();
@@ -510,7 +626,7 @@ export async function launchSupervisorNow(): Promise<{ ok: boolean; message: str
       windowsHide: true,
     });
     child.unref();
-    log("Supervisor launched, pid:", child.pid, "vbs:", vbs);
+    log("Supervisor launched, pid:", child.pid, "vbs:", vbs, "force:", force);
     return { ok: true, message: `Supervisor started (pid ${child.pid ?? "?"})` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
