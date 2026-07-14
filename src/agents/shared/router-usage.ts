@@ -324,17 +324,98 @@ async function readDailySummaryFromJsonFile(file: string): Promise<Record<string
   return null;
 }
 
+/**
+ * Standalone daily file shapes:
+ *  A) map  { "2026-07-14": { requests, promptTokens, … }, … }
+ *  B) VPS export array  [ { dateKey, data: "<json string|object>" }, … ]
+ *  C) wrapper { dailySummary: { …map… } }
+ */
 async function readDailySummaryStandalone(file: string): Promise<Record<string, unknown> | null> {
   const text = await readText(file);
   if (!text) return null;
   try {
     const data = JSON.parse(text) as unknown;
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      return data as Record<string, unknown>;
-    }
+    const normalized = normalizeDailyMap(data);
+    return normalized && Object.keys(normalized).length ? normalized : null;
   } catch {
     // ignore
   }
+  return null;
+}
+
+/** Normalize various daily export shapes into dateKey → day payload map. */
+function normalizeDailyMap(data: unknown): Record<string, unknown> | null {
+  if (!data) return null;
+
+  // B) array of { dateKey, data }
+  if (Array.isArray(data)) {
+    const daily: Record<string, unknown> = {};
+    for (const row of data) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as Record<string, unknown>;
+      const keyRaw = r.dateKey ?? r.date ?? r.day ?? r.key;
+      const key = typeof keyRaw === "string" ? keyRaw.trim() : "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+      let payload: unknown = r.data !== undefined ? r.data : r.payload !== undefined ? r.payload : r;
+      if (typeof payload === "string" && payload.trim()) {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+      }
+      // If payload is the whole row, strip dateKey envelope
+      if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        const p = payload as Record<string, unknown>;
+        if (p.dateKey && (p.data !== undefined || p.promptTokens !== undefined || p.requests !== undefined)) {
+          // already day fields or nested
+          if (p.promptTokens !== undefined || p.requests !== undefined || p.cost !== undefined || p.byModel) {
+            daily[key] = p;
+          } else if (p.data && typeof p.data === "object") {
+            daily[key] = p.data as Record<string, unknown>;
+          } else {
+            daily[key] = p;
+          }
+        } else {
+          daily[key] = p;
+        }
+      }
+    }
+    return Object.keys(daily).length ? daily : null;
+  }
+
+  if (typeof data !== "object") return null;
+  const o = data as Record<string, unknown>;
+
+  // C) wrapper
+  if (o.dailySummary && typeof o.dailySummary === "object" && !Array.isArray(o.dailySummary)) {
+    return o.dailySummary as Record<string, unknown>;
+  }
+  if (o.usageDaily && typeof o.usageDaily === "object" && !Array.isArray(o.usageDaily)) {
+    return normalizeDailyMap(o.usageDaily);
+  }
+  if (Array.isArray(o.days)) {
+    return normalizeDailyMap(o.days);
+  }
+
+  // A) plain dateKey map (or mixed — keep only date keys)
+  const daily: Record<string, unknown> = {};
+  let dateKeys = 0;
+  for (const [k, v] of Object.entries(o)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) continue;
+    dateKeys += 1;
+    if (v && typeof v === "object") daily[k] = v as Record<string, unknown>;
+    else if (typeof v === "string") {
+      try {
+        const parsed = JSON.parse(v);
+        if (parsed && typeof parsed === "object") daily[k] = parsed as Record<string, unknown>;
+      } catch {
+        // skip
+      }
+    }
+  }
+  if (dateKeys > 0) return Object.keys(daily).length ? daily : null;
+
   return null;
 }
 
