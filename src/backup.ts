@@ -118,6 +118,31 @@ export async function saveImportedEvents(events: UsageEvent[]): Promise<void> {
   log("saveImportedEvents:", clean.length, "→", p);
 }
 
+/** Local disk cache of the last successful full/union scan — survives restart so UI is never empty mid-scan. */
+export function scanCachePath(): string {
+  return path.join(dataRoot(), "scan-cache.json");
+}
+
+export async function loadScanCache(): Promise<UsageEvent[]> {
+  const p = scanCachePath();
+  try {
+    if (!(await pathExists(p))) return [];
+    const raw = JSON.parse(await readFile(p, "utf8")) as unknown;
+    return sanitizeEvents(raw) || [];
+  } catch (err) {
+    logError("loadScanCache failed:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+export async function saveScanCache(events: UsageEvent[]): Promise<void> {
+  const p = scanCachePath();
+  await mkdir(path.dirname(p), { recursive: true });
+  const clean = sanitizeEvents(events) || [];
+  await writeFile(p, JSON.stringify(clean), "utf8");
+  log("saveScanCache:", clean.length, "→", p);
+}
+
 async function listFilesRecursive(dir: string, base = dir): Promise<string[]> {
   const out: string[] = [];
   if (!(await pathExists(dir))) return out;

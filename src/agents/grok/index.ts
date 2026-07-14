@@ -25,7 +25,7 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
     if (!(await pathExists(sessionsRoot))) continue;
 
     const summaries = await walkFiles(sessionsRoot, {
-      maxDepth: 6,
+      maxDepth: 10,
       match: (n) => n === "summary.json",
     });
 

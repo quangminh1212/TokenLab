@@ -8,9 +8,11 @@ import {
   buildFullBackup,
   buildSettingsBackup,
   loadImportedEvents,
+  loadScanCache,
   mergeEventsById,
   restoreBackup,
   saveImportedEvents,
+  saveScanCache,
   uploadBackupToGist,
 } from "../backup.js";
 import { loadConfig, saveConfig, setCustomRates, configPath, getConfigSync } from "../config.js";
@@ -48,11 +50,33 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let cache: UsageEvent[] = [];
   /** Events from other machines / restore — survive local rescan (merged by id). */
   let importedEvents: UsageEvent[] = await loadImportedEvents();
+  /** Last local scan snapshot — unioned so incomplete/timeout passes never wipe known usage. */
+  const diskScanCache = await loadScanCache();
+  cache = mergeEventsById(diskScanCache, importedEvents);
+  if (diskScanCache.length > 0) {
+    console.log(`[xlab-token] loaded ${diskScanCache.length} cached scan events`);
+  }
   if (importedEvents.length > 0) {
-    cache = importedEvents.slice();
     console.log(`[xlab-token] loaded ${importedEvents.length} imported events`);
   }
+  if (cache.length > 0) {
+    console.log(`[xlab-token] warm cache ready: ${cache.length} events (scan + import)`);
+  }
   let scanning = false;
+  let scanCacheSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleSaveScanCache = (): void => {
+    if (scanCacheSaveTimer) clearTimeout(scanCacheSaveTimer);
+    scanCacheSaveTimer = setTimeout(() => {
+      scanCacheSaveTimer = null;
+      void saveScanCache(cache).catch((err) => {
+        console.warn(
+          "[xlab-token] save scan cache failed:",
+          err instanceof Error ? err.message : err,
+        );
+      });
+    }, 2_000);
+    scanCacheSaveTimer.unref?.();
+  };
   /** Shared promise so concurrent /api/scan waits for the in-flight scan (not empty cache). */
   let scanPromise: Promise<number> | null = null;
   /** Bumps after each completed scan so UIs can reload when cache fills. */
@@ -148,19 +172,26 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       try {
         // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+
         // Full boot/manual scan: no timeout — read complete history so nothing is missed.
-        // Periodic scan: soft 25s/agent so one stuck parser cannot block forever.
+        // Periodic: longer soft timeout; results are always UNIONED with previous so a
+        // short/partial pass never deletes usage we already discovered.
         await scanAll({
-          concurrency: full ? 4 : 4,
-          timeoutMs: full ? 0 : 25_000,
+          concurrency: full ? 3 : 4,
+          timeoutMs: full ? 0 : 90_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
-            // On timeout/error with empty batch, keep previous events for that agent
-            if (!error || events.length > 0) {
-              byAgent.set(agent, events);
+            const prevForAgent = byAgent.get(agent) ?? [];
+            if (error && events.length === 0) {
+              // Timeout/crash with nothing parsed — keep previous (never wipe)
+            } else if (events.length === 0 && prevForAgent.length > 0) {
+              // Parser returned empty but we already had data — keep previous
+              // (empty often means path flaky / lock, not "agent deleted history")
+            } else {
+              // Union: new disk events + previous known for this agent (never drop)
+              byAgent.set(agent, mergeEventsById(events, prevForAgent));
               rebuild();
             }
             agentStats.push({
               agent,
-              events: events.length,
+              events: (byAgent.get(agent) ?? events).length,
               durationMs,
               error: error || undefined,
             });
@@ -180,15 +211,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               pricingRevision,
             });
             if (full) {
-              const status = error ? `error: ${error}` : `${events.length} events`;
-              console.log(
-                `[xlab-token]   ${agent}: ${status} (${durationMs}ms)`,
-              );
+              const kept = (byAgent.get(agent) ?? []).length;
+              const status = error
+                ? `error: ${error} (kept ${kept})`
+                : `${events.length} new → ${kept} total`;
+              console.log(`[xlab-token]   ${agent}: ${status} (${durationMs}ms)`);
             }
           },
         });
         rebuild();
         bumpScan(full ? "complete-full" : "complete");
+        scheduleSaveScanCache();
         if (full) {
           const failed = agentStats.filter((s) => s.error);
           console.log(
@@ -916,13 +949,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
 
   // Boot: full historical scan (all local usage, no per-agent timeout) so nothing is missed.
-  // Periodic: lighter rescan with soft timeout for fresh deltas without blocking forever.
+  // Periodic: quick union refresh; every 5 minutes another full pass (timeout 0).
   void rescan({ full: true }).catch((err) => {
     console.error("[xlab-token] initial full scan failed:", err instanceof Error ? err.message : err);
   });
-  // Rescan often enough that new agent usage shows on Dashboard without manual Refresh
+  let periodicTick = 0;
   const timer = setInterval(() => {
-    void rescan({ full: false });
+    periodicTick += 1;
+    // Full thorough pass every 10 ticks (≈5 min) — catches heavy agents that need minutes.
+    const doFull = periodicTick % 10 === 0;
+    void rescan({ full: doFull });
   }, 30_000);
   timer.unref?.();
 
@@ -931,6 +967,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     port,
     close: async () => {
       clearInterval(timer);
+      if (scanCacheSaveTimer) {
+        clearTimeout(scanCacheSaveTimer);
+        scanCacheSaveTimer = null;
+      }
+      try {
+        await saveScanCache(cache);
+      } catch {
+        // non-fatal
+      }
       try {
         server.closeAllConnections?.();
       } catch {

@@ -83,24 +83,23 @@ export async function parseRouterUsage(
       }
     }
 
-    // --- B) Per-request history only if this root has NO daily data ---
-    // Skip multi‑MB usage-history.jsonl when daily rollups exist (international practice).
-    if (hasDailyForRoot) continue;
-
+    // --- B) Per-request history ---
+    // Always try compact history so today is not missing while daily rollup is stale.
+    // Still skip huge jsonl when daily already covers that root (avoid multi‑MB reread).
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
       if (!(await pathExists(dbPath))) continue;
-      // Cap SQLite history hard — emergency fallback only
-      pushEvents(await parseSqliteUsage(dbPath, agent, 5_000));
+      // Cap SQLite history — used to fill gaps vs daily
+      pushEvents(await parseSqliteUsage(dbPath, agent, hasDailyForRoot ? 2_000 : 20_000));
     }
 
-    if (await pathExists(usagePath)) {
+    if (!hasDailyForRoot && (await pathExists(usagePath))) {
       pushEvents(await parseUsageJsonFile(usagePath, agent));
     }
-    if (await pathExists(dbJsonPath)) {
+    if (!hasDailyForRoot && (await pathExists(dbJsonPath))) {
       pushEvents(await parseDbJsonUsage(dbJsonPath, agent));
     }
-    if (await pathExists(usageDataPath)) {
+    if (!hasDailyForRoot && (await pathExists(usageDataPath))) {
       pushEvents(await parseUsageJsonFile(usageDataPath, agent));
     }
 
@@ -116,14 +115,12 @@ export async function parseRouterUsage(
       for (const name of ["usage-history.jsonl", "request-details.jsonl"]) {
         const p = path.join(root, name);
         if (!(await pathExists(p))) continue;
-        // Last-resort: still avoid full 60MB+ when possible (parser reads all — skip huge files)
         try {
           const { stat } = await import("node:fs/promises");
           const st = await stat(p);
-          if (st.size > 4 * 1024 * 1024) {
-            // >4MB request log without daily — skip; user should sync usage-daily.json
-            continue;
-          }
+          // With daily rollups: only small files (fresh tail). Without daily: allow larger.
+          const maxBytes = hasDailyForRoot ? 2 * 1024 * 1024 : 12 * 1024 * 1024;
+          if (st.size > maxBytes) continue;
         } catch {
           // ignore stat errors
         }
