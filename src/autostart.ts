@@ -128,9 +128,20 @@ export async function clearStopSentinel(): Promise<void> {
   }
 }
 
-/** VBS supervisor: runs `node cli serve` hidden, restarts on unexpected exit
- *  (up to maxRestarts times) with a backoff sleep. Stops when the stop
- *  sentinel appears (tray Quit / intentional shutdown). */
+/** Heartbeat file written by `serve` process-guard (ms timestamp on line 1). */
+export function heartbeatPath(): string {
+  return path.join(dataDir(), "heartbeat.txt");
+}
+
+function supervisorLogPath(): string {
+  return path.join(dataDir(), "supervisor.txt");
+}
+
+/**
+ * VBS supervisor: runs `node cli serve` hidden, restarts forever on crash/hang
+ * (unless stop.flag from tray Quit). Uses WMI so we can poll heartbeat while
+ * the child is running and kill a hung process.
+ */
 async function writeWindowsLauncher(): Promise<string> {
   const { node, cli } = resolveServeInvocation();
   await mkdir(dataDir(), { recursive: true });
@@ -138,24 +149,153 @@ async function writeWindowsLauncher(): Promise<string> {
   const nodeQ = node.replace(/"/g, '""');
   const cliQ = cli.replace(/"/g, '""');
   const stopFile = stopSentinelPath().replace(/"/g, '""');
+  const hbFile = heartbeatPath().replace(/"/g, '""');
+  const logFile = supervisorLogPath().replace(/"/g, '""');
   // ASCII-only to avoid cscript/wscript encoding issues
+  // Hang = no heartbeat refresh for 120s after grace 90s from start.
+  // Never give up restarting (only stop.flag ends the loop).
   const content = [
-    "' XLab Token autostart supervisor (generated)",
+    "' XLab Token autostart supervisor (generated) - anti-crash / anti-hang",
     "Set sh = CreateObject(\"WScript.Shell\")",
     "Set fso = CreateObject(\"Scripting.FileSystemObject\")",
+    "On Error Resume Next",
+    "Set wmi = GetObject(\"winmgmts:\\\\.\\root\\cimv2\")",
+    "On Error Goto 0",
     `stopFile = "${stopFile}"`,
+    `hbFile = "${hbFile}"`,
+    `logFile = "${logFile}"`,
+    `nodePath = "${nodeQ}"`,
+    `cliPath = "${cliQ}"`,
     "If fso.FileExists(stopFile) Then fso.DeleteFile stopFile, True",
-    "maxRestarts = 10",
+    "",
+    "Sub LogLine(msg)",
+    "  On Error Resume Next",
+    "  Dim ts",
+    "  Set ts = fso.OpenTextFile(logFile, 8, True)",
+    "  ts.WriteLine Now & \" \" & msg",
+    "  ts.Close",
+    "  On Error Goto 0",
+    "End Sub",
+    "",
+    "Function ProcessAlive(pid)",
+    "  ProcessAlive = False",
+    "  If pid <= 0 Then Exit Function",
+    "  On Error Resume Next",
+    "  Dim col, p",
+    "  Set col = wmi.ExecQuery(\"SELECT ProcessId FROM Win32_Process WHERE ProcessId=\" & pid)",
+    "  For Each p In col",
+    "    ProcessAlive = True",
+    "  Next",
+    "  On Error Goto 0",
+    "End Function",
+    "",
+    "Sub KillPid(pid)",
+    "  If pid <= 0 Then Exit Sub",
+    "  On Error Resume Next",
+    "  sh.Run \"taskkill /F /PID \" & pid & \" /T\", 0, True",
+    "  On Error Goto 0",
+    "End Sub",
+    "",
+    "Function StartServe()",
+    "  StartServe = 0",
+    "  On Error Resume Next",
+    "  Dim startup, proc, ret, pid",
+    "  pid = 0",
+    "  Set startup = wmi.Get(\"Win32_ProcessStartup\").SpawnInstance_()",
+    "  startup.ShowWindow = 0",
+    "  Set proc = wmi.Get(\"Win32_Process\")",
+    "  ret = proc.Create(\"\"\"\" & nodePath & \"\"\" \"\"\" & cliPath & \"\"\" serve\", Null, startup, pid)",
+    "  If ret = 0 And pid > 0 Then StartServe = pid",
+    "  On Error Goto 0",
+    "End Function",
+    "",
+    "Function HeartbeatAgeMs()",
+    "  HeartbeatAgeMs = -1",
+    "  On Error Resume Next",
+    "  If Not fso.FileExists(hbFile) Then Exit Function",
+    "  Dim ts, line, ms, nowMs",
+    "  Set ts = fso.OpenTextFile(hbFile, 1, False)",
+    "  line = Trim(ts.ReadLine)",
+    "  ts.Close",
+    "  If IsNumeric(line) Then",
+    "    ms = CDbl(line)",
+    "    nowMs = CDbl(DateDiff(\"s\", \"1/1/1970\", Now)) * 1000",
+    "    ' DateDiff is local-time based; heartbeat is UTC epoch — compare file mtime instead",
+    "  End If",
+    "  HeartbeatAgeMs = DateDiff(\"s\", fso.GetFile(hbFile).DateLastModified, Now) * 1000",
+    "  If HeartbeatAgeMs < 0 Then HeartbeatAgeMs = 0",
+    "  On Error Goto 0",
+    "End Function",
+    "",
     "retries = 0",
-    "Do While retries < maxRestarts",
-    `  exitCode = sh.Run("""${nodeQ}"" ""${cliQ}"" serve", 0, True)`,
-    "  If fso.FileExists(stopFile) Then Exit Do",
-    "  retries = retries + 1",
-    "  WScript.Sleep 3000",
+    "LogLine \"supervisor started\"",
+    "Do",
+    "  If fso.FileExists(stopFile) Then",
+    "    LogLine \"stop.flag present — exit\"",
+    "    Exit Do",
+    "  End If",
+    "  If fso.FileExists(hbFile) Then",
+    "    On Error Resume Next",
+    "    fso.DeleteFile hbFile, True",
+    "    On Error Goto 0",
+    "  End If",
+    "  pid = StartServe()",
+    "  If pid <= 0 Then",
+    "    retries = retries + 1",
+    "    LogLine \"failed to start serve (attempt \" & retries & \")\"",
+    "    sleepMs = 5000",
+    "    If retries > 5 Then sleepMs = 15000",
+    "    If retries > 15 Then sleepMs = 60000",
+    "    WScript.Sleep sleepMs",
+    "  Else",
+    "    LogLine \"serve started pid=\" & pid",
+    "    startedAt = Timer",
+    "    hung = False",
+    "    Do",
+    "      WScript.Sleep 5000",
+    "      If fso.FileExists(stopFile) Then",
+    "        LogLine \"stop.flag — killing serve pid=\" & pid",
+    "        KillPid pid",
+    "        Exit Do",
+    "      End If",
+    "      If Not ProcessAlive(pid) Then",
+    "        LogLine \"serve exited pid=\" & pid",
+    "        Exit Do",
+    "      End If",
+    "      ' Hang detection after 90s uptime: heartbeat older than 120s",
+    "      uptimeSec = Timer - startedAt",
+    "      If uptimeSec < 0 Then uptimeSec = uptimeSec + 86400",
+    "      If uptimeSec >= 90 Then",
+    "        age = HeartbeatAgeMs()",
+    "        If age < 0 Or age > 120000 Then",
+    "          LogLine \"hang detected pid=\" & pid & \" hbAgeMs=\" & age & \" — killing\"",
+    "          KillPid pid",
+    "          hung = True",
+    "          Exit Do",
+    "        End If",
+    "      End If",
+    "      ' Reset fast-restart counter after 60s healthy run",
+    "      If uptimeSec >= 60 And retries > 0 Then retries = 0",
+    "    Loop",
+    "    If fso.FileExists(stopFile) Then",
+    "      LogLine \"stop.flag — supervisor exit\"",
+    "      Exit Do",
+    "    End If",
+    "    retries = retries + 1",
+    "    sleepMs = 3000",
+    "    If hung Then sleepMs = 5000",
+    "    If retries > 5 Then sleepMs = 10000",
+    "    If retries > 15 Then sleepMs = 30000",
+    "    If retries > 30 Then sleepMs = 60000",
+    "    LogLine \"restart in \" & sleepMs & \"ms (attempt \" & retries & \")\"",
+    "    WScript.Sleep sleepMs",
+    "  End If",
     "Loop",
+    "LogLine \"supervisor stopped\"",
     "",
   ].join("\r\n");
   await writeFile(vbsPath, content, "utf8");
+  log("Windows supervisor VBS written (anti-crash/hang):", vbsPath);
   return vbsPath;
 }
 
@@ -230,7 +370,7 @@ async function installWindows(): Promise<AutostartResult> {
   return {
     ok: true,
     message:
-      "Autostart enabled (supervised). xlab-token serve will start when you log in to Windows and auto-restart if it crashes. Tray icon in notification area; use Quit to stop.",
+      "Autostart enabled (supervised). xlab-token serve starts at login, auto-restarts on crash/hang, and keeps a tray icon; use Quit to stop.",
     status,
   };
 }
@@ -356,12 +496,10 @@ export async function launchSupervisorNow(): Promise<{ ok: boolean; message: str
     return { ok: false, message: "Supervisor is Windows-only" };
   }
   try {
-    // Ensure launcher exists (setup may call this after enableAutostart, but be safe)
-    if (!(await pathExists(launcherPath()))) {
-      await writeWindowsLauncher();
-    }
+    // Always refresh launcher so anti-crash/hang improvements apply after upgrades
+    await writeWindowsLauncher();
     if (await isSupervisorRunning()) {
-      log("Supervisor already running");
+      log("Supervisor already running (launcher refreshed on disk)");
       return { ok: true, message: "Supervisor already running", already: true };
     }
     await clearStopSentinel();
