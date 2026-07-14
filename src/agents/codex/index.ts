@@ -1,7 +1,7 @@
 import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
@@ -28,17 +28,22 @@ function isNoisePath(full: string): boolean {
 }
 
 // Deep Codex support:
-// - ~/.codex/sessions (rollout-*.jsonl date tree)
+// - ~/.codex/sessions (rollout-*.jsonl date tree) — classic layout
 // - archived / history / session logs
+// - state_*.sqlite threads.tokens_used + rollout_path (newer desktop/CLI)
 // - token_count events (absolute + cumulative)
 // - response.completed / event.usage shapes
 // - cwd/workspace from session meta when present
 export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   const seen = new Set<string>();
+  const seenRollouts = new Set<string>();
 
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
+
+    // Newer Codex: SQLite state (threads + tokens_used) even when sessions/ is empty
+    events.push(...(await parseCodexSqliteState(root, seenRollouts)));
 
     // Prefer real session trees; only fall back to root when those are absent
     const preferred = [
@@ -52,7 +57,9 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
     for (const p of preferred) {
       if (await pathExists(p)) existingPreferred.push(p);
     }
-    const scanRoots = existingPreferred.length > 0 ? existingPreferred : [root];
+    // Always include root so state/rollout files next to config are not missed when
+    // an empty sessions/ folder exists (newer installs create dirs early).
+    const scanRoots = existingPreferred.length > 0 ? [...existingPreferred, root] : [root];
 
     for (const base of scanRoots) {
       if (!(await pathExists(base))) continue;
@@ -70,7 +77,7 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
       });
 
       for (const file of files) {
-        if (seen.has(file)) continue;
+        if (seen.has(file) || seenRollouts.has(file.toLowerCase())) continue;
         if (isNoisePath(file)) continue;
         seen.add(file);
         const text = await readText(file);
@@ -100,6 +107,204 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
   }
 
   return events;
+}
+
+/**
+ * Newer Codex (desktop/app-server) stores thread summaries in state_*.sqlite:
+ * threads(id, rollout_path, model, tokens_used, cwd, created_at, updated_at, …)
+ * When tokens_used > 0 emit one event; also follow rollout_path for detailed jsonl.
+ */
+async function parseCodexSqliteState(
+  root: string,
+  seenRollouts: Set<string>,
+): Promise<UsageEvent[]> {
+  const events: UsageEvent[] = [];
+  const candidates: string[] = [];
+
+  // Root-level state/logs DBs + nested sqlite/ folder
+  try {
+    const ents = await readdir(root, { withFileTypes: true });
+    for (const e of ents) {
+      if (!e.isFile()) continue;
+      const n = e.name.toLowerCase();
+      if (
+        (n.startsWith("state_") && n.endsWith(".sqlite")) ||
+        n === "state.sqlite" ||
+        n === "sessions.db" ||
+        (n.includes("state") && n.endsWith(".db"))
+      ) {
+        candidates.push(path.join(root, e.name));
+      }
+    }
+  } catch {
+    // ignore
+  }
+  const sqliteDir = path.join(root, "sqlite");
+  if (await pathExists(sqliteDir)) {
+    try {
+      const ents = await readdir(sqliteDir, { withFileTypes: true });
+      for (const e of ents) {
+        if (!e.isFile()) continue;
+        const n = e.name.toLowerCase();
+        if (n.endsWith(".sqlite") || n.endsWith(".db")) {
+          candidates.push(path.join(sqliteDir, e.name));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  for (const dbPath of candidates) {
+    if (isNoisePath(dbPath)) continue;
+    try {
+      const { DatabaseSync } = await import("node:sqlite");
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        // Discover a threads-like table
+        const tables = db
+          .prepare(`SELECT name FROM sqlite_master WHERE type='table'`)
+          .all() as Array<{ name: string }>;
+        const threadTable =
+          tables.find((t) => t.name === "threads")?.name ||
+          tables.find((t) => /thread/i.test(t.name) && !/catalog|edge|goal|tool/i.test(t.name))
+            ?.name;
+        if (!threadTable) continue;
+
+        const cols = (
+          db.prepare(`PRAGMA table_info(${threadTable})`).all() as Array<{ name: string }>
+        ).map((c) => c.name);
+        const colSet = new Set(cols.map((c) => c.toLowerCase()));
+        if (!colSet.has("tokens_used") && !colSet.has("tokensused")) continue;
+
+        const tokenCol = colSet.has("tokens_used") ? "tokens_used" : "tokensUsed";
+        const idCol = colSet.has("id") ? "id" : cols[0]!;
+        const modelCol = colSet.has("model") ? "model" : null;
+        const cwdCol = colSet.has("cwd") ? "cwd" : null;
+        const rolloutCol = colSet.has("rollout_path")
+          ? "rollout_path"
+          : colSet.has("rolloutpath")
+            ? "rolloutPath"
+            : null;
+        const createdCol = colSet.has("created_at_ms")
+          ? "created_at_ms"
+          : colSet.has("created_at")
+            ? "created_at"
+            : colSet.has("updated_at_ms")
+              ? "updated_at_ms"
+              : colSet.has("updated_at")
+                ? "updated_at"
+                : null;
+        const updatedCol = colSet.has("updated_at_ms")
+          ? "updated_at_ms"
+          : colSet.has("updated_at")
+            ? "updated_at"
+            : createdCol;
+
+        const selectCols = [idCol, tokenCol, modelCol, cwdCol, rolloutCol, createdCol, updatedCol]
+          .filter(Boolean)
+          .join(", ");
+        const rows = db
+          .prepare(
+            `SELECT ${selectCols} FROM ${threadTable}
+             WHERE ${tokenCol} IS NOT NULL AND CAST(${tokenCol} AS REAL) > 0
+             ORDER BY ${updatedCol || idCol} DESC
+             LIMIT 50000`,
+          )
+          .all() as Array<Record<string, unknown>>;
+
+        for (const row of rows) {
+          const tokens = Number(row[tokenCol] ?? 0);
+          if (!Number.isFinite(tokens) || tokens <= 0) continue;
+          const tid = String(row[idCol] ?? "");
+          const model =
+            modelCol && typeof row[modelCol] === "string" && row[modelCol]
+              ? String(row[modelCol])
+              : "codex";
+          const cwd =
+            cwdCol && typeof row[cwdCol] === "string" && row[cwdCol]
+              ? String(row[cwdCol])
+              : null;
+          const ts = coerceSqliteTime(row[updatedCol || ""] ?? row[createdCol || ""]);
+          // Codex threads.tokens_used is typically total tokens (input+output unknown split)
+          // Attribute all to input so totals match; mark estimated for UI honesty.
+          events.push(
+            applyPricing({
+              id: stableId("codex", dbPath.toLowerCase(), "thread", tid, String(tokens)),
+              agent: "codex",
+              model,
+              timestamp: ts,
+              inputTokens: Math.round(tokens),
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              workspace: cwd,
+              sourcePath: dbPath,
+              estimated: true,
+            }),
+          );
+
+          // Follow rollout jsonl for finer-grained token_count events when present
+          const rp =
+            rolloutCol && typeof row[rolloutCol] === "string"
+              ? String(row[rolloutCol]).trim()
+              : "";
+          if (rp && (await pathExists(rp)) && !isNoisePath(rp)) {
+            const key = rp.toLowerCase();
+            if (!seenRollouts.has(key)) {
+              seenRollouts.add(key);
+              try {
+                const text = await readText(rp);
+                if (text) {
+                  let fileMtime = new Date(ts);
+                  try {
+                    fileMtime = (await stat(rp)).mtime;
+                  } catch {
+                    // ignore
+                  }
+                  const before = events.length;
+                  parseJsonlFile(events, text, rp, fileMtime);
+                  // If detailed events were parsed, drop the coarse thread summary for this id
+                  // to avoid double-counting (jsonl usually has better split + more events).
+                  if (events.length > before) {
+                    const summaryId = stableId(
+                      "codex",
+                      dbPath.toLowerCase(),
+                      "thread",
+                      tid,
+                      String(tokens),
+                    );
+                    const idx = events.findIndex((e) => e.id === summaryId);
+                    if (idx >= 0) events.splice(idx, 1);
+                  }
+                }
+              } catch {
+                // ignore unreadable rollout
+              }
+            }
+          }
+        }
+      } finally {
+        db.close();
+      }
+    } catch {
+      // locked / not sqlite / schema variance
+    }
+  }
+
+  return events;
+}
+
+function coerceSqliteTime(v: unknown): string {
+  if (typeof v === "string" && v.trim() && !Number.isNaN(Date.parse(v))) {
+    return new Date(v).toISOString();
+  }
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+    // ms vs sec vs possible float seconds
+    const ms = v > 1e12 ? v : v > 1e9 ? v * 1000 : v > 1e8 ? v * 1000 : NaN;
+    if (Number.isFinite(ms)) return new Date(ms).toISOString();
+  }
+  return new Date().toISOString();
 }
 
 function parseJsonlFile(
@@ -286,6 +491,9 @@ export const agent: AgentModule = {
       path.join(xdgConfig, "codex"),
       path.join(appData, "Codex"),
       path.join(localApp, "Codex"),
+      // Windows desktop installer layout
+      path.join(localApp, "OpenAI", "Codex"),
+      path.join(appData, "OpenAI", "Codex"),
     ]);
   },
   parse: parseCodex,
