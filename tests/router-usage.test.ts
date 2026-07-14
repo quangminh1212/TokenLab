@@ -165,4 +165,102 @@ describe("router usage parsers", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("stamps daily rollups with real last-request time (not future noon UTC)", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-daily-ts-"));
+    try {
+      // Use "today" so noon UTC may still be in the future (the original bug)
+      const today = new Date().toISOString().slice(0, 10);
+      const lastSeen = `${today}T01:15:00.000Z`;
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify([
+          {
+            dateKey: today,
+            data: {
+              requests: 10,
+              promptTokens: 1_000_000,
+              completionTokens: 5_000,
+              cost: 1.5,
+              byModel: {
+                "big-pickle|soa": {
+                  requests: 10,
+                  promptTokens: 1_000_000,
+                  completionTokens: 5_000,
+                  cost: 1.5,
+                  rawModel: "big-pickle",
+                  provider: "soa",
+                },
+              },
+            },
+          },
+        ]),
+        "utf8",
+      );
+      // Tiny history tail with real last-seen time for big-pickle
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        JSON.stringify({
+          id: 99,
+          timestamp: lastSeen,
+          model: "big-pickle",
+          promptTokens: 1000,
+          completionTokens: 10,
+          cost: 0.01,
+          tokens: JSON.stringify({ prompt_tokens: 1000, completion_tokens: 10 }),
+        }) + "\n",
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "9router");
+      const pickle = events.find((e) => e.model === "big-pickle");
+      assert.ok(pickle, "expected big-pickle daily event");
+      assert.equal(pickle.inputTokens, 1_000_000);
+      // Must use real last request time, not future noon / wall-clock now
+      assert.equal(pickle.timestamp, new Date(lastSeen).toISOString());
+      const mins = Math.floor((Date.now() - new Date(pickle.timestamp).getTime()) / 60000);
+      assert.ok(mins >= 0, `timestamp must not be in the future (mins=${mins})`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("daily without history never invents a future noon-UTC timestamp", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-daily-nofuture-"));
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [today]: {
+            requests: 3,
+            promptTokens: 5000,
+            completionTokens: 100,
+            cost: 0.5,
+            byModel: {
+              "big-pickle|x": {
+                requests: 3,
+                promptTokens: 5000,
+                completionTokens: 100,
+                cost: 0.5,
+                rawModel: "big-pickle",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "9router");
+      const pickle = events.find((e) => e.model === "big-pickle");
+      assert.ok(pickle);
+      const t = new Date(pickle!.timestamp).getTime();
+      assert.ok(Number.isFinite(t));
+      assert.ok(t <= Date.now() + 1000, `daily ts must not be in the future: ${pickle!.timestamp}`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

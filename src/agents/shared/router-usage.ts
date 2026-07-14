@@ -120,7 +120,14 @@ export async function parseRouterUsage(
           const st = await stat(p);
           // With daily rollups: only small files (fresh tail). Without daily: allow larger.
           const maxBytes = hasDailyForRoot ? 2 * 1024 * 1024 : 12 * 1024 * 1024;
-          if (st.size > maxBytes) continue;
+          if (st.size > maxBytes) {
+            // Still read a small tail so RECENT EVENTS can stamp daily rows with real last-seen times
+            // (full multi‑MB jsonl is skipped when daily already covers totals).
+            if (hasDailyForRoot) {
+              pushEvents(await parseHistoryExportTail(p, agent, 512 * 1024));
+            }
+            continue;
+          }
         } catch {
           // ignore stat errors
         }
@@ -180,7 +187,7 @@ function reconcileEventsAndDaily(
 
     // Canonical: daily rollup wins whenever present
     if (daily) {
-      out.push(...expandOneDay(dateKey, daily.day, agent, daily.source));
+      out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, dayEvents));
       continue;
     }
 
@@ -188,6 +195,52 @@ function reconcileEventsAndDaily(
   }
 
   return out;
+}
+
+/**
+ * Pick a stable, non-future timestamp for a synthetic daily rollup event.
+ * Prefer real request times for that day; never invent noon-UTC while it is still in the future
+ * (that made RECENT EVENTS stuck on "Just now" all morning local time).
+ */
+function syntheticDailyTimestamp(
+  dateKey: string,
+  preferred?: string | null,
+): string {
+  if (preferred) {
+    const t = Date.parse(preferred);
+    if (Number.isFinite(t)) return new Date(t).toISOString();
+  }
+  const noon = Date.parse(`${dateKey}T12:00:00.000Z`);
+  const now = Date.now();
+  // Mid-day anchor only when it is already in the past (completed mornings UTC / past days)
+  if (Number.isFinite(noon) && noon <= now) {
+    return `${dateKey}T12:00:00.000Z`;
+  }
+  // Day still in progress before noon UTC — use start of day so timeAgo progresses
+  return `${dateKey}T00:00:00.000Z`;
+}
+
+/** Latest ISO timestamp among events (lexicographic ISO works for same format). */
+function latestTimestamp(events: UsageEvent[]): string | null {
+  let best: string | null = null;
+  let bestMs = -Infinity;
+  for (const e of events) {
+    const t = Date.parse(e.timestamp);
+    if (!Number.isFinite(t)) continue;
+    if (t >= bestMs) {
+      bestMs = t;
+      best = e.timestamp;
+    }
+  }
+  return best;
+}
+
+function latestTimestampForModel(events: UsageEvent[], model: string | null): string | null {
+  if (!model) return latestTimestamp(events);
+  const matched = events.filter(
+    (e) => (normalizeModelName(e.model) || e.model || "") === model,
+  );
+  return latestTimestamp(matched.length ? matched : events);
 }
 
 async function parseSqliteUsage(
@@ -425,10 +478,12 @@ function expandOneDay(
   day: Record<string, unknown>,
   agent: AgentId,
   source: string,
+  dayEvents: UsageEvent[] = [],
 ): UsageEvent[] {
   const dayInput = num(day.promptTokens ?? day.prompt_tokens);
   const dayOutput = num(day.completionTokens ?? day.completion_tokens);
   const dayCost = num(day.cost);
+  const dayFallbackTs = syntheticDailyTimestamp(dateKey, latestTimestamp(dayEvents));
 
   const byModel = day.byModel;
   if (byModel && typeof byModel === "object" && !Array.isArray(byModel)) {
@@ -451,10 +506,14 @@ function expandOneDay(
       if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
       modelCost += cost;
       modelTokens += inputTokens + outputTokens;
+      const ts = syntheticDailyTimestamp(
+        dateKey,
+        latestTimestampForModel(dayEvents, model) || dayFallbackTs,
+      );
       const e = rowToEvent(
         {
           id: `daily:${dateKey}:${modelKey}`,
-          timestamp: `${dateKey}T12:00:00.000Z`,
+          timestamp: ts,
           model,
           provider,
           promptTokens: inputTokens,
@@ -483,7 +542,7 @@ function expandOneDay(
   const e = rowToEvent(
     {
       id: `daily:${dateKey}:all`,
-      timestamp: `${dateKey}T12:00:00.000Z`,
+      timestamp: dayFallbackTs,
       model: "mixed",
       promptTokens: dayInput,
       completionTokens: dayOutput,
@@ -504,23 +563,62 @@ async function parseHistoryExport(file: string, agent: AgentId): Promise<UsageEv
   if (!text) return [];
   try {
     if (file.endsWith(".jsonl")) {
-      const rows: unknown[] = [];
-      for (const line of text.split(/\r?\n/)) {
-        const t = line.trim();
-        if (!t) continue;
-        try {
-          rows.push(JSON.parse(t));
-        } catch {
-          // skip
-        }
-      }
-      return historyToEvents(rows, agent, file);
+      return historyToEvents(parseJsonlRows(text), agent, file);
     }
     const data = JSON.parse(text) as unknown;
     return historyToEvents(extractHistoryArray(data), agent, file);
   } catch {
     return [];
   }
+}
+
+/**
+ * Read only the last ~maxBytes of a large jsonl so daily-covered roots still get
+ * recent request timestamps for RECENT EVENTS without loading tens of MB.
+ */
+async function parseHistoryExportTail(
+  file: string,
+  agent: AgentId,
+  maxBytes: number,
+): Promise<UsageEvent[]> {
+  try {
+    const { open } = await import("node:fs/promises");
+    const fh = await open(file, "r");
+    try {
+      const st = await fh.stat();
+      const size = st.size;
+      if (size <= 0) return [];
+      const start = Math.max(0, size - Math.max(64 * 1024, maxBytes));
+      const len = size - start;
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, start);
+      let text = buf.toString("utf8");
+      // Drop partial first line when we did not start at byte 0
+      if (start > 0) {
+        const nl = text.indexOf("\n");
+        if (nl >= 0) text = text.slice(nl + 1);
+      }
+      return historyToEvents(parseJsonlRows(text), agent, file);
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonlRows(text: string): unknown[] {
+  const rows: unknown[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      rows.push(JSON.parse(t));
+    } catch {
+      // skip
+    }
+  }
+  return rows;
 }
 
 function extractHistoryArray(data: unknown): unknown[] {
@@ -610,11 +708,22 @@ function rowToEvent(
   // Prefer clean model id; never append provider/connection id into the label
   const modelLabel = model;
 
-  const ts =
-    (typeof r.timestamp === "string" && r.timestamp) ||
-    (typeof r.createdAt === "string" && r.createdAt) ||
-    (typeof r.date === "string" && r.date) ||
-    new Date().toISOString();
+  // Prefer real event time. Never fall back to wall-clock "now" — that makes
+  // rescans show perpetual "Just now" on the dashboard (see codex agent note).
+  const tsRaw =
+    r.timestamp ?? r.createdAt ?? r.created_at ?? r.date ?? r.ts ?? null;
+  let ts: string | null = null;
+  if (typeof tsRaw === "string" && tsRaw.trim() && !Number.isNaN(Date.parse(tsRaw))) {
+    ts = new Date(tsRaw).toISOString();
+  } else if (typeof tsRaw === "number" && Number.isFinite(tsRaw) && tsRaw > 0) {
+    const ms = tsRaw > 1e12 ? tsRaw : tsRaw > 1e9 ? tsRaw * 1000 : NaN;
+    if (Number.isFinite(ms)) ts = new Date(ms).toISOString();
+  }
+  if (!ts) {
+    // Last resort: stable epoch-free marker from id/tag — use start of unix only if
+    // nothing else exists so the row is not re-stamped on every scan.
+    return null;
+  }
 
   // Router-reported cost: use when > 0. Zero is NOT locked — fall back to rate table / custom rates.
   const hasRouterCostField =
