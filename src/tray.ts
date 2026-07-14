@@ -210,10 +210,24 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
 
   let child: ChildProcess | null = null;
   let stopped = false;
+  let userQuit = false;
+  let restartAttempts = 0;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  const MAX_TRAY_RESTARTS = 20;
+
+  const cleanupScript = () => {
+    if (scriptPath) {
+      void unlink(scriptPath).catch(() => {});
+    }
+  };
 
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    if (restartTimer) {
+      clearTimeout(restartTimer);
+      restartTimer = null;
+    }
     if (child && !child.killed) {
       try {
         child.kill();
@@ -222,70 +236,110 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
       }
     }
     child = null;
-    if (scriptPath) {
-      void unlink(scriptPath).catch(() => {});
+    cleanupScript();
+  };
+
+  const wireChild = (proc: ChildProcess): void => {
+    child = proc;
+    proc.stdout?.setEncoding("utf8");
+    proc.stdout?.on("data", (chunk: string) => {
+      const lines = String(chunk)
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      log("Tray stdout:", lines.join(" | "));
+      for (const line of lines) {
+        if (line === "open") {
+          openBrowser(opts.url);
+        } else if (line === "quit") {
+          userQuit = true;
+          stop();
+          opts.onQuit();
+        }
+      }
+    });
+
+    proc.stderr?.on("data", (data) => {
+      logError("Tray stderr:", data.toString().trim());
+    });
+
+    proc.on("error", (err) => {
+      logError("Tray child error:", err instanceof Error ? err.message : err);
+      // Do not mark stopped — allow exit handler to auto-restart
+    });
+
+    proc.on("exit", (code) => {
+      log("Tray child exited with code:", code, "userQuit:", userQuit, "stopped:", stopped);
+      child = null;
+      if (stopped || userQuit) {
+        cleanupScript();
+        return;
+      }
+      // Unexpected exit (Explorer crash, PowerShell killed, etc.) — revive tray
+      if (restartAttempts >= MAX_TRAY_RESTARTS) {
+        logError("Tray restart limit reached; server keeps running without tray");
+        cleanupScript();
+        return;
+      }
+      restartAttempts += 1;
+      const delay = Math.min(30_000, 1_500 * restartAttempts);
+      log(`Tray unexpected exit — restarting in ${delay}ms (attempt ${restartAttempts}/${MAX_TRAY_RESTARTS})`);
+      restartTimer = setTimeout(() => {
+        restartTimer = null;
+        if (stopped || userQuit) return;
+        spawnTrayProcess();
+      }, delay);
+      restartTimer.unref?.();
+    });
+  };
+
+  const spawnTrayProcess = (): void => {
+    if (stopped || userQuit) return;
+    try {
+      // -STA is required for WinForms NotifyIcon message pump
+      const proc = spawn(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-STA",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-WindowStyle",
+          "Hidden",
+          "-File",
+          scriptPath,
+        ],
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        },
+      );
+      log("PowerShell child spawned, pid:", proc.pid);
+      wireChild(proc);
+      // After a successful spawn, slowly decay restart counter
+      setTimeout(() => {
+        if (!stopped && child && restartAttempts > 0) restartAttempts = Math.max(0, restartAttempts - 1);
+      }, 60_000).unref?.();
+    } catch (err) {
+      logError("Failed to spawn PowerShell tray:", err instanceof Error ? err.message : err);
+      if (!stopped && !userQuit && restartAttempts < MAX_TRAY_RESTARTS) {
+        restartAttempts += 1;
+        const delay = Math.min(30_000, 2_000 * restartAttempts);
+        restartTimer = setTimeout(() => {
+          restartTimer = null;
+          spawnTrayProcess();
+        }, delay);
+        restartTimer.unref?.();
+      }
     }
   };
 
-  try {
-    // -STA is required for WinForms NotifyIcon message pump
-    child = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-STA",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-File",
-        scriptPath,
-      ],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      },
-    );
-    log("PowerShell child spawned, pid:", child.pid);
-  } catch (err) {
-    logError("Failed to spawn PowerShell tray:", err instanceof Error ? err.message : err);
-    void unlink(scriptPath).catch(() => {});
+  spawnTrayProcess();
+  if (!child && restartAttempts === 0 && !restartTimer) {
+    // Immediate spawn failed with no retry scheduled
+    cleanupScript();
     return null;
   }
-
-  child.stdout?.setEncoding("utf8");
-  child.stdout?.on("data", (chunk: string) => {
-    const lines = String(chunk)
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    log("Tray stdout:", lines.join(" | "));
-    for (const line of lines) {
-      if (line === "open") {
-        openBrowser(opts.url);
-      } else if (line === "quit") {
-        stop();
-        opts.onQuit();
-      }
-    }
-  });
-
-  child.stderr?.on("data", (data) => {
-    logError("Tray stderr:", data.toString().trim());
-  });
-
-  child.on("error", (err) => {
-    logError("Tray child error:", err instanceof Error ? err.message : err);
-    stop();
-  });
-
-  child.on("exit", (code) => {
-    log("Tray child exited with code:", code);
-    child = null;
-    if (scriptPath) {
-      void unlink(scriptPath).catch(() => {});
-    }
-  });
 
   return { stop };
 }
