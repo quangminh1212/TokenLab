@@ -44,7 +44,7 @@ Local-first token API usage & cost tracker for AI agents on this machine.
 
 Usage:
   xlab-token serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open] [--no-tray]
-  xlab-token setup [--no-open] [--no-autostart] [--no-serve] [--json]
+  xlab-token setup [--no-open] [--no-autostart] [--no-desktop] [--no-serve] [--json]
   xlab-token stats [--since 24h|7d|30d] [--by agent|model|day] [--sort tokens|cost] [--json]
   xlab-token cost  [--since 7d] [--json]
   xlab-token scan  [--json]
@@ -68,9 +68,10 @@ Backup options:
   --save-token Save the token to local config
 
 Setup (also runs after global npm install):
-  Enables Windows login autostart and starts the dashboard if not already running.
+  Enables Windows login autostart, creates a Desktop shortcut, and starts the dashboard if not already running.
   --no-open       Do not open the browser
   --no-autostart  Skip login autostart registration
+  --no-desktop    Skip Desktop shortcut (XLab Token.lnk)
   --no-serve      Do not start the server
 
 Autostart (Windows):
@@ -197,6 +198,7 @@ async function main(): Promise<void> {
       const result = await runSetup({
         open: !has(args, "--no-open"),
         autostart: !has(args, "--no-autostart"),
+        desktop: !has(args, "--no-desktop"),
         serve: !has(args, "--no-serve"),
         host: getFlag(args, "--host") || undefined,
         port: getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined,
@@ -206,11 +208,17 @@ async function main(): Promise<void> {
       } else if (fromPostinstall) {
         console.log(`xlab-token: ${result.message}`);
         console.log(`xlab-token: dashboard ${result.url}`);
+        if (result.desktopShortcut) {
+          console.log(`xlab-token: desktop ${result.desktopShortcut}`);
+        }
       } else {
         console.log(result.message);
         console.log(`Dashboard: ${result.url}`);
         if (result.autostartEnabled !== undefined) {
           console.log(`Autostart: ${result.autostartEnabled ? "ON" : "OFF"}`);
+        }
+        if (result.desktopShortcut) {
+          console.log(`Desktop: ${result.desktopShortcut}`);
         }
       }
       if (!result.ok) process.exitCode = 1;

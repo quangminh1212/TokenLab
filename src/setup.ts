@@ -8,6 +8,7 @@ import {
   clearStopSentinel,
   enableAutostart,
   getAutostartStatus,
+  installDesktopShortcut,
   launchSupervisorNow,
   resolveServeInvocation,
 } from "./autostart.js";
@@ -18,6 +19,8 @@ export interface SetupOptions {
   open?: boolean;
   /** Register login autostart on Windows (default true). */
   autostart?: boolean;
+  /** Create/refresh Desktop shortcut to launch the app (default true). */
+  desktop?: boolean;
   /** Start serve process if not running (default true). */
   serve?: boolean;
   host?: string;
@@ -30,6 +33,7 @@ export interface SetupResult {
   serverRunning: boolean;
   serverStarted: boolean;
   autostartEnabled?: boolean;
+  desktopShortcut?: string;
   url: string;
   detail?: string;
 }
@@ -80,6 +84,7 @@ function startServeDetached(opts: { open: boolean; host: string; port: number })
 export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
   const open = opts.open !== false;
   const wantAutostart = opts.autostart !== false;
+  const wantDesktop = opts.desktop !== false;
   const wantServe = opts.serve !== false;
   const host = opts.host || defaultHost();
   const port = opts.port ?? defaultPort();
@@ -87,6 +92,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
 
   const parts: string[] = [];
   let autostartEnabled: boolean | undefined;
+  let desktopShortcut: string | undefined;
 
   if (wantAutostart) {
     if (process.platform === "win32") {
@@ -97,6 +103,24 @@ export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
       const st = await getAutostartStatus();
       autostartEnabled = false;
       parts.push(st.detail || "autostart not available on this platform");
+    }
+  }
+
+  if (wantDesktop) {
+    try {
+      const desk = await installDesktopShortcut();
+      if (desk.ok && desk.path) {
+        desktopShortcut = desk.path;
+        parts.push("desktop shortcut ready");
+      } else if (desk.ok) {
+        parts.push("desktop shortcut ready");
+      } else {
+        parts.push(desk.message);
+      }
+    } catch (err) {
+      parts.push(
+        `desktop shortcut skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -158,6 +182,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
     serverRunning,
     serverStarted,
     autostartEnabled,
+    desktopShortcut,
     url,
     detail: parts.join("; "),
   };
