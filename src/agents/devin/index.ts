@@ -71,18 +71,21 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
         // schema variance
       }
 
+      // Prefer newest rows first so a high LIMIT never drops last-night / this-morning usage
+      // when the DB grows past the cap (rowid order alone is oldest-first).
       const rows = db
         .prepare(
           `SELECT row_id, session_id, chat_message, created_at, metadata
            FROM message_nodes
            WHERE chat_message IS NOT NULL
-           LIMIT 100000`,
+           ORDER BY row_id DESC
+           LIMIT 200000`,
         )
         .all() as Array<{
         row_id: number | string;
         session_id: string;
         chat_message: unknown;
-        created_at?: string;
+        created_at?: string | number;
         metadata?: unknown;
       }>;
 
@@ -113,9 +116,20 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
           extractModel(msg, msg.metadata, sessionModels.get(sid)) ||
           sessionModels.get(sid) ||
           null;
+        const createdFallback =
+          typeof row.created_at === "string"
+            ? row.created_at
+            : typeof row.created_at === "number" && Number.isFinite(row.created_at) && row.created_at > 0
+              ? row.created_at > 1e12
+                ? new Date(row.created_at).toISOString()
+                : row.created_at > 1e9
+                  ? new Date(row.created_at * 1000).toISOString()
+                  : null
+              : null;
         const ts =
-          extractTimestamp(msg, msg.metadata, row.created_at) ||
-          (typeof row.created_at === "string" ? row.created_at : new Date().toISOString());
+          extractTimestamp(msg, msg.metadata, createdFallback, row.created_at) ||
+          createdFallback ||
+          new Date().toISOString();
 
         events.push(
           applyPricing({
