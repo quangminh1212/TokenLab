@@ -10,6 +10,7 @@ import {
   writeStopSentinel,
 } from "./autostart.js";
 import { downloadBackupFromGist, uploadBackupToGist } from "./backup.js";
+import { installProcessGuard, startHeartbeat } from "./process-guard.js";
 import { startServer } from "./server/http.js";
 import { runSetup } from "./setup.js";
 import { startTray } from "./tray.js";
@@ -111,6 +112,9 @@ async function main(): Promise<void> {
   if (cmd === "serve") {
     log("CLI serve command started");
     log("Args:", args.join(" "));
+    // Anti-crash: catch unhandled rejections / uncaught exceptions; heartbeat for hang watchdog
+    installProcessGuard({ log, logError });
+    const stopHeartbeat = startHeartbeat(15_000);
 
     const host = getFlag(args, "--host") || undefined;
     const port = getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined;
@@ -138,6 +142,11 @@ async function main(): Promise<void> {
         if (shuttingDown) return;
         log("Shutdown signal received:", signal);
         shuttingDown = true;
+        try {
+          stopHeartbeat();
+        } catch {
+          // ignore
+        }
         // Tell the autostart supervisor (if any) not to restart us.
         // Skip on SIGHUP (tsx watch hot-reload) so dev restarts keep working.
         if (signal !== "SIGHUP") {
@@ -162,8 +171,15 @@ async function main(): Promise<void> {
       };
       process.on("SIGINT", () => void shutdown("SIGINT"));
       process.on("SIGTERM", () => void shutdown("SIGTERM"));
-      // tsx watch / Windows sometimes sends before handlers finish
-      process.on("SIGHUP", () => void shutdown("SIGHUP"));
+      // SIGHUP only for dev hot-reload (tsx watch). On Windows production, SIGHUP
+      // has been observed killing a healthy serve — ignore unless explicitly enabled.
+      const allowSighup =
+        process.env.XLAB_TOKEN_DEV === "1" ||
+        process.env.XLAB_TOKEN_WATCH === "1" ||
+        process.platform !== "win32";
+      if (allowSighup) {
+        process.on("SIGHUP", () => void shutdown("SIGHUP"));
+      }
 
       if (!noTray && !noUi) {
         try {
@@ -175,7 +191,7 @@ async function main(): Promise<void> {
           });
           if (tray) {
             trayStop = tray.stop;
-            log("Tray icon enabled");
+            log("Tray icon enabled (auto-restart on tray crash)");
             console.log("Tray icon enabled (double-click or menu → Open Dashboard)");
           }
         } catch (err) {
@@ -184,6 +200,11 @@ async function main(): Promise<void> {
         }
       }
     } catch (err) {
+      try {
+        stopHeartbeat();
+      } catch {
+        // ignore
+      }
       logError("Failed to start server:", err instanceof Error ? err.message : err);
       console.error(err instanceof Error ? err.message : err);
       process.exitCode = 1;
