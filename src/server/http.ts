@@ -29,6 +29,7 @@ import { filterByPeriod, normalizeModelName, startOfDayInTimeZone } from "../uti
 import { VERSION } from "../version.js";
 
 function configuredTimeZone(): string {
+  // getConfigSync already normalizes UTC→local on non-UTC hosts
   const tz = getConfigSync().timezone;
   return (tz && String(tz).trim()) || "local";
 }

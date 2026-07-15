@@ -47,6 +47,21 @@ export function configPath(): string {
   );
 }
 
+/**
+ * Normalize timezone for "Today" filters.
+ * Stored "UTC" on a non-UTC machine is a common misconfig that undercounts
+ * morning usage (e.g. Vietnam UTC+7). Prefer machine local unless forced.
+ */
+export function normalizeTimezone(tz: string | null | undefined): string {
+  const t = (tz && String(tz).trim()) || "local";
+  if (t === "UTC" || t === "Etc/UTC") {
+    if (process.env.XLAB_TOKEN_FORCE_UTC === "1") return "UTC";
+    // getTimezoneOffset: minutes *west* of UTC; 0 only on real UTC hosts
+    if (new Date().getTimezoneOffset() !== 0) return "local";
+  }
+  return t;
+}
+
 export async function loadConfig(): Promise<XlabTokenConfig> {
   if (cached) return cached;
   const p = configPath();
@@ -55,6 +70,18 @@ export async function loadConfig(): Promise<XlabTokenConfig> {
       const raw = await readFile(p, "utf8");
       const parsed = JSON.parse(raw) as XlabTokenConfig;
       cached = mergeConfig(DEFAULT_CONFIG, parsed);
+      // Persist migration UTC → local once so Settings/API stay consistent
+      if (parsed.timezone === "UTC" || parsed.timezone === "Etc/UTC") {
+        const fixed = normalizeTimezone(parsed.timezone);
+        if (fixed !== "UTC") {
+          cached.timezone = fixed;
+          try {
+            await writeFile(p, JSON.stringify(cached, null, 2), "utf8");
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
       return cached;
     }
   } catch {
@@ -65,11 +92,13 @@ export async function loadConfig(): Promise<XlabTokenConfig> {
 }
 
 export function getConfigSync(): XlabTokenConfig {
-  return cached ?? structuredClone(DEFAULT_CONFIG);
+  const c = cached ?? structuredClone(DEFAULT_CONFIG);
+  return { ...c, timezone: normalizeTimezone(c.timezone) };
 }
 
 export async function saveConfig(next: XlabTokenConfig): Promise<XlabTokenConfig> {
   const merged = mergeConfig(DEFAULT_CONFIG, next);
+  merged.timezone = normalizeTimezone(merged.timezone);
   const p = configPath();
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify(merged, null, 2), "utf8");
@@ -103,7 +132,7 @@ function mergeConfig(base: XlabTokenConfig, over: XlabTokenConfig): XlabTokenCon
   return {
     ...base,
     ...over,
-    timezone: over.timezone ?? base.timezone ?? "local",
+    timezone: normalizeTimezone(over.timezone ?? base.timezone ?? "local"),
     pricing: {
       ...base.pricing,
       ...over.pricing,
