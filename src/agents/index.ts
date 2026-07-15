@@ -123,7 +123,12 @@ export type ScanAllOptions = {
   enabled?: Partial<Record<AgentId, boolean>>;
   /** Max agents parsed at once (default 4). */
   concurrency?: number;
-  /** Soft timeout per agent; on timeout keep partial empty for that agent (default 25s). */
+  /**
+   * Soft timeout per agent in ms.
+   * - default 10 min (prefer complete history over a snappy empty result)
+   * - 0 / negative = no timeout (wait until parser finishes)
+   * On timeout the agent contributes 0 events for this pass (server unions previous).
+   */
   timeoutMs?: number;
   /** Called after each agent finishes so the server can stream progressive totals. */
   onAgentDone?: (info: { agent: AgentId; events: UsageEvent[]; durationMs: number; error?: string }) => void;
@@ -146,6 +151,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
+/** Default per-agent budget — large enough for multi‑100MB Grok updates.jsonl. */
+const DEFAULT_PARSER_TIMEOUT_MS = 600_000;
+
 /**
  * Scan all enabled agents. Runs parsers in parallel (bounded concurrency) so a
  * single heavy agent (9router/devin) does not block the rest for tens of seconds.
@@ -161,7 +169,8 @@ export async function scanAll(
 
   const enabled = opts.enabled;
   const concurrency = Math.max(1, Math.min(8, opts.concurrency ?? 4));
-  const timeoutMs = opts.timeoutMs ?? 25_000;
+  // Prefer completeness: never default to a short timeout that drops Grok/Devin history
+  const timeoutMs = opts.timeoutMs === undefined ? DEFAULT_PARSER_TIMEOUT_MS : opts.timeoutMs;
   const onAgentDone = opts.onAgentDone;
 
   type Job = { id: AgentId; label: string; roots: string[]; parse: (roots: string[]) => Promise<UsageEvent[]> };

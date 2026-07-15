@@ -178,9 +178,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // short/partial pass never deletes usage we already discovered.
         await scanAll({
           concurrency: full ? 3 : 4,
-          // Full: hard cap so a stuck parser cannot freeze the process forever.
-          // Periodic: shorter soft timeout; results are always unioned with previous.
-          timeoutMs: full ? 300_000 : 90_000,
+          // Full: no timeout (0) — wait for every agent so large Grok logs are never cut.
+          // Periodic: long soft timeout; results always unioned with previous.
+          timeoutMs: full ? 0 : 300_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
             const prevForAgent = byAgent.get(agent) ?? [];
             if (error && events.length === 0) {

@@ -256,9 +256,21 @@ async function parseUpdatesUsage(
 
   try {
     for await (const line of rl) {
-      const maybeTurn = line.includes("turn_completed") && line.includes("usage");
-      const maybeStream = line.includes("totalTokens");
-      if (!maybeTurn && !maybeStream) continue;
+      const maybeTurn = line.includes("turn_completed") && line.includes('"usage"');
+      // Cheap stream-floor without full JSON parse on millions of chunks
+      if (!maybeTurn) {
+        if (line.includes("totalTokens")) {
+          const m = line.match(/"totalTokens"\s*:\s*(\d+)/);
+          if (m) {
+            const tt = Number(m[1]);
+            if (Number.isFinite(tt) && tt > maxStreamTokens) {
+              maxStreamTokens = tt;
+              // timestamp optional; keep fallback until a turn stamps it
+            }
+          }
+        }
+        continue;
+      }
 
       let row: Record<string, unknown>;
       try {
@@ -270,13 +282,6 @@ async function parseUpdatesUsage(
       const params = row.params as Record<string, unknown> | undefined;
       const update = params?.update as Record<string, unknown> | undefined;
       if (!update) continue;
-
-      const meta = (update._meta ?? params?._meta) as Record<string, unknown> | undefined;
-      const tt = num(meta?.totalTokens ?? update.totalTokens);
-      if (tt > maxStreamTokens) {
-        maxStreamTokens = tt;
-        maxStreamTs = timestampFromUpdate(row, ctx.fallbackTs);
-      }
 
       if (update.sessionUpdate !== "turn_completed") continue;
 
@@ -314,6 +319,7 @@ async function parseUpdatesUsage(
         String(idx);
 
       const ts = timestampFromUpdate(row, ctx.fallbackTs);
+      maxStreamTs = ts;
 
       events.push(
         applyPricing({
