@@ -278,150 +278,118 @@ function pushUsageFromUnknown(
 }
 
 /**
- * Decrypt + parse cascade/*.pb and implicit/*.pb.
+ * Decrypt + parse ALL trajectory .pb under the windsurf data root.
  *
- * Both directories hold independent trajectories (different UUIDs). Skipping
- * all of `implicit` when any cascade decrypts drops real usage (e.g. today's
- * implicit sessions with millions of tokens). Prefer cascade when the same
- * session id appears in both; otherwise keep both.
+ * Policy: prefer over-count over missing usage.
+ * - cascade + implicit + any other *.pb (except settings) are all counted
+ * - real Token Usage when decrypt works; else size heuristic for non-tiny files
+ * - cascade vs implicit with different UUIDs are both kept (independent sessions)
+ * - same path never counted twice (`seen`)
  */
 async function parseCascadeSessions(root: string, seen: Set<string>): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
-  /** sessionId → index in events (for cascade-over-implicit preference). */
-  const bySession = new Map<string, number>();
 
-  const cascadeDirs = [
+  // Prefer known trajectory dirs first, then any leftover .pb under root
+  const preferredDirs = [
     path.join(root, "cascade"),
     path.join(root, "windsurf", "cascade"),
-  ];
-  const implicitDirs = [
     path.join(root, "implicit"),
     path.join(root, "windsurf", "implicit"),
   ];
 
-  const pushSession = (
-    kind: "cascade" | "implicit",
-    sessionId: string,
-    file: string,
-    timestamp: string,
-    real: {
-      model: string;
-      inputTokens: number;
-      outputTokens: number;
-      cacheReadTokens: number;
-    } | null,
-    size: number,
-  ): void => {
+  const files: string[] = [];
+  for (const dir of preferredDirs) {
+    if (!(await pathExists(dir))) continue;
+    files.push(
+      ...(await walkFiles(dir, {
+        maxDepth: 6,
+        match: (n) => n.endsWith(".pb"),
+      })),
+    );
+  }
+  // Catch trajectories in unexpected subfolders (never drop a .pb quietly)
+  if (await pathExists(root)) {
+    files.push(
+      ...(await walkFiles(root, {
+        maxDepth: 8,
+        match: (n, full) => {
+          if (!n.endsWith(".pb")) return false;
+          const base = n.toLowerCase();
+          // settings / config blobs — not session usage
+          if (base.includes("user_settings") || base.includes("settings") || base.includes("config")) {
+            return false;
+          }
+          return true;
+        },
+      })),
+    );
+  }
+
+  for (const file of files) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+
+    let st;
+    try {
+      st = await stat(file);
+    } catch {
+      continue;
+    }
+    // Absolute stubs only — still try larger files even without labeled metrics
+    if (st.size < 128) continue;
+
+    const sessionId = path.basename(file, ".pb");
+    const timestamp = st.mtime.toISOString();
+    const kind = trajectoryKind(file);
+    const real = await tryParseEncryptedTrajectory(file, st.size);
     const hasReal =
       real != null &&
       (real.inputTokens > 0 || real.outputTokens > 0 || real.cacheReadTokens > 0);
 
-    // Size heuristic only for cascade; empty implicit files are noise
-    if (!hasReal && kind === "implicit") return;
-    if (!hasReal && size < 512) return;
+    // Tiny files with no metrics are noise; anything ≥2KB without labels still
+    // gets a size heuristic so usage is never silently dropped.
+    if (!hasReal && st.size < 2048) continue;
 
-    const inputTokens = hasReal
-      ? real!.inputTokens
-      : Math.round(Math.max(1, Math.round(size / 12)) * 0.6);
-    const outputTokens = hasReal
-      ? real!.outputTokens
-      : Math.max(1, Math.round(size / 12) - inputTokens);
+    const totalEst = Math.max(1, Math.round(st.size / 12));
+    const inputTokens = hasReal ? real!.inputTokens : Math.round(totalEst * 0.65);
+    const outputTokens = hasReal ? real!.outputTokens : Math.max(1, totalEst - inputTokens);
     const cacheReadTokens = hasReal ? real!.cacheReadTokens : 0;
-    const model = hasReal ? real!.model : real?.model || "windsurf-cascade";
+    const model = (hasReal ? real!.model : real?.model) || "windsurf-cascade";
 
-    // Keep id shape stable so rescan merges with prior cascade rows (no double-count)
-    const event = applyPricing({
-      id: hasReal
-        ? stableId(
-            "windsurf",
-            kind,
-            sessionId,
-            String(inputTokens),
-            String(outputTokens),
-            String(cacheReadTokens),
-          )
-        : stableId("windsurf", kind, sessionId, String(size), timestamp),
-      agent: "windsurf",
-      model,
-      timestamp,
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheWriteTokens: 0,
-      workspace: null,
-      sourcePath: file,
-      estimated: !hasReal,
-    });
-
-    const prevIdx = bySession.get(sessionId);
-    if (prevIdx != null) {
-      // Same session UUID already counted — keep cascade / richer real metrics
-      const prev = events[prevIdx];
-      if (!prev) return;
-      if (kind === "implicit") return;
-      if (kind === "cascade" && (prev.estimated || !hasReal)) {
-        events[prevIdx] = event;
-      }
-      return;
-    }
-
-    bySession.set(sessionId, events.length);
-    events.push(event);
-  };
-
-  for (const dir of cascadeDirs) {
-    if (!(await pathExists(dir))) continue;
-    const files = await walkFiles(dir, {
-      maxDepth: 3,
-      match: (n) => n.endsWith(".pb"),
-    });
-
-    for (const file of files) {
-      if (seen.has(file)) continue;
-      seen.add(file);
-
-      let st;
-      try {
-        st = await stat(file);
-      } catch {
-        continue;
-      }
-      if (st.size < 512) continue;
-
-      const sessionId = path.basename(file, ".pb");
-      const timestamp = st.mtime.toISOString();
-      const real = await tryParseEncryptedTrajectory(file, st.size);
-      pushSession("cascade", sessionId, file, timestamp, real, st.size);
-    }
-  }
-
-  // Always scan implicit — independent UUIDs are separate billable trajectories
-  for (const dir of implicitDirs) {
-    if (!(await pathExists(dir))) continue;
-    const files = await walkFiles(dir, {
-      maxDepth: 2,
-      match: (n) => n.endsWith(".pb"),
-    });
-    for (const file of files) {
-      if (seen.has(file)) continue;
-      seen.add(file);
-      let st;
-      try {
-        st = await stat(file);
-      } catch {
-        continue;
-      }
-      // Tiny encrypted stubs (< ~0.5KB) never carry Token Usage blocks
-      if (st.size < 512) continue;
-
-      const sessionId = path.basename(file, ".pb");
-      const timestamp = st.mtime.toISOString();
-      const real = await tryParseEncryptedTrajectory(file, st.size);
-      pushSession("implicit", sessionId, file, timestamp, real, st.size);
-    }
+    events.push(
+      applyPricing({
+        id: hasReal
+          ? stableId(
+              "windsurf",
+              kind,
+              sessionId,
+              String(inputTokens),
+              String(outputTokens),
+              String(cacheReadTokens),
+            )
+          : stableId("windsurf", kind, sessionId, String(st.size), timestamp),
+        agent: "windsurf",
+        model,
+        timestamp,
+        inputTokens,
+        outputTokens,
+        cacheReadTokens,
+        cacheWriteTokens: 0,
+        workspace: null,
+        sourcePath: file,
+        estimated: !hasReal,
+      }),
+    );
   }
 
   return events;
+}
+
+function trajectoryKind(file: string): "cascade" | "implicit" | "pb" {
+  const lower = file.replace(/\\/g, "/").toLowerCase();
+  if (lower.includes("/cascade/")) return "cascade";
+  if (lower.includes("/implicit/")) return "implicit";
+  return "pb";
 }
 
 /** AES-256-GCM unwrap of a cascade/implicit .pb file. */
@@ -462,7 +430,8 @@ export function extractLabeledFloats(plaintext: Buffer, label: string): number[]
 /** Dominant model slug from decrypted trajectory (glm-5-2, kimi-k2-7, swe-1-6, …). */
 export function extractDominantModel(plaintext: Buffer): string | null {
   const counts = new Map<string, number>();
-  const re = /\b((?:claude|gpt|gemini|swe|glm|kimi|o[1-9])[-a-z0-9]{2,40})\b/gi;
+  const re =
+    /\b((?:claude|gpt|gemini|swe|glm|kimi|deepseek|minimax|qwen|o[1-9]|cascade)[-a-z0-9]{2,40})\b/gi;
   const ascii = plaintext.toString("latin1");
   let m: RegExpExecArray | null;
   while ((m = re.exec(ascii))) {
@@ -489,15 +458,25 @@ export function extractCascadeUsage(plaintext: Buffer): {
   outputTokens: number;
   cacheReadTokens: number;
 } {
-  const inputs = extractLabeledFloats(plaintext, "Input tokens");
-  const outputs = extractLabeledFloats(plaintext, "Output tokens");
-  const caches = extractLabeledFloats(plaintext, "Cached input tokens");
   const sum = (xs: number[]) => xs.reduce((a, b) => a + Math.round(b), 0);
+  // First matching label family only (avoid double-summing variants)
+  const pick = (...labels: string[]) => {
+    for (const label of labels) {
+      const vals = extractLabeledFloats(plaintext, label);
+      if (vals.length > 0) return sum(vals);
+    }
+    return 0;
+  };
   return {
     model: extractDominantModel(plaintext),
-    inputTokens: sum(inputs),
-    outputTokens: sum(outputs),
-    cacheReadTokens: sum(caches),
+    inputTokens: pick("Input tokens", "input tokens", "Prompt tokens"),
+    outputTokens: pick("Output tokens", "output tokens", "Completion tokens"),
+    cacheReadTokens: pick(
+      "Cached input tokens",
+      "Cached tokens",
+      "Cache read tokens",
+      "cached input tokens",
+    ),
   };
 }
 

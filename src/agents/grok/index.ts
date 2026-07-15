@@ -64,7 +64,8 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
       const sessionId =
         (typeof info.id === "string" && info.id) || path.basename(dir);
 
-      // 1) Real usage from updates.jsonl (authoritative)
+      // 1) Real usage from updates.jsonl (authoritative when present)
+      let hadRealUsage = false;
       const updatesPath = path.join(dir, "updates.jsonl");
       if (await pathExists(updatesPath)) {
         const fromUpdates = await parseUpdatesUsage(updatesPath, {
@@ -75,13 +76,13 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         });
         if (fromUpdates.length > 0) {
           events.push(...fromUpdates);
-          continue;
+          hadRealUsage = true;
         }
       }
 
       // 2) Explicit usage on summary (rare)
       const usage = (summary.usage ?? summary.token_usage) as Record<string, unknown> | undefined;
-      if (usage) {
+      if (!hadRealUsage && usage) {
         const buckets = bucketsFromUsage(usage);
         if (buckets) {
           events.push(
@@ -95,11 +96,14 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
               sourcePath: summaryPath,
             }),
           );
-          continue;
+          hadRealUsage = true;
         }
       }
 
-      // 3) Fallback: estimate from chat_history text (best-effort)
+      // 3) Chat text estimate — only when no real counters (prefer over-count is
+      // handled by summing every turn_completed; don't double with text when real exists)
+      if (hadRealUsage) continue;
+
       const chatPath = path.join(dir, "chat_history.jsonl");
       const chatText = await readText(chatPath);
       if (!chatText) continue;
@@ -200,6 +204,9 @@ async function parseUpdatesUsage(
 ): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   let idx = 0;
+  // Floor for in-progress turns that never got turn_completed
+  let maxStreamTokens = 0;
+  let maxStreamTs = ctx.fallbackTs;
 
   const stream = createReadStream(updatesPath, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
@@ -207,7 +214,10 @@ async function parseUpdatesUsage(
   try {
     for await (const line of rl) {
       // Fast prefilter — avoid JSON.parse on millions of tool chunks
-      if (!line.includes("turn_completed") || !line.includes("usage")) continue;
+      const maybeTurn = line.includes("turn_completed") && line.includes("usage");
+      const maybeStream = line.includes("totalTokens");
+      if (!maybeTurn && !maybeStream) continue;
+
       let row: Record<string, unknown>;
       try {
         row = JSON.parse(line) as Record<string, unknown>;
@@ -217,7 +227,17 @@ async function parseUpdatesUsage(
 
       const params = row.params as Record<string, unknown> | undefined;
       const update = params?.update as Record<string, unknown> | undefined;
-      if (!update || update.sessionUpdate !== "turn_completed") continue;
+      if (!update) continue;
+
+      // Track peak stream totalTokens (context fill) as incomplete-turn floor
+      const meta = (update._meta ?? params?._meta) as Record<string, unknown> | undefined;
+      const tt = num(meta?.totalTokens ?? update.totalTokens);
+      if (tt > maxStreamTokens) {
+        maxStreamTokens = tt;
+        maxStreamTs = timestampFromUpdate(row, ctx.fallbackTs);
+      }
+
+      if (update.sessionUpdate !== "turn_completed") continue;
 
       const usage = update.usage as Record<string, unknown> | undefined;
       if (!usage || typeof usage !== "object") continue;
@@ -279,6 +299,25 @@ async function parseUpdatesUsage(
   } finally {
     rl.close();
     stream.destroy();
+  }
+
+  // In-progress session: no turn_completed yet, but stream already reported tokens
+  if (events.length === 0 && maxStreamTokens > 0) {
+    events.push(
+      applyPricing({
+        id: stableId("grok", ctx.sessionId, "stream-floor", String(maxStreamTokens)),
+        agent: "grok",
+        model: ctx.model,
+        timestamp: maxStreamTs,
+        inputTokens: maxStreamTokens,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        workspace: ctx.workspace,
+        sourcePath: updatesPath,
+        estimated: true,
+      }),
+    );
   }
 
   return events;
