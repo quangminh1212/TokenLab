@@ -278,17 +278,96 @@ function pushUsageFromUnknown(
 }
 
 /**
- * Decrypt + parse cascade/*.pb (and light implicit fallback).
- * Prefer real Token Usage metrics from decrypted CortexTrajectory protobuf.
+ * Decrypt + parse cascade/*.pb and implicit/*.pb.
+ *
+ * Both directories hold independent trajectories (different UUIDs). Skipping
+ * all of `implicit` when any cascade decrypts drops real usage (e.g. today's
+ * implicit sessions with millions of tokens). Prefer cascade when the same
+ * session id appears in both; otherwise keep both.
  */
 async function parseCascadeSessions(root: string, seen: Set<string>): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
+  /** sessionId → index in events (for cascade-over-implicit preference). */
+  const bySession = new Map<string, number>();
+
   const cascadeDirs = [
     path.join(root, "cascade"),
     path.join(root, "windsurf", "cascade"),
   ];
+  const implicitDirs = [
+    path.join(root, "implicit"),
+    path.join(root, "windsurf", "implicit"),
+  ];
 
-  let decryptedAny = false;
+  const pushSession = (
+    kind: "cascade" | "implicit",
+    sessionId: string,
+    file: string,
+    timestamp: string,
+    real: {
+      model: string;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+    } | null,
+    size: number,
+  ): void => {
+    const hasReal =
+      real != null &&
+      (real.inputTokens > 0 || real.outputTokens > 0 || real.cacheReadTokens > 0);
+
+    // Size heuristic only for cascade; empty implicit files are noise
+    if (!hasReal && kind === "implicit") return;
+    if (!hasReal && size < 512) return;
+
+    const inputTokens = hasReal
+      ? real!.inputTokens
+      : Math.round(Math.max(1, Math.round(size / 12)) * 0.6);
+    const outputTokens = hasReal
+      ? real!.outputTokens
+      : Math.max(1, Math.round(size / 12) - inputTokens);
+    const cacheReadTokens = hasReal ? real!.cacheReadTokens : 0;
+    const model = hasReal ? real!.model : real?.model || "windsurf-cascade";
+
+    // Keep id shape stable so rescan merges with prior cascade rows (no double-count)
+    const event = applyPricing({
+      id: hasReal
+        ? stableId(
+            "windsurf",
+            kind,
+            sessionId,
+            String(inputTokens),
+            String(outputTokens),
+            String(cacheReadTokens),
+          )
+        : stableId("windsurf", kind, sessionId, String(size), timestamp),
+      agent: "windsurf",
+      model,
+      timestamp,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens: 0,
+      workspace: null,
+      sourcePath: file,
+      estimated: !hasReal,
+    });
+
+    const prevIdx = bySession.get(sessionId);
+    if (prevIdx != null) {
+      // Same session UUID already counted — keep cascade / richer real metrics
+      const prev = events[prevIdx];
+      if (!prev) return;
+      if (kind === "implicit") return;
+      if (kind === "cascade" && (prev.estimated || !hasReal)) {
+        events[prevIdx] = event;
+      }
+      return;
+    }
+
+    bySession.set(sessionId, events.length);
+    events.push(event);
+  };
 
   for (const dir of cascadeDirs) {
     if (!(await pathExists(dir))) continue;
@@ -312,122 +391,33 @@ async function parseCascadeSessions(root: string, seen: Set<string>): Promise<Us
       const sessionId = path.basename(file, ".pb");
       const timestamp = st.mtime.toISOString();
       const real = await tryParseEncryptedTrajectory(file, st.size);
-
-      if (real && (real.inputTokens > 0 || real.outputTokens > 0 || real.cacheReadTokens > 0)) {
-        decryptedAny = true;
-        events.push(
-          applyPricing({
-            id: stableId(
-              "windsurf",
-              "cascade",
-              sessionId,
-              String(real.inputTokens),
-              String(real.outputTokens),
-              String(real.cacheReadTokens),
-            ),
-            agent: "windsurf",
-            model: real.model,
-            timestamp,
-            inputTokens: real.inputTokens,
-            outputTokens: real.outputTokens,
-            cacheReadTokens: real.cacheReadTokens,
-            cacheWriteTokens: 0,
-            workspace: null,
-            sourcePath: file,
-          }),
-        );
-        continue;
-      }
-
-      // Decrypt failed or empty metrics → size heuristic
-      const totalTokens = Math.max(1, Math.round(st.size / 12));
-      const inputTokens = Math.round(totalTokens * 0.6);
-      const outputTokens = Math.max(1, totalTokens - inputTokens);
-      events.push(
-        applyPricing({
-          id: stableId("windsurf", "cascade", sessionId, String(st.size), timestamp),
-          agent: "windsurf",
-          model: real?.model || "windsurf-cascade",
-          timestamp,
-          inputTokens,
-          outputTokens,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          workspace: null,
-          sourcePath: file,
-          estimated: true,
-        }),
-      );
+      pushSession("cascade", sessionId, file, timestamp, real, st.size);
     }
   }
 
-  // Implicit trajectories often embed copies of cascade Token Usage — skip when
-  // cascade decrypt already produced real events to avoid double-counting.
-  if (!decryptedAny) {
-    const implicitDir = path.join(root, "implicit");
-    if (await pathExists(implicitDir)) {
-      const files = await walkFiles(implicitDir, {
-        maxDepth: 2,
-        match: (n) => n.endsWith(".pb"),
-      });
-      for (const file of files) {
-        if (seen.has(file)) continue;
-        seen.add(file);
-        let st;
-        try {
-          st = await stat(file);
-        } catch {
-          continue;
-        }
-        if (st.size < 2048) continue;
-
-        const sessionId = path.basename(file, ".pb");
-        const timestamp = st.mtime.toISOString();
-        const real = await tryParseEncryptedTrajectory(file, st.size);
-        if (real && (real.inputTokens > 0 || real.outputTokens > 0 || real.cacheReadTokens > 0)) {
-          events.push(
-            applyPricing({
-              id: stableId(
-                "windsurf",
-                "implicit",
-                sessionId,
-                String(real.inputTokens),
-                String(real.outputTokens),
-                String(real.cacheReadTokens),
-              ),
-              agent: "windsurf",
-              model: real.model,
-              timestamp,
-              inputTokens: real.inputTokens,
-              outputTokens: real.outputTokens,
-              cacheReadTokens: real.cacheReadTokens,
-              cacheWriteTokens: 0,
-              workspace: null,
-              sourcePath: file,
-            }),
-          );
-          continue;
-        }
-
-        const totalTokens = Math.max(1, Math.round(st.size / 24));
-        const inputTokens = Math.round(totalTokens * 0.7);
-        const outputTokens = Math.max(1, totalTokens - inputTokens);
-        events.push(
-          applyPricing({
-            id: stableId("windsurf", "implicit", sessionId, String(st.size), timestamp),
-            agent: "windsurf",
-            model: "windsurf-cascade",
-            timestamp,
-            inputTokens,
-            outputTokens,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            workspace: null,
-            sourcePath: file,
-            estimated: true,
-          }),
-        );
+  // Always scan implicit — independent UUIDs are separate billable trajectories
+  for (const dir of implicitDirs) {
+    if (!(await pathExists(dir))) continue;
+    const files = await walkFiles(dir, {
+      maxDepth: 2,
+      match: (n) => n.endsWith(".pb"),
+    });
+    for (const file of files) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      let st;
+      try {
+        st = await stat(file);
+      } catch {
+        continue;
       }
+      // Tiny encrypted stubs (< ~0.5KB) never carry Token Usage blocks
+      if (st.size < 512) continue;
+
+      const sessionId = path.basename(file, ".pb");
+      const timestamp = st.mtime.toISOString();
+      const real = await tryParseEncryptedTrajectory(file, st.size);
+      pushSession("implicit", sessionId, file, timestamp, real, st.size);
     }
   }
 
