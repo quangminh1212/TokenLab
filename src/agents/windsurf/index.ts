@@ -335,8 +335,8 @@ async function parseCascadeSessions(root: string, seen: Set<string>): Promise<Us
     } catch {
       continue;
     }
-    // Absolute stubs only — still try larger files even without labeled metrics
-    if (st.size < 128) continue;
+    // Absolute empty stubs only
+    if (st.size < 64) continue;
 
     const sessionId = path.basename(file, ".pb");
     const timestamp = st.mtime.toISOString();
@@ -346,11 +346,12 @@ async function parseCascadeSessions(root: string, seen: Set<string>): Promise<Us
       real != null &&
       (real.inputTokens > 0 || real.outputTokens > 0 || real.cacheReadTokens > 0);
 
-    // Tiny files with no metrics are noise; anything ≥2KB without labels still
-    // gets a size heuristic so usage is never silently dropped.
-    if (!hasReal && st.size < 2048) continue;
+    // Over-count policy: any non-trivial .pb without labels still gets size heuristic
+    // (only skip tiny encrypted stubs < 256B with no metrics).
+    if (!hasReal && st.size < 256) continue;
 
-    const totalEst = Math.max(1, Math.round(st.size / 12));
+    // denser heuristic for small files so short sessions are not under-estimated
+    const totalEst = Math.max(1, Math.round(st.size / (st.size < 50_000 ? 8 : 12)));
     const inputTokens = hasReal ? real!.inputTokens : Math.round(totalEst * 0.65);
     const outputTokens = hasReal ? real!.outputTokens : Math.max(1, totalEst - inputTokens);
     const cacheReadTokens = hasReal ? real!.cacheReadTokens : 0;
@@ -417,12 +418,20 @@ export function extractLabeledFloats(plaintext: Buffer, label: string): number[]
   const out: number[] = [];
   let idx = 0;
   while ((idx = plaintext.indexOf(needle, idx)) !== -1) {
-    const pos = idx + needle.length;
-    if (pos + 5 <= plaintext.length && plaintext[pos] === 0x15) {
+    const base = idx + needle.length;
+    // Wire type 5 (fixed32) tag is usually 0x15 immediately after the label;
+    // also scan a few skip bytes for protobuf padding / field headers.
+    for (let off = 0; off <= 6; off++) {
+      const pos = base + off;
+      if (pos + 5 > plaintext.length) break;
+      if (plaintext[pos] !== 0x15) continue;
       const f = plaintext.readFloatLE(pos + 1);
-      if (Number.isFinite(f) && f >= 0 && f < 50_000_000) out.push(f);
+      if (Number.isFinite(f) && f >= 0 && f < 50_000_000) {
+        out.push(f);
+        break;
+      }
     }
-    idx = pos;
+    idx = base;
   }
   return out;
 }

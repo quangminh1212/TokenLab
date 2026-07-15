@@ -128,8 +128,8 @@ test("parseGrok falls back to chat estimate when updates has no usage", async ()
     const events = await parseGrok([root]);
     assert.equal(events.length, 1);
     assert.equal(events[0]!.estimated, true);
-    // Synthetic reminder must not inflate input
-    assert.ok(events[0]!.inputTokens < 100);
+    // Over-count policy: synthetic injects are included in prompt estimate
+    assert.ok((events[0]!.inputTokens ?? 0) > 1000);
     assert.ok((events[0]!.outputTokens ?? 0) > 0);
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -2,6 +2,7 @@ import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
 import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { applyPricing } from "../../pricing.js";
@@ -18,9 +19,12 @@ import {
 
 /**
  * Grok Build CLI: ~/.grok/sessions/<cwd>/<id>/
- * Prefer real counters from updates.jsonl `turn_completed.usage`
- * (inputTokens includes cache; cachedReadTokens is the cache hit portion).
- * Fall back to chat_history.jsonl text estimate only when usage is missing.
+ *
+ * Policy: prefer over-count over missing usage.
+ * - Discover sessions via summary.json OR updates.jsonl OR chat_history.jsonl
+ * - Prefer turn_completed.usage (input includes cache; split cache for pricing)
+ * - Stream totalTokens floor for in-progress turns
+ * - Chat text estimate only when no real counters (include synthetics — they are billed)
  */
 export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
@@ -30,21 +34,26 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
     const sessionsRoot = path.join(root, "sessions");
     if (!(await pathExists(sessionsRoot))) continue;
 
-    const summaries = await walkFiles(sessionsRoot, {
-      maxDepth: 10,
-      match: (n) => n === "summary.json",
+    // Discover every session dir that has any artifact (never require summary.json)
+    const markers = await walkFiles(sessionsRoot, {
+      maxDepth: 14,
+      match: (n) =>
+        n === "summary.json" || n === "updates.jsonl" || n === "chat_history.jsonl",
     });
+    const sessionDirs = unique(markers.map((m) => path.dirname(m)));
 
-    for (const summaryPath of summaries) {
-      const dir = path.dirname(summaryPath);
-      const summaryText = await readText(summaryPath);
-      if (!summaryText) continue;
-
+    for (const dir of sessionDirs) {
+      const summaryPath = path.join(dir, "summary.json");
       let summary: Record<string, unknown> = {};
-      try {
-        summary = JSON.parse(summaryText) as Record<string, unknown>;
-      } catch {
-        continue;
+      if (await pathExists(summaryPath)) {
+        const summaryText = await readText(summaryPath);
+        if (summaryText) {
+          try {
+            summary = JSON.parse(summaryText) as Record<string, unknown>;
+          } catch {
+            summary = {};
+          }
+        }
       }
 
       const info = (summary.info ?? {}) as Record<string, unknown>;
@@ -55,16 +64,20 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
       const workspace =
         (typeof info.cwd === "string" && info.cwd) ||
         (typeof summary.git_root_dir === "string" && summary.git_root_dir) ||
+        decodeWorkspaceFromSessionPath(dir) ||
         null;
       const ts =
         (typeof summary.updated_at === "string" && summary.updated_at) ||
         (typeof summary.last_active_at === "string" && summary.last_active_at) ||
         (typeof summary.created_at === "string" && summary.created_at) ||
+        (await mtimeIso(path.join(dir, "updates.jsonl"))) ||
+        (await mtimeIso(path.join(dir, "chat_history.jsonl"))) ||
+        (await mtimeIso(summaryPath)) ||
         new Date().toISOString();
       const sessionId =
         (typeof info.id === "string" && info.id) || path.basename(dir);
 
-      // 1) Real usage from updates.jsonl (authoritative when present)
+      // 1) Real usage from updates.jsonl
       let hadRealUsage = false;
       const updatesPath = path.join(dir, "updates.jsonl");
       if (await pathExists(updatesPath)) {
@@ -80,7 +93,7 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         }
       }
 
-      // 2) Explicit usage on summary (rare)
+      // 2) Explicit usage on summary
       const usage = (summary.usage ?? summary.token_usage) as Record<string, unknown> | undefined;
       if (!hadRealUsage && usage) {
         const buckets = bucketsFromUsage(usage);
@@ -100,35 +113,41 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         }
       }
 
-      // 3) Chat text estimate — only when no real counters (prefer over-count is
-      // handled by summing every turn_completed; don't double with text when real exists)
+      // 3) Chat text estimate only when no real counters
       if (hadRealUsage) continue;
 
       const chatPath = path.join(dir, "chat_history.jsonl");
       const chatText = await readText(chatPath);
       if (!chatText) continue;
 
-      let pendingUserChars = 0;
+      // Cumulative context chars → each assistant turn prices full history (over-count friendly)
+      let contextChars = 0;
       let turn = 0;
       let emitted = 0;
       for (const row of parseJsonl(chatText)) {
         if (!row || typeof row !== "object") continue;
         const r = row as Record<string, unknown>;
         const type = String(r.type ?? r.role ?? "");
-        // Skip synthetic injects (skills/MCP/reminders) — they inflate char estimates
-        // and are already reflected in real turn_completed counters when present.
-        if (typeof r.synthetic_reason === "string" && r.synthetic_reason) continue;
+        // Count ALL text including synthetic injects / system / tool results when stored as text
         const content = extractText(r.content);
         if (!content) continue;
-        if (type === "user" || type === "human") {
-          pendingUserChars += content.length;
+        if (
+          type === "user" ||
+          type === "human" ||
+          type === "system" ||
+          type === "tool_result" ||
+          type === "tool"
+        ) {
+          contextChars += content.length;
           continue;
         }
-        if (type === "assistant" || type === "ai" || type === "model") {
+        if (type === "assistant" || type === "ai" || type === "model" || type === "reasoning") {
           turn += 1;
-          const inputTokens = estimateTokensFromText(content.length ? "x".repeat(pendingUserChars) : "");
+          const inputTokens = estimateTokensFromText(
+            contextChars > 0 ? "x".repeat(contextChars) : "",
+          );
           const outputTokens = estimateTokensFromText(content);
-          pendingUserChars = 0;
+          contextChars += content.length; // stays in context for later turns
           if (inputTokens + outputTokens <= 0) continue;
           const rowTs =
             (typeof r.timestamp === "string" && r.timestamp) ||
@@ -160,12 +179,13 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         for (const row of parseJsonl(chatText)) {
           if (!row || typeof row !== "object") continue;
           const r = row as Record<string, unknown>;
-          if (typeof r.synthetic_reason === "string" && r.synthetic_reason) continue;
           const type = String(r.type ?? r.role ?? "");
           const content = extractText(r.content);
           if (!content) continue;
-          if (type === "user" || type === "human") userChars += content.length;
-          if (type === "assistant" || type === "ai" || type === "model") assistantChars += content.length;
+          if (type === "user" || type === "human" || type === "system") userChars += content.length;
+          if (type === "assistant" || type === "ai" || type === "model" || type === "reasoning") {
+            assistantChars += content.length;
+          }
         }
         if (userChars + assistantChars === 0) continue;
         const inputTokens = estimateTokensFromText("x".repeat(userChars));
@@ -192,6 +212,30 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
   return events;
 }
 
+/** Best-effort workspace from encoded session folder path. */
+function decodeWorkspaceFromSessionPath(dir: string): string | null {
+  // .../sessions/C%3A%5CDev%5CXLab_Token/<id>
+  const parent = path.basename(path.dirname(dir));
+  if (!parent || parent === "sessions") return null;
+  try {
+    const decoded = decodeURIComponent(parent);
+    if (decoded.includes(":") || decoded.startsWith("/") || decoded.startsWith("\\")) return decoded;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+async function mtimeIso(file: string): Promise<string | null> {
+  try {
+    if (!(await pathExists(file))) return null;
+    const st = await stat(file);
+    return st.mtime.toISOString();
+  } catch {
+    return null;
+  }
+}
+
 /** Stream updates.jsonl and emit one event per turn_completed with usage. */
 async function parseUpdatesUsage(
   updatesPath: string,
@@ -204,7 +248,6 @@ async function parseUpdatesUsage(
 ): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   let idx = 0;
-  // Floor for in-progress turns that never got turn_completed
   let maxStreamTokens = 0;
   let maxStreamTs = ctx.fallbackTs;
 
@@ -213,7 +256,6 @@ async function parseUpdatesUsage(
 
   try {
     for await (const line of rl) {
-      // Fast prefilter — avoid JSON.parse on millions of tool chunks
       const maybeTurn = line.includes("turn_completed") && line.includes("usage");
       const maybeStream = line.includes("totalTokens");
       if (!maybeTurn && !maybeStream) continue;
@@ -229,7 +271,6 @@ async function parseUpdatesUsage(
       const update = params?.update as Record<string, unknown> | undefined;
       if (!update) continue;
 
-      // Track peak stream totalTokens (context fill) as incomplete-turn floor
       const meta = (update._meta ?? params?._meta) as Record<string, unknown> | undefined;
       const tt = num(meta?.totalTokens ?? update.totalTokens);
       if (tt > maxStreamTokens) {
@@ -246,13 +287,13 @@ async function parseUpdatesUsage(
       if (!buckets) continue;
 
       idx += 1;
+
       const modelUsage = usage.modelUsage as Record<string, unknown> | undefined;
       let model = ctx.model;
       if (modelUsage && typeof modelUsage === "object") {
         const keys = Object.keys(modelUsage);
         if (keys.length === 1 && keys[0]) model = keys[0];
         else if (keys.length > 1) {
-          // Prefer the model with the most total tokens
           let best = keys[0];
           let bestTot = -1;
           for (const k of keys) {
@@ -291,7 +332,6 @@ async function parseUpdatesUsage(
           ...buckets,
           workspace: ctx.workspace,
           sourcePath: updatesPath,
-          // Real API counters — not a text estimate
           estimated: false,
         }),
       );
@@ -301,7 +341,8 @@ async function parseUpdatesUsage(
     stream.destroy();
   }
 
-  // In-progress session: no turn_completed yet, but stream already reported tokens
+  // In-progress only: no turn_completed yet, but stream already reported tokens.
+  // Do NOT add residual on top of completed turns (peak context ≠ unbilled delta).
   if (events.length === 0 && maxStreamTokens > 0) {
     events.push(
       applyPricing({
@@ -319,7 +360,6 @@ async function parseUpdatesUsage(
       }),
     );
   }
-
   return events;
 }
 
@@ -328,7 +368,6 @@ async function parseUpdatesUsage(
  * - inputTokens = full prompt tokens (includes cache hits)
  * - cachedReadTokens = cache hit portion of input
  * - outputTokens includes reasoning
- * Price engine expects uncached input + cacheRead separately.
  */
 function bucketsFromUsage(usage: Record<string, unknown>): {
   inputTokens: number;
@@ -337,17 +376,22 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
   cacheWriteTokens: number;
 } | null {
   const fullInput = num(
-    usage.inputTokens ??
-      usage.input_tokens ??
-      usage.prompt_tokens ??
-      usage.promptTokens,
+    usage.inputTokens ?? usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokens,
   );
-  const output = num(
-    usage.outputTokens ??
-      usage.output_tokens ??
-      usage.completion_tokens ??
-      usage.completionTokens,
+  let output = num(
+    usage.outputTokens ?? usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens,
   );
+  // If reasoning is reported separately and not already in output, add it (over-count safe)
+  const reasoning = num(
+    usage.reasoningTokens ?? usage.reasoning_tokens ?? usage.thinking_tokens,
+  );
+  if (reasoning > 0 && output > 0 && reasoning > output) {
+    // reasoning reported as larger than output — treat as total generation
+    output = reasoning;
+  } else if (reasoning > 0 && output === 0) {
+    output = reasoning;
+  }
+
   const cacheRead = num(
     usage.cachedReadTokens ??
       usage.cache_read_input_tokens ??
@@ -363,7 +407,6 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
       usage.cachedWriteTokens,
   );
 
-  // Uncached input = full input minus cache hits (never negative)
   const uncached = Math.max(0, fullInput - cacheRead);
 
   if (uncached + output + cacheRead + cacheWrite <= 0) return null;
