@@ -527,7 +527,7 @@
     function renderTable() {
       const costs = state.viewMode === 'costs';
       const head = costs
-        ? ['Key', 'Events', 'Input $', 'Output $', 'Total $']
+        ? ['Key', 'Events', 'Input $', 'Cache $', 'Output $', 'Total $']
         : ['Key', 'Events', 'Input', 'Cached', 'Output', 'Total'];
       $('tableHead').innerHTML = `<tr>${head.map((h, i) =>
         `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr>`;
@@ -538,15 +538,17 @@
         return;
       }
 
-      // Split cost by token share (same approach as 9router UsageTable)
+      // Split cost by token share. input / cache / output are separate additive buckets
+      // (see aggregate.ts) — do NOT subtract cache from input (that zeroed Input $ when
+      // prompt-cache tokens >= input, common on Devin/Claude).
       $('tableBody').innerHTML = groups.map((g) => {
         const input = g.inputTokens || 0;
         const output = g.outputTokens || 0;
         const cache = (g.cacheReadTokens || 0) + (g.cacheWriteTokens || 0);
         const totalTok = g.totalTokens || (input + output + cache) || 1;
         const cost = g.estimatedCost || 0;
-        const inputShare = Math.max(0, input - cache);
-        const inputCost = cost * (inputShare / totalTok);
+        const inputCost = cost * (input / totalTok);
+        const cacheCost = cost * (cache / totalTok);
         const outCost = cost * (output / totalTok);
 
         const label = formatGroupKey(g.key);
@@ -555,6 +557,7 @@
             <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
             <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
             <td class="num muted">${money(inputCost)}</td>
+            <td class="num muted">${cache ? money(cacheCost) : '\u2014'}</td>
             <td class="num muted">${money(outCost)}</td>
             <td class="num toned-cost"><strong>${money(cost)}</strong></td>
           </tr>`;
