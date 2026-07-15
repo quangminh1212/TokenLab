@@ -1,7 +1,9 @@
 import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
+import { createReadStream } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import {
@@ -14,8 +16,12 @@ import {
   walkFiles,
 } from "../../util.js";
 
-// Grok Build CLI: ~/.grok/sessions/<cwd>/<id>/chat_history.jsonl + summary.json
-// When API usage counters are missing, estimate from message text length.
+/**
+ * Grok Build CLI: ~/.grok/sessions/<cwd>/<id>/
+ * Prefer real counters from updates.jsonl `turn_completed.usage`
+ * (inputTokens includes cache; cachedReadTokens is the cache hit portion).
+ * Fall back to chat_history.jsonl text estimate only when usage is missing.
+ */
 export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
 
@@ -58,24 +64,33 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
       const sessionId =
         (typeof info.id === "string" && info.id) || path.basename(dir);
 
-      // Prefer explicit usage if present in summary or companion files
+      // 1) Real usage from updates.jsonl (authoritative)
+      const updatesPath = path.join(dir, "updates.jsonl");
+      if (await pathExists(updatesPath)) {
+        const fromUpdates = await parseUpdatesUsage(updatesPath, {
+          sessionId,
+          model,
+          workspace,
+          fallbackTs: ts,
+        });
+        if (fromUpdates.length > 0) {
+          events.push(...fromUpdates);
+          continue;
+        }
+      }
+
+      // 2) Explicit usage on summary (rare)
       const usage = (summary.usage ?? summary.token_usage) as Record<string, unknown> | undefined;
       if (usage) {
-        const input = num(usage.input_tokens ?? usage.inputTokens);
-        const output = num(usage.output_tokens ?? usage.outputTokens);
-        const cacheRead = num(usage.cache_read_tokens ?? usage.cacheReadTokens);
-        const cacheWrite = num(usage.cache_write_tokens ?? usage.cacheWriteTokens);
-        if (input + output + cacheRead + cacheWrite > 0) {
+        const buckets = bucketsFromUsage(usage);
+        if (buckets) {
           events.push(
             applyPricing({
               id: stableId("grok", sessionId, "usage"),
               agent: "grok",
               model,
               timestamp: ts,
-              inputTokens: input,
-              outputTokens: output,
-              cacheReadTokens: cacheRead,
-              cacheWriteTokens: cacheWrite,
+              ...buckets,
               workspace,
               sourcePath: summaryPath,
             }),
@@ -84,12 +99,11 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         }
       }
 
+      // 3) Fallback: estimate from chat_history text (best-effort)
       const chatPath = path.join(dir, "chat_history.jsonl");
       const chatText = await readText(chatPath);
       if (!chatText) continue;
 
-      // One event per assistant turn so new messages increase event count & cost,
-      // instead of rewriting a single session row that UI often looked "stuck".
       let pendingUserChars = 0;
       let turn = 0;
       let emitted = 0;
@@ -97,6 +111,9 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         if (!row || typeof row !== "object") continue;
         const r = row as Record<string, unknown>;
         const type = String(r.type ?? r.role ?? "");
+        // Skip synthetic injects (skills/MCP/reminders) — they inflate char estimates
+        // and are already reflected in real turn_completed counters when present.
+        if (typeof r.synthetic_reason === "string" && r.synthetic_reason) continue;
         const content = extractText(r.content);
         if (!content) continue;
         if (type === "user" || type === "human") {
@@ -105,8 +122,8 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         }
         if (type === "assistant" || type === "ai" || type === "model") {
           turn += 1;
-          const inputTokens = estimateTokensFromText("x".repeat(pendingUserChars));
-          const outputTokens = estimateTokensFromText("x".repeat(content.length));
+          const inputTokens = estimateTokensFromText(content.length ? "x".repeat(pendingUserChars) : "");
+          const outputTokens = estimateTokensFromText(content);
           pendingUserChars = 0;
           if (inputTokens + outputTokens <= 0) continue;
           const rowTs =
@@ -133,13 +150,13 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
         }
       }
 
-      // Fallback: no typed turns parsed — keep session-level estimate
       if (emitted === 0) {
         let userChars = 0;
         let assistantChars = 0;
         for (const row of parseJsonl(chatText)) {
           if (!row || typeof row !== "object") continue;
           const r = row as Record<string, unknown>;
+          if (typeof r.synthetic_reason === "string" && r.synthetic_reason) continue;
           const type = String(r.type ?? r.role ?? "");
           const content = extractText(r.content);
           if (!content) continue;
@@ -171,6 +188,177 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
   return events;
 }
 
+/** Stream updates.jsonl and emit one event per turn_completed with usage. */
+async function parseUpdatesUsage(
+  updatesPath: string,
+  ctx: {
+    sessionId: string;
+    model: string;
+    workspace: string | null;
+    fallbackTs: string;
+  },
+): Promise<UsageEvent[]> {
+  const events: UsageEvent[] = [];
+  let idx = 0;
+
+  const stream = createReadStream(updatesPath, { encoding: "utf8" });
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+
+  try {
+    for await (const line of rl) {
+      // Fast prefilter — avoid JSON.parse on millions of tool chunks
+      if (!line.includes("turn_completed") || !line.includes("usage")) continue;
+      let row: Record<string, unknown>;
+      try {
+        row = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+
+      const params = row.params as Record<string, unknown> | undefined;
+      const update = params?.update as Record<string, unknown> | undefined;
+      if (!update || update.sessionUpdate !== "turn_completed") continue;
+
+      const usage = update.usage as Record<string, unknown> | undefined;
+      if (!usage || typeof usage !== "object") continue;
+
+      const buckets = bucketsFromUsage(usage);
+      if (!buckets) continue;
+
+      idx += 1;
+      const modelUsage = usage.modelUsage as Record<string, unknown> | undefined;
+      let model = ctx.model;
+      if (modelUsage && typeof modelUsage === "object") {
+        const keys = Object.keys(modelUsage);
+        if (keys.length === 1 && keys[0]) model = keys[0];
+        else if (keys.length > 1) {
+          // Prefer the model with the most total tokens
+          let best = keys[0];
+          let bestTot = -1;
+          for (const k of keys) {
+            const m = modelUsage[k] as Record<string, unknown> | undefined;
+            const t = num(m?.totalTokens ?? m?.inputTokens);
+            if (t > bestTot) {
+              bestTot = t;
+              best = k;
+            }
+          }
+          if (best) model = best;
+        }
+      }
+
+      const promptId =
+        (typeof update.prompt_id === "string" && update.prompt_id) ||
+        (typeof update.promptId === "string" && update.promptId) ||
+        String(idx);
+
+      const ts = timestampFromUpdate(row, ctx.fallbackTs);
+
+      events.push(
+        applyPricing({
+          id: stableId(
+            "grok",
+            ctx.sessionId,
+            "tc",
+            promptId,
+            String(buckets.inputTokens),
+            String(buckets.outputTokens),
+            String(buckets.cacheReadTokens),
+          ),
+          agent: "grok",
+          model,
+          timestamp: ts,
+          ...buckets,
+          workspace: ctx.workspace,
+          sourcePath: updatesPath,
+          // Real API counters — not a text estimate
+          estimated: false,
+        }),
+      );
+    }
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+
+  return events;
+}
+
+/**
+ * Grok turn_completed.usage:
+ * - inputTokens = full prompt tokens (includes cache hits)
+ * - cachedReadTokens = cache hit portion of input
+ * - outputTokens includes reasoning
+ * Price engine expects uncached input + cacheRead separately.
+ */
+function bucketsFromUsage(usage: Record<string, unknown>): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+} | null {
+  const fullInput = num(
+    usage.inputTokens ??
+      usage.input_tokens ??
+      usage.prompt_tokens ??
+      usage.promptTokens,
+  );
+  const output = num(
+    usage.outputTokens ??
+      usage.output_tokens ??
+      usage.completion_tokens ??
+      usage.completionTokens,
+  );
+  const cacheRead = num(
+    usage.cachedReadTokens ??
+      usage.cache_read_input_tokens ??
+      usage.cacheReadInputTokens ??
+      usage.cache_read_tokens ??
+      usage.cacheReadTokens ??
+      usage.cached_tokens,
+  );
+  const cacheWrite = num(
+    usage.cache_creation_input_tokens ??
+      usage.cacheWriteTokens ??
+      usage.cache_write_tokens ??
+      usage.cachedWriteTokens,
+  );
+
+  // Uncached input = full input minus cache hits (never negative)
+  const uncached = Math.max(0, fullInput - cacheRead);
+
+  if (uncached + output + cacheRead + cacheWrite <= 0) return null;
+  return {
+    inputTokens: uncached,
+    outputTokens: output,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+  };
+}
+
+function timestampFromUpdate(row: Record<string, unknown>, fallback: string): string {
+  const t = row.timestamp;
+  if (typeof t === "number" && Number.isFinite(t) && t > 0) {
+    const ms = t > 1e12 ? t : t * 1000;
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  if (typeof t === "string" && t.trim() && !Number.isNaN(Date.parse(t))) {
+    return new Date(t).toISOString();
+  }
+  const params = row.params as Record<string, unknown> | undefined;
+  const update = params?.update as Record<string, unknown> | undefined;
+  const meta = (update?._meta ?? params?._meta ?? row._meta) as Record<string, unknown> | undefined;
+  for (const key of ["agentTimestampMs", "streamStartMs", "turnStartMs"] as const) {
+    const v = meta?.[key];
+    if (typeof v === "number" && Number.isFinite(v) && v > 1e11) {
+      const d = new Date(v);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+  return fallback;
+}
+
 function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -192,13 +380,12 @@ function extractText(content: unknown): string {
   return "";
 }
 
-
 export const agent: AgentModule = {
   id: "grok",
   label: "Grok (xAI)",
   roots() {
-    const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
-    return unique([path.join(home, ".grok"), path.join(appData, "Grok")]);
+    const { home, appData, path: p } = pathEnv();
+    return unique([p.join(home, ".grok"), p.join(appData, "Grok")]);
   },
   parse: parseGrok,
 };
