@@ -49,6 +49,8 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
     nested.cache_read_input_tokens ??
       nested.cache_read_tokens ??
       nested.cacheReadTokens ??
+      nested.cachedReadTokens ??
+      nested.cacheReadInputTokens ??
       nested.cache_read ??
       nested.cached_content_token_count ??
       nested.cached ??
