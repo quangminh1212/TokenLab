@@ -95,6 +95,35 @@ function eventTokenWeight(e: UsageEvent): number {
   );
 }
 
+function hasModelName(e: UsageEvent): boolean {
+  const m = e.model;
+  return typeof m === "string" && m.trim().length > 0;
+}
+
+/**
+ * Prefer the richer of two same-id rows.
+ * Order: more tokens → known model over null → non-estimated → higher cost.
+ * Model fill must beat sticky high default-rate cost from null-model rows
+ * (otherwise Devin stays as "unknown" forever after the first bad scan).
+ */
+export function preferRicherEvent(prev: UsageEvent, next: UsageEvent): UsageEvent {
+  const pt = eventTokenWeight(prev);
+  const et = eventTokenWeight(next);
+  if (et > pt) return next;
+  if (et < pt) return prev;
+
+  const prevModel = hasModelName(prev);
+  const nextModel = hasModelName(next);
+  if (nextModel && !prevModel) return next;
+  if (prevModel && !nextModel) return prev;
+
+  if (!next.estimated && prev.estimated) return next;
+  if (next.estimated && !prev.estimated) return prev;
+
+  if ((Number(next.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0)) return next;
+  return prev;
+}
+
 /** Union events by `id` (first wins for duplicates). */
 export function mergeEventsById(...lists: UsageEvent[][]): UsageEvent[] {
   const byId = new Map<string, UsageEvent>();
@@ -110,7 +139,8 @@ export function mergeEventsById(...lists: UsageEvent[][]): UsageEvent[] {
 
 /**
  * Union by id, but when the same id appears in multiple lists keep the richer row
- * (more tokens, then higher cost). Prevents a partial re-scan from shrinking all-time totals.
+ * (more tokens, then known model, then higher cost). Prevents a partial re-scan
+ * from shrinking all-time totals while still filling in missing model names.
  */
 export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEvent[] {
   const byId = new Map<string, UsageEvent>();
@@ -123,13 +153,7 @@ export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEven
         byId.set(e.id, e);
         continue;
       }
-      const pt = eventTokenWeight(prev);
-      const et = eventTokenWeight(e);
-      if (et > pt) {
-        byId.set(e.id, e);
-      } else if (et === pt && (Number(e.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0)) {
-        byId.set(e.id, e);
-      }
+      byId.set(e.id, preferRicherEvent(prev, e));
     }
   }
   return [...byId.values()];

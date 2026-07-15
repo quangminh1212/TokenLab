@@ -2,8 +2,66 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { restoreBackup, mirrorsRoot } from "../src/backup.js";
+import {
+  restoreBackup,
+  mirrorsRoot,
+  mergeEventsByIdPreferRicher,
+  preferRicherEvent,
+} from "../src/backup.js";
+import type { UsageEvent } from "../src/types.js";
 import { pathExists } from "../src/util.js";
+
+function evt(partial: Partial<UsageEvent> & { id: string }): UsageEvent {
+  return {
+    agent: "devin",
+    model: null,
+    timestamp: "2026-07-15T00:00:00.000Z",
+    inputTokens: 100,
+    outputTokens: 10,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 110,
+    estimatedCost: 1,
+    currency: "USD",
+    pricingStatus: "priced",
+    workspace: null,
+    sourcePath: "/x",
+    ...partial,
+  };
+}
+
+test("preferRicherEvent fills null model even when default cost is higher", () => {
+  const stale = evt({
+    id: "same",
+    model: null,
+    estimatedCost: 5,
+    totalTokens: 110,
+  });
+  const fresh = evt({
+    id: "same",
+    model: "glm-5-2",
+    estimatedCost: 0.2,
+    totalTokens: 110,
+  });
+  const kept = preferRicherEvent(stale, fresh);
+  assert.equal(kept.model, "glm-5-2");
+  assert.equal(kept.estimatedCost, 0.2);
+});
+
+test("mergeEventsByIdPreferRicher upgrades null-model cache rows", () => {
+  const cached = [
+    evt({ id: "a", model: null, estimatedCost: 9, inputTokens: 50, totalTokens: 60 }),
+    evt({ id: "b", model: "swe-1-6", estimatedCost: 1, inputTokens: 50, totalTokens: 60 }),
+  ];
+  const scanned = [
+    evt({ id: "a", model: "kimi-k2-7", estimatedCost: 0.5, inputTokens: 50, totalTokens: 60 }),
+    evt({ id: "b", model: "swe-1-6", estimatedCost: 1, inputTokens: 50, totalTokens: 60 }),
+  ];
+  const merged = mergeEventsByIdPreferRicher(scanned, cached);
+  const byId = Object.fromEntries(merged.map((e) => [e.id, e]));
+  assert.equal(byId.a.model, "kimi-k2-7");
+  assert.equal(byId.b.model, "swe-1-6");
+});
 
 test("restore mirrors blocks path traversal", async () => {
   const root = mirrorsRoot();

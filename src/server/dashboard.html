@@ -332,7 +332,10 @@
         return formatHourLabel(key, true);
       }
       if (state.groupBy === 'model') {
-        return normalizeModelName(key) || String(key ?? '');
+        const k = String(key ?? '');
+        // Keep "unknown (devin)" — do not strip agent suffix (looks like bare "unknown")
+        if (/^unknown\s*\(/i.test(k)) return k;
+        return normalizeModelName(k) || k;
       }
       return String(key ?? '');
     }
