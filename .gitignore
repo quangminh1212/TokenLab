@@ -62,6 +62,7 @@ check_paths.mjs
 
 .tmp-*
 .tmp-serve.*
+.gist-restore-check.json
 
 
 .playwright-mcp/

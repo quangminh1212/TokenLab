@@ -5,7 +5,9 @@ import test from "node:test";
 import {
   buildDailyAgentModelRollups,
   buildGistFullBackup,
+  buildGistRestoreRollups,
   buildPeriodStats,
+  mergeLocalPreferOverGistRollups,
   collapseRouterDailyEvents,
   loadScanCache,
   restoreBackup,
@@ -328,13 +330,14 @@ test("buildPeriodStats covers byModel + byAgent for all dashboard periods", () =
   assert.equal(stats.all.totals.eventCount, 3);
 });
 
-test("buildDailyAgentModelRollups merges same day×agent×model", () => {
+test("buildGistRestoreRollups uses hour buckets for recent, day for older", () => {
+  const now = Date.now();
   const events = [
     evt({
       id: "r1",
       agent: "grok",
       model: "grok-4.5 (xAI)",
-      timestamp: "2026-07-15T10:00:00.000Z",
+      timestamp: new Date(now - 30 * 60_000).toISOString(),
       inputTokens: 100,
       totalTokens: 110,
       estimatedCost: 1,
@@ -343,7 +346,7 @@ test("buildDailyAgentModelRollups merges same day×agent×model", () => {
       id: "r2",
       agent: "grok",
       model: "grok-4.5",
-      timestamp: "2026-07-15T18:00:00.000Z",
+      timestamp: new Date(now - 20 * 60_000).toISOString(),
       inputTokens: 50,
       totalTokens: 55,
       estimatedCost: 0.5,
@@ -352,19 +355,65 @@ test("buildDailyAgentModelRollups merges same day×agent×model", () => {
       id: "r3",
       agent: "windsurf",
       model: "swe-1-6",
-      timestamp: "2026-07-15T12:00:00.000Z",
+      timestamp: new Date(now - 10 * 86_400_000).toISOString(),
       inputTokens: 10,
       totalTokens: 11,
       estimatedCost: 0.1,
     }),
   ];
-  const rollups = buildDailyAgentModelRollups(events);
-  assert.equal(rollups.length, 2);
-  const grok = rollups.find((e) => e.agent === "grok");
+  const rollups = buildGistRestoreRollups(events, now);
+  const recent = rollups.filter((e) => e.sourcePath === "backup:gist-hour");
+  const older = rollups.filter((e) => e.sourcePath === "backup:gist-daily");
+  assert.ok(recent.length >= 1);
+  assert.equal(older.length, 1);
+  const grok = recent.find((e) => e.agent === "grok");
   assert.ok(grok);
   assert.equal(grok!.inputTokens, 150);
   assert.equal(grok!.estimatedCost, 1.5);
-  assert.equal(grok!.sourcePath, "backup:gist-daily");
+  // alias still works
+  assert.equal(buildDailyAgentModelRollups(events).length, rollups.length);
+});
+
+test("mergeLocalPreferOverGistRollups drops gist when local covers day×agent×model", () => {
+  const local = [
+    evt({
+      id: "local-1",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: "2026-07-15T10:00:00.000Z",
+      inputTokens: 100,
+      totalTokens: 110,
+      estimatedCost: 1,
+      sourcePath: "/real/path",
+    }),
+  ];
+  const imported = [
+    evt({
+      id: "gist-1",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: "2026-07-15T12:00:00.000Z",
+      inputTokens: 9999,
+      totalTokens: 9999,
+      estimatedCost: 50,
+      sourcePath: "backup:gist-daily",
+    }),
+    evt({
+      id: "gist-2",
+      agent: "windsurf",
+      model: "swe-1-6",
+      timestamp: "2026-07-14T12:00:00.000Z",
+      inputTokens: 10,
+      totalTokens: 11,
+      estimatedCost: 0.1,
+      sourcePath: "backup:gist-hour",
+    }),
+  ];
+  const merged = mergeLocalPreferOverGistRollups(local, imported);
+  assert.equal(merged.length, 2);
+  assert.ok(merged.some((e) => e.id === "local-1"));
+  assert.ok(merged.some((e) => e.id === "gist-2"), "uncovered agent kept");
+  assert.ok(!merged.some((e) => e.id === "gist-1"), "covered gist rollup dropped");
 });
 
 test("buildGistFullBackup is period-stats and much smaller than raw events", async () => {
@@ -389,4 +438,33 @@ test("buildGistFullBackup is period-stats and much smaller than raw events", asy
   const rawSize = Buffer.byteLength(JSON.stringify(events), "utf8");
   const gistSize = Buffer.byteLength(JSON.stringify(backup), "utf8");
   assert.ok(gistSize < rawSize, `gist ${gistSize} should be < raw ${rawSize}`);
+});
+
+test("Gist restore rollups match source totals for dashboard periods", async () => {
+  const now = Date.now();
+  const events = Array.from({ length: 120 }, (_, i) =>
+    evt({
+      id: `acc-${i}`,
+      agent: i % 2 === 0 ? "grok" : "devin",
+      model: i % 3 === 0 ? "grok-4.5" : "glm-5-2",
+      timestamp: new Date(now - i * 3_600_000).toISOString(), // last 120 hours
+      inputTokens: 100 + i,
+      outputTokens: 10,
+      totalTokens: 110 + i,
+      estimatedCost: 0.05 * (i + 1),
+    }),
+  );
+  const { filterByPeriod } = await import("../src/util.js");
+  const { aggregate } = await import("../src/aggregate.js");
+  const rollups = buildGistRestoreRollups(events, now);
+  for (const period of ["today", "24h", "7d", "30d", null] as const) {
+    const src = aggregate(filterByPeriod(events, period, null, "UTC"), "model", "cost").totals;
+    const rol = aggregate(filterByPeriod(rollups, period, null, "UTC"), "model", "cost").totals;
+    const costErr = Math.abs(rol.estimatedCost - src.estimatedCost);
+    const tokErr = Math.abs(rol.totalTokens - src.totalTokens);
+    assert.ok(
+      costErr < 0.0001 && tokErr < 1,
+      `period ${period ?? "all"} costΔ=${costErr} tokΔ=${tokErr} src=${src.estimatedCost} rol=${rol.estimatedCost}`,
+    );
+  }
 });

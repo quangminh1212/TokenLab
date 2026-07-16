@@ -11,6 +11,7 @@ import {
   loadScanCache,
   mergeEventsById,
   mergeEventsByIdPreferRicher,
+  mergeLocalPreferOverGistRollups,
   restoreBackup,
   saveImportedEvents,
   saveScanCache,
@@ -55,7 +56,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let importedEvents: UsageEvent[] = await loadImportedEvents();
   /** Last local scan snapshot — unioned so incomplete/timeout passes never wipe known usage. */
   const diskScanCache = await loadScanCache();
-  cache = mergeEventsByIdPreferRicher(diskScanCache, importedEvents);
+  cache = mergeLocalPreferOverGistRollups(diskScanCache, importedEvents);
   if (diskScanCache.length > 0) {
     console.log(`[xlab-token] loaded ${diskScanCache.length} cached scan events`);
   }
@@ -169,9 +170,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         for (const list of byAgent.values()) {
           for (const e of list) scanned.push(e);
         }
-        // Always keep imported + local. Prefer richer row on same id so a short
-        // re-scan cannot wipe all-time hermes/router/devin totals.
-        cache = mergeEventsByIdPreferRicher(scanned, importedEvents);
+        // Keep imported + local. Drop Gist day/hour rollups when local already
+        // covers the same day×agent×model (avoids double-count after restore).
+        cache = mergeLocalPreferOverGistRollups(scanned, importedEvents);
       };
       try {
         // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+
@@ -835,12 +836,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const payload = (body.backup && typeof body.backup === "object" ? body.backup : body) as unknown;
       try {
         const result = await restoreBackup(payload);
-        // Full restore: replace in-memory event cache when present
+        // Restore usage: merge Gist rollups / full events into import + cache
         if (result.events && result.events.length > 0) {
           // Persist so the next local rescan does not drop other-machine events
-          importedEvents = mergeEventsById(importedEvents, result.events);
+          importedEvents = mergeEventsByIdPreferRicher(importedEvents, result.events);
           await saveImportedEvents(importedEvents);
-          cache = repriceEvents(mergeEventsById(result.events, importedEvents), {
+          // Prefer real local rows over Gist rollups for the same day×agent×model
+          cache = repriceEvents(mergeLocalPreferOverGistRollups(cache, importedEvents), {
             forceTable: result.config.pricing?.preferRouterCost === false,
           });
           bumpScan("restore");

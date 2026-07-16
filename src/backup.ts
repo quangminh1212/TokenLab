@@ -948,36 +948,90 @@ export function buildPeriodStats(
   return out;
 }
 
-/**
- * Collapse raw events to one row per day × agent × model for restore.
- * Keeps multi-machine merge useful without shipping every request.
- */
-export function buildDailyAgentModelRollups(events: UsageEvent[]): UsageEvent[] {
-  type Acc = {
-    agent: UsageEvent["agent"];
-    model: string | null;
-    day: string;
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-    totalTokens: number;
-    estimatedCost: number;
-    eventCount: number;
+type RollupAcc = {
+  agent: UsageEvent["agent"];
+  model: string | null;
+  /** Bucket id: day `YYYY-MM-DD` or hour `YYYY-MM-DDTHH` */
+  bucket: string;
+  kind: "hour" | "day";
+  /** Latest source timestamp in bucket — keeps Today/24h/7d filters accurate */
+  lastTs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  estimatedCost: number;
+  eventCount: number;
+};
+
+function addToRollup(row: RollupAcc, e: UsageEvent, ts: number): void {
+  row.inputTokens += Number(e.inputTokens) || 0;
+  row.outputTokens += Number(e.outputTokens) || 0;
+  row.cacheReadTokens += Number(e.cacheReadTokens) || 0;
+  row.cacheWriteTokens += Number(e.cacheWriteTokens) || 0;
+  row.totalTokens +=
+    Number(e.totalTokens) ||
+    (Number(e.inputTokens) || 0) +
+      (Number(e.outputTokens) || 0) +
+      (Number(e.cacheReadTokens) || 0) +
+      (Number(e.cacheWriteTokens) || 0);
+  row.estimatedCost += Number(e.estimatedCost) || 0;
+  row.eventCount += 1;
+  if (ts > row.lastTs) row.lastTs = ts;
+}
+
+function rollupAccToEvent(row: RollupAcc): UsageEvent {
+  const prefix = row.kind === "hour" ? "gist-hour" : "gist-daily";
+  const path = row.kind === "hour" ? "backup:gist-hour" : "backup:gist-daily";
+  return {
+    id: stableId(prefix, row.bucket, row.agent, row.model || "unknown"),
+    agent: row.agent,
+    model: row.model,
+    timestamp: new Date(row.lastTs).toISOString(),
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    cacheWriteTokens: row.cacheWriteTokens,
+    totalTokens: row.totalTokens,
+    estimatedCost: row.estimatedCost,
+    currency: "USD",
+    pricingStatus: "estimated",
+    workspace: null,
+    sourcePath: path,
+    estimated: true,
   };
-  const map = new Map<string, Acc>();
+}
+
+/**
+ * Compact restore rows for Gist:
+ * - last 48h → hour × agent × model (Today / 24h stay accurate)
+ * - older → day × agent × model (7D / 30D / All)
+ * Timestamp = last event in bucket so rolling windows match source.
+ */
+export function buildGistRestoreRollups(events: UsageEvent[], nowMs = Date.now()): UsageEvent[] {
+  const hourCutoff = nowMs - 48 * 3_600_000;
+  const map = new Map<string, RollupAcc>();
+
   for (const e of events) {
     if (!e || typeof e.agent !== "string") continue;
-    const day = (e.timestamp || "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    const ts = new Date(e.timestamp).getTime();
+    if (Number.isNaN(ts)) continue;
     const model = normalizeModelName(e.model);
-    const key = `${day}|${e.agent}|${model || ""}`;
+    const useHour = ts >= hourCutoff;
+    const bucket = useHour
+      ? new Date(ts).toISOString().slice(0, 13) // YYYY-MM-DDTHH
+      : new Date(ts).toISOString().slice(0, 10); // YYYY-MM-DD
+    const kind: "hour" | "day" = useHour ? "hour" : "day";
+    const key = `${kind}|${bucket}|${e.agent}|${model || ""}`;
     let row = map.get(key);
     if (!row) {
       row = {
         agent: e.agent,
         model,
-        day,
+        bucket,
+        kind,
+        lastTs: ts,
         inputTokens: 0,
         outputTokens: 0,
         cacheReadTokens: 0,
@@ -988,41 +1042,49 @@ export function buildDailyAgentModelRollups(events: UsageEvent[]): UsageEvent[] 
       };
       map.set(key, row);
     }
-    row.inputTokens += Number(e.inputTokens) || 0;
-    row.outputTokens += Number(e.outputTokens) || 0;
-    row.cacheReadTokens += Number(e.cacheReadTokens) || 0;
-    row.cacheWriteTokens += Number(e.cacheWriteTokens) || 0;
-    row.totalTokens +=
-      Number(e.totalTokens) ||
-      (Number(e.inputTokens) || 0) +
-        (Number(e.outputTokens) || 0) +
-        (Number(e.cacheReadTokens) || 0) +
-        (Number(e.cacheWriteTokens) || 0);
-    row.estimatedCost += Number(e.estimatedCost) || 0;
-    row.eventCount += 1;
+    addToRollup(row, e, ts);
   }
 
-  const out: UsageEvent[] = [];
-  for (const row of map.values()) {
-    out.push({
-      id: stableId("gist-daily", row.day, row.agent, row.model || "unknown"),
-      agent: row.agent,
-      model: row.model,
-      timestamp: `${row.day}T12:00:00.000Z`,
-      inputTokens: row.inputTokens,
-      outputTokens: row.outputTokens,
-      cacheReadTokens: row.cacheReadTokens,
-      cacheWriteTokens: row.cacheWriteTokens,
-      totalTokens: row.totalTokens,
-      estimatedCost: row.estimatedCost,
-      currency: "USD",
-      pricingStatus: "estimated",
-      workspace: null,
-      sourcePath: "backup:gist-daily",
-      estimated: true,
-    });
+  return [...map.values()].map(rollupAccToEvent);
+}
+
+/** @deprecated use buildGistRestoreRollups */
+export function buildDailyAgentModelRollups(events: UsageEvent[]): UsageEvent[] {
+  return buildGistRestoreRollups(events);
+}
+
+export function isGistRollupEvent(e: UsageEvent): boolean {
+  return typeof e.sourcePath === "string" && e.sourcePath.startsWith("backup:gist");
+}
+
+/** day|agent|model key for collapse / anti-double-count */
+export function gistCoverageKey(e: UsageEvent): string {
+  const day = (e.timestamp || "").slice(0, 10);
+  const model = normalizeModelName(e.model) || "";
+  return `${day}|${e.agent}|${model}`;
+}
+
+/**
+ * Merge local scan with imported (Gist) events.
+ * If local already has any real (non-gist) row for the same day×agent×model,
+ * drop the Gist rollup so rescan never double-counts.
+ */
+export function mergeLocalPreferOverGistRollups(
+  local: UsageEvent[],
+  imported: UsageEvent[],
+): UsageEvent[] {
+  const covered = new Set<string>();
+  for (const e of local) {
+    if (!e || typeof e.agent !== "string") continue;
+    if (isGistRollupEvent(e)) continue;
+    covered.add(gistCoverageKey(e));
   }
-  return out;
+  const filteredImported = (imported || []).filter((e) => {
+    if (!e || typeof e.agent !== "string") return false;
+    if (!isGistRollupEvent(e)) return true;
+    return !covered.has(gistCoverageKey(e));
+  });
+  return mergeEventsByIdPreferRicher(local, filteredImported);
 }
 
 /**
@@ -1033,14 +1095,16 @@ export async function buildGistFullBackup(events: UsageEvent[]): Promise<XlabBac
   const cfg = getConfigSync();
   const tz = cfg.timezone || "local";
   const periodStats = buildPeriodStats(events, tz);
-  const rollups = buildDailyAgentModelRollups(events);
+  const rollups = buildGistRestoreRollups(events);
   const allSnap = periodStats.all;
   const modelCount = allSnap?.byModel.length || 0;
   const agentCount = allSnap?.byAgent.length || 0;
+  const hourCount = rollups.filter((e) => e.sourcePath === "backup:gist-hour").length;
+  const dayCount = rollups.length - hourCount;
 
   const base = buildSettingsBackup({
     eventCountHint: events.length,
-    note: "XLab Token Gist: by model + by agent for Today/24h/7D/30D/All + daily rollups",
+    note: "XLab Token Gist: by model + by agent for Today/24h/7D/30D/All + hour/day rollups",
   });
   base.formatVersion = BACKUP_FORMAT_VERSION;
   base.scope = "period-stats";
@@ -1058,7 +1122,7 @@ export async function buildGistFullBackup(events: UsageEvent[]): Promise<XlabBac
     mirrorBytes: 0,
     note:
       (base.meta?.note || "") +
-      ` · ${modelCount} models · ${agentCount} agents · ${rollups.length} daily rollups from ${events.length} events`,
+      ` · ${modelCount} models · ${agentCount} agents · ${hourCount}h+${dayCount}d rollups from ${events.length} events`,
   };
   return base;
 }
