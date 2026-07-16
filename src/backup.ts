@@ -1005,12 +1005,13 @@ function rollupAccToEvent(row: RollupAcc): UsageEvent {
 
 /**
  * Compact restore rows for Gist:
- * - last 48h → hour × agent × model (Today / 24h stay accurate)
- * - older → day × agent × model (7D / 30D / All)
+ * - last 8 days → hour × agent × model (Today / 24h / 7D stay accurate)
+ * - older → day × agent × model (30D / All)
  * Timestamp = last event in bucket so rolling windows match source.
  */
 export function buildGistRestoreRollups(events: UsageEvent[], nowMs = Date.now()): UsageEvent[] {
-  const hourCutoff = nowMs - 48 * 3_600_000;
+  // 8d of hourly covers rolling 7d without whole-day bleed at the window edge
+  const hourCutoff = nowMs - 8 * 86_400_000;
   const map = new Map<string, RollupAcc>();
 
   for (const e of events) {

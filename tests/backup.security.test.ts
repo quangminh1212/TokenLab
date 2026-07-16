@@ -355,7 +355,8 @@ test("buildGistRestoreRollups uses hour buckets for recent, day for older", () =
       id: "r3",
       agent: "windsurf",
       model: "swe-1-6",
-      timestamp: new Date(now - 10 * 86_400_000).toISOString(),
+      // older than 8d hour window → daily bucket
+      timestamp: new Date(now - 12 * 86_400_000).toISOString(),
       inputTokens: 10,
       totalTokens: 11,
       estimatedCost: 0.1,
