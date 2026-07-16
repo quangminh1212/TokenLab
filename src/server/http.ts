@@ -194,6 +194,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               // Full and periodic both keep history — never shrink all-time totals.
               byAgent.set(agent, mergeEventsByIdPreferRicher(events, prevForAgent));
               rebuild();
+              // Persist progressive results so restart never loses a long in-flight scan.
+              scheduleSaveScanCache();
             }
             agentStats.push({
               agent,
@@ -983,9 +985,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         scanCacheSaveTimer = null;
       }
       try {
+        // Flush immediately on shutdown — do not rely on the 2s debounce timer.
         await saveScanCache(cache);
-      } catch {
-        // non-fatal
+      } catch (err) {
+        console.warn(
+          "[xlab-token] final scan cache save failed:",
+          err instanceof Error ? err.message : err,
+        );
       }
       try {
         server.closeAllConnections?.();
