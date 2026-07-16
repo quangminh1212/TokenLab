@@ -357,18 +357,10 @@ async function parseCascadeSessions(root: string, seen: Set<string>): Promise<Us
     const cacheReadTokens = hasReal ? real!.cacheReadTokens : 0;
     const model = (hasReal ? real!.model : real?.model) || "windsurf-cascade";
 
+    // One event per trajectory file — id must not change when tokens grow mid-session.
     events.push(
       applyPricing({
-        id: hasReal
-          ? stableId(
-              "windsurf",
-              kind,
-              sessionId,
-              String(inputTokens),
-              String(outputTokens),
-              String(cacheReadTokens),
-            )
-          : stableId("windsurf", kind, sessionId, String(st.size), timestamp),
+        id: stableId("windsurf", kind, sessionId, file),
         agent: "windsurf",
         model,
         timestamp,
