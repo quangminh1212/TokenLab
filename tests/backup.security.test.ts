@@ -3,10 +3,14 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import {
+  loadScanCache,
   restoreBackup,
   mirrorsRoot,
   mergeEventsByIdPreferRicher,
   preferRicherEvent,
+  saveScanCache,
+  scanCacheBackupPath,
+  scanCachePath,
 } from "../src/backup.js";
 import type { UsageEvent } from "../src/types.js";
 import { pathExists } from "../src/util.js";
@@ -101,6 +105,59 @@ test("restore mirrors blocks path traversal", async () => {
     await rm(path.join(root, "safe-test"), { recursive: true, force: true });
   } catch {
     /* ignore */
+  }
+});
+
+test("saveScanCache round-trips and loadScanCache recovers from .bak when main is corrupt", async () => {
+  const root = path.join(process.cwd(), ".test-scan-cache-" + Date.now());
+  const prev = process.env.XLAB_TOKEN_DATA_DIR;
+  process.env.XLAB_TOKEN_DATA_DIR = root;
+  try {
+    await mkdir(root, { recursive: true });
+    const events = [
+      evt({ id: "persist-a", agent: "grok", inputTokens: 1000, totalTokens: 1100, estimatedCost: 2 }),
+      evt({ id: "persist-b", agent: "windsurf", inputTokens: 500, totalTokens: 550, estimatedCost: 1 }),
+    ];
+    await saveScanCache(events);
+    const loaded = await loadScanCache();
+    assert.equal(loaded.length, 2);
+    assert.equal(loaded.find((e) => e.id === "persist-a")?.inputTokens, 1000);
+
+    // Simulate interrupted write leaving invalid JSON in the main file.
+    await writeFile(scanCachePath(), '{"id":"broken"', "utf8");
+    const recovered = await loadScanCache();
+    assert.equal(recovered.length, 2, "must fall back to .bak after corrupt main");
+    assert.equal(await pathExists(scanCacheBackupPath()), true);
+  } finally {
+    if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
+    else process.env.XLAB_TOKEN_DATA_DIR = prev;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent saveScanCache calls do not corrupt output", async () => {
+  const root = path.join(process.cwd(), ".test-scan-cache-concurrent-" + Date.now());
+  const prev = process.env.XLAB_TOKEN_DATA_DIR;
+  process.env.XLAB_TOKEN_DATA_DIR = root;
+  try {
+    await mkdir(root, { recursive: true });
+    const batches = Array.from({ length: 8 }, (_, i) => [
+      evt({
+        id: `c-${i}`,
+        agent: "grok",
+        inputTokens: 100 + i,
+        totalTokens: 110 + i,
+        estimatedCost: 0.1 * i,
+      }),
+    ]);
+    await Promise.all(batches.map((batch) => saveScanCache(batch)));
+    const loaded = await loadScanCache();
+    assert.ok(loaded.length >= 1);
+    JSON.parse(await readFile(scanCachePath(), "utf8"));
+  } finally {
+    if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
+    else process.env.XLAB_TOKEN_DATA_DIR = prev;
+    await rm(root, { recursive: true, force: true });
   }
 });
 

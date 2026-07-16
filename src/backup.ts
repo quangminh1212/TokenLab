@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
 import type { XlabTokenConfig } from "./config.js";
@@ -184,24 +184,87 @@ export function scanCachePath(): string {
   return path.join(dataRoot(), "scan-cache.json");
 }
 
+export function scanCacheBackupPath(): string {
+  return `${scanCachePath()}.bak`;
+}
+
+/** Serialize writes — concurrent saveScanCache must not interleave on the same file. */
+let scanCacheSaveChain: Promise<void> = Promise.resolve();
+
+async function readScanCacheFile(filePath: string): Promise<UsageEvent[]> {
+  const raw = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+  return sanitizeEvents(raw) || [];
+}
+
 export async function loadScanCache(): Promise<UsageEvent[]> {
   const p = scanCachePath();
-  try {
-    if (!(await pathExists(p))) return [];
-    const raw = JSON.parse(await readFile(p, "utf8")) as unknown;
-    return sanitizeEvents(raw) || [];
-  } catch (err) {
-    logError("loadScanCache failed:", err instanceof Error ? err.message : err);
-    return [];
+  const bak = scanCacheBackupPath();
+  const candidates = [p, bak];
+  let lastErr: unknown;
+  for (const candidate of candidates) {
+    try {
+      if (!(await pathExists(candidate))) continue;
+      const events = await readScanCacheFile(candidate);
+      if (events.length === 0) continue;
+      if (candidate !== p) {
+        log("loadScanCache: recovered", events.length, "events from backup →", candidate);
+      }
+      return events;
+    } catch (err) {
+      lastErr = err;
+      logError(
+        "loadScanCache failed:",
+        candidate,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
+  if (lastErr) {
+    logError("loadScanCache: no valid cache file (main + .bak both failed)");
+  }
+  return [];
 }
 
 export async function saveScanCache(events: UsageEvent[]): Promise<void> {
-  const p = scanCachePath();
-  await mkdir(path.dirname(p), { recursive: true });
   const clean = sanitizeEvents(events) || [];
-  await writeFile(p, JSON.stringify(clean), "utf8");
-  log("saveScanCache:", clean.length, "→", p);
+  const p = scanCachePath();
+  const bak = scanCacheBackupPath();
+  await mkdir(path.dirname(p), { recursive: true });
+
+  const job = scanCacheSaveChain.then(async () => {
+    const json = JSON.stringify(clean);
+    // Verify round-trip before touching the live file (catches bad rows early).
+    const verified = sanitizeEvents(JSON.parse(json) as unknown) || [];
+    if (verified.length !== clean.length) {
+      throw new Error(`scan cache verify mismatch (${verified.length} vs ${clean.length})`);
+    }
+
+    const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      await writeFile(tmp, json, "utf8");
+      await rename(tmp, p);
+      // Always mirror the good file so a corrupt/interrupted main can be recovered.
+      try {
+        await copyFile(p, bak);
+      } catch (err) {
+        logError("saveScanCache: backup copy failed:", err instanceof Error ? err.message : err);
+      }
+      log("saveScanCache:", clean.length, "→", p);
+    } catch (err) {
+      try {
+        const { unlink } = await import("node:fs/promises");
+        await unlink(tmp);
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    }
+  });
+
+  scanCacheSaveChain = job.catch(() => {
+    /* keep chain alive for later saves */
+  });
+  await job;
 }
 
 async function listFilesRecursive(dir: string, base = dir): Promise<string[]> {
