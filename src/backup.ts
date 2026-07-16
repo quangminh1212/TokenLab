@@ -72,6 +72,28 @@ export interface PeriodSnapshot {
   byAgent: PeriodGroupRow[];
 }
 
+/**
+ * Portable project settings embedded in every backup file
+ * (export settings / export full / Gist — same schema).
+ * Never includes GitHub PAT.
+ */
+export type PortableBackupConfig = {
+  timezone?: string;
+  host?: string;
+  port?: number;
+  pricing?: XlabTokenConfig["pricing"];
+  /** Gist destination metadata only (no token) */
+  backup?: {
+    gistId?: string;
+    gistUrl?: string;
+    lastBackupAt?: string;
+  };
+};
+
+/**
+ * Single on-disk / Gist file format for all backup features:
+ * `format: "xlab-token-backup"` — settings-only, full, or period-stats (Gist).
+ */
 export interface XlabBackup {
   format: typeof BACKUP_FORMAT;
   formatVersion: number;
@@ -79,17 +101,14 @@ export interface XlabBackup {
   exportedAt: string;
   platform?: string;
   scope: BackupScope;
-  /** Settings + custom model rates */
-  config: {
-    timezone?: string;
-    pricing?: XlabTokenConfig["pricing"];
-  };
+  /** Project settings (timezone, pricing, host/port, gist id/url) */
+  config: PortableBackupConfig;
   /**
-   * Gist v3: usage by model & agent for Today / 24h / 7D / 30D / All.
-   * Much smaller than raw event lists.
+   * Usage by model & agent for Today / 24h / 7D / 30D / All.
+   * Always present on Gist; optional on full export.
    */
   periodStats?: Partial<Record<GistPeriodKey, PeriodSnapshot>>;
-  /** Scanned usage events (full scope) or daily agent×model rollups (period-stats) */
+  /** Raw scan events (full) or hour/day rollups (period-stats / multi-machine) */
   events?: UsageEvent[];
   /** Cached OpenRouter model catalog (full scope) */
   openrouter?: {
@@ -117,6 +136,29 @@ export interface XlabBackup {
     mirrorFileCount?: number;
     mirrorBytes?: number;
   };
+}
+
+/** Snapshot of current project settings for any backup file (never the PAT). */
+export function buildPortableConfig(): PortableBackupConfig {
+  const cfg = getConfigSync();
+  const out: PortableBackupConfig = {
+    timezone: cfg.timezone || "local",
+    pricing: {
+      currency: cfg.pricing?.currency || "USD",
+      preferRouterCost: cfg.pricing?.preferRouterCost !== false,
+      customRates: { ...(cfg.pricing?.customRates || {}) },
+    },
+  };
+  if (cfg.host) out.host = cfg.host;
+  if (typeof cfg.port === "number" && Number.isFinite(cfg.port)) out.port = cfg.port;
+  if (cfg.backup?.gistId || cfg.backup?.gistUrl || cfg.backup?.lastBackupAt) {
+    out.backup = {
+      ...(cfg.backup.gistId ? { gistId: cfg.backup.gistId } : {}),
+      ...(cfg.backup.gistUrl ? { gistUrl: cfg.backup.gistUrl } : {}),
+      ...(cfg.backup.lastBackupAt ? { lastBackupAt: cfg.backup.lastBackupAt } : {}),
+    };
+  }
+  return out;
 }
 
 export function dataRoot(): string {
@@ -662,7 +704,7 @@ async function collectMirrors(): Promise<{
 }
 
 export function buildSettingsBackup(opts?: { eventCountHint?: number; note?: string }): XlabBackup {
-  const cfg = getConfigSync();
+  const mid = getMachineId();
   return {
     format: BACKUP_FORMAT,
     formatVersion: BACKUP_FORMAT_VERSION,
@@ -670,17 +712,14 @@ export function buildSettingsBackup(opts?: { eventCountHint?: number; note?: str
     exportedAt: new Date().toISOString(),
     platform: process.platform,
     scope: "settings",
-    config: {
-      timezone: cfg.timezone || "local",
-      pricing: {
-        currency: cfg.pricing?.currency || "USD",
-        preferRouterCost: cfg.pricing?.preferRouterCost !== false,
-        customRates: { ...(cfg.pricing?.customRates || {}) },
-      },
-    },
+    config: buildPortableConfig(),
     meta: {
-      note: opts?.note || "XLab Token settings & custom model rates",
+      note:
+        opts?.note ||
+        "XLab Token backup file (settings): timezone, pricing, host/port, gist link — same format as Gist/full",
       eventCount: opts?.eventCountHint,
+      machineId: mid,
+      machines: [mid],
     },
   };
 }
@@ -697,12 +736,29 @@ export async function buildFullBackup(opts: {
 }): Promise<XlabBackup> {
   const base = buildSettingsBackup({
     eventCountHint: opts.events.length,
-    note: opts.note || "XLab Token full project backup",
+    note:
+      opts.note ||
+      "XLab Token backup file (full): settings + events + periodStats + OpenRouter + mirrors",
   });
   base.scope = "full";
 
-  // Events (in-memory scan cache)
-  base.events = opts.events.map((e) => ({ ...e }));
+  // Events (in-memory scan cache) — same objects when possible (avoid map clone RAM)
+  base.events = opts.events;
+
+  // Dashboard periods (same shape as Gist) so full export stays one format
+  try {
+    base.periodStats = buildPeriodStats(opts.events, base.config.timezone || "local");
+    const all = base.periodStats.all;
+    if (all) {
+      base.meta = {
+        ...base.meta,
+        modelCount: all.byModel.length,
+        agentCount: all.byAgent.length,
+      };
+    }
+  } catch {
+    /* optional — never fail full export */
+  }
 
   // OpenRouter catalog from memory or disk
   const memModels = getOpenRouterModelsSync();
@@ -853,7 +909,7 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
   return out;
 }
 
-/** Restore config (+ optional events / openrouter / mirrors). */
+/** Restore config (+ optional events / openrouter / mirrors). Same file format as Gist. */
 export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
   if (!isXlabBackup(raw)) {
     throw new Error("Invalid backup file (expected xlab-token-backup format)");
@@ -861,12 +917,17 @@ export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
   const prev = await loadConfig();
   const incoming = raw.config || {};
   const rates = incoming.pricing?.customRates;
+  const inBackup = incoming.backup && typeof incoming.backup === "object" ? incoming.backup : null;
+
   const next = await saveConfig({
     ...prev,
     timezone:
       typeof incoming.timezone === "string" && incoming.timezone.trim()
         ? incoming.timezone.trim()
         : prev.timezone,
+    host: typeof incoming.host === "string" && incoming.host.trim() ? incoming.host.trim() : prev.host,
+    port:
+      typeof incoming.port === "number" && Number.isFinite(incoming.port) ? incoming.port : prev.port,
     pricing: {
       ...prev.pricing,
       currency: incoming.pricing?.currency || prev.pricing?.currency || "USD",
@@ -878,6 +939,13 @@ export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
         rates && typeof rates === "object"
           ? { ...rates }
           : prev.pricing?.customRates || {},
+    },
+    backup: {
+      ...prev.backup,
+      // Restore gist link metadata only — never a token from file
+      ...(inBackup?.gistId ? { gistId: String(inBackup.gistId) } : {}),
+      ...(inBackup?.gistUrl ? { gistUrl: String(inBackup.gistUrl) } : {}),
+      ...(inBackup?.lastBackupAt ? { lastBackupAt: String(inBackup.lastBackupAt) } : {}),
     },
   });
 
@@ -1239,15 +1307,19 @@ export async function buildGistFullBackup(
   const localRates = cfg.pricing?.customRates || {};
   const base = buildSettingsBackup({
     eventCountHint: events.length,
-    note: "XLab Token Gist: multi-machine sum · by model + by agent · Today/24h/7D/30D/All",
+    note: "XLab Token backup file (Gist/period-stats): full project settings + multi-machine usage sum",
   });
+  // Same portable config as export; merge rates; keep remote gist id if local missing
   base.config = {
-    ...base.config,
+    ...buildPortableConfig(),
     pricing: {
-      ...base.config.pricing,
-      currency: base.config.pricing?.currency || "USD",
-      preferRouterCost: base.config.pricing?.preferRouterCost !== false,
+      currency: cfg.pricing?.currency || "USD",
+      preferRouterCost: cfg.pricing?.preferRouterCost !== false,
       customRates: { ...remoteRates, ...localRates },
+    },
+    backup: {
+      ...(opts?.remoteConfig?.backup || {}),
+      ...(buildPortableConfig().backup || {}),
     },
   };
   base.formatVersion = BACKUP_FORMAT_VERSION;

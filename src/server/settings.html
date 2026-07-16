@@ -109,36 +109,45 @@
         </div>
       </section>
 
-      <!-- Backup -->
+      <!-- Backup: one file format for export / import / Gist -->
       <section class="settings-section u-card">
         <div class="settings-section-head">
           <h2>Backup &amp; restore</h2>
           <p>
-            Export / import project data: settings, custom rates, daily-aggregated usage events,
-            OpenRouter catalog, and compact mirrors (<code>usage-daily.json</code> — not per-request logs).
+            One file format: <code>xlab-token-backup.json</code>
+            (<code>format: "xlab-token-backup"</code>).
+            Includes <strong>project settings</strong> (timezone, pricing, custom rates, host/port, gist link)
+            plus usage — same JSON for Export, Import, and GitHub Gist.
           </p>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Export full project</span>
-            <span class="settings-help">Config + rates + aggregated events + OpenRouter + daily mirrors (no request jsonl).</span>
+            <span class="settings-label">Export full</span>
+            <span class="settings-help">
+              Settings + events + periodStats (Today/24h/7D/30D/All by model &amp; agent)
+              + OpenRouter + compact mirrors. Same schema as Gist (scope <code>full</code>).
+            </span>
           </div>
           <button type="button" class="btn btn-primary" id="backupDownloadFull">Export full</button>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Export settings only</span>
-            <span class="settings-help">Timezone, cost prefs, custom rates — small file, ideal for Gist.</span>
+            <span class="settings-label">Export settings</span>
+            <span class="settings-help">
+              Settings only (small). Same file type — scope <code>settings</code>.
+            </span>
           </div>
           <button type="button" class="btn" id="backupDownloadSettings">Export settings</button>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Import backup</span>
-            <span class="settings-help">Restore a previous <code>xlab-token-backup-*.json</code> (settings or full).</span>
+            <span class="settings-label">Import file</span>
+            <span class="settings-help">
+              Any <code>xlab-token-backup-*.json</code> from Export or Gist (settings / full / period-stats).
+            </span>
           </div>
           <div class="settings-inline-actions">
             <input type="file" id="backupRestoreFile" accept="application/json,.json" hidden />
@@ -149,13 +158,13 @@
 
         <div class="settings-row settings-row-stack">
           <div class="settings-row-text">
-            <span class="settings-label">GitHub Gist (by model + agent)</span>
+            <span class="settings-label">GitHub Gist (same file)</span>
             <span class="settings-help">
-              Secret gist: settings + usage <strong>by model</strong> / <strong>by agent</strong>
-              for <strong>Today / 24h / 7D / 30D / All</strong>.
-              <strong>Multi-machine:</strong> same gistId on several PCs → upload merges hosts and
-              <strong>sums usage</strong> (each machine keeps its own slice).
-              Classic PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>.
+              Uploads the <strong>same backup JSON</strong> to a secret Gist:
+              full project settings + usage by <strong>model</strong> / <strong>agent</strong>
+              for <strong>Today · 24h · 7D · 30D · All</strong> (compact hour/day rollups).
+              Multi-machine: same gistId → merge hosts and <strong>sum usage</strong>.
+              PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>. Token is never inside the file.
             </span>
           </div>
           <div class="settings-gist-box">
@@ -172,7 +181,7 @@
               <span>Remember token in local config</span>
             </label>
             <div class="settings-inline-actions">
-              <button type="button" class="btn btn-primary" id="backupGistBtn">Backup model+agent periods to Gist</button>
+              <button type="button" class="btn btn-primary" id="backupGistBtn">Backup to Gist</button>
               <span class="settings-status" id="backupGistStatus" aria-live="polite"></span>
             </div>
             <p class="settings-help" id="gistLinkRow" hidden>
@@ -408,23 +417,29 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const day = new Date().toISOString().slice(0, 10);
-        const tag = backup.scope === 'full' ? 'full' : 'settings';
+        const tag = backup.scope || (scope === 'settings' ? 'settings' : 'full');
         const events = backup.meta?.eventCount || backup.events?.length || 0;
         a.href = url;
+        // Unified filename family for all backup features
         a.download = `xlab-token-backup-${tag}-${day}.json`;
         a.click();
         URL.revokeObjectURL(url);
+        const st = $('backupRestoreStatus');
+        if (st) {
+          const bits = [
+            `scope ${tag}`,
+            events ? `${events} events` : null,
+            backup.meta?.modelCount != null ? `${backup.meta.modelCount} models` : null,
+            backup.config?.timezone ? `tz ${backup.config.timezone}` : null,
+          ].filter(Boolean);
+          st.textContent = 'Exported \u00B7 ' + bits.join(' \u00B7 ');
+          setTimeout(() => { st.textContent = ''; }, 3200);
+        }
         if (scope === 'full') {
           const btn = $('backupDownloadFull');
           if (btn) {
             btn.disabled = false;
             btn.textContent = 'Export full';
-          }
-          // brief toast via restore status area
-          const st = $('backupRestoreStatus');
-          if (st) {
-            st.textContent = `Exported \u00B7 ${events} events \u00B7 ${backup.meta?.openrouterModelCount || 0} models`;
-            setTimeout(() => { st.textContent = ''; }, 3200);
           }
         }
       } catch (e) {
@@ -474,7 +489,7 @@
       const btn = $('backupGistBtn');
       const st = $('backupGistStatus');
       btn.disabled = true;
-      st.textContent = 'Uploading by model+agent periods\u2026';
+      st.textContent = 'Uploading xlab-token-backup.json\u2026';
       try {
         const token = ($('gistToken').value || '').trim();
         const res = await fetch('/api/backup/gist', {
@@ -497,6 +512,7 @@
           : (res.machineId || '');
         st.textContent =
           (g.updated ? 'Updated' : 'Created') +
+          ' \u00B7 same backup file' +
           (hosts ? ' \u00B7 ' + hosts : '') +
           ' \u00B7 ' +
           models +
@@ -504,7 +520,7 @@
           agents +
           ' agents \u00B7 ' +
           n +
-          ' src events';
+          ' src';
         showGistLink(g.htmlUrl, res.exportedAt);
         if ($('gistSaveToken').checked) $('gistToken').value = '';
         setTimeout(() => { st.textContent = ''; }, 4000);

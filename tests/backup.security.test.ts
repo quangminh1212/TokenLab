@@ -7,6 +7,8 @@ import {
   buildGistFullBackup,
   buildGistRestoreRollups,
   buildPeriodStats,
+  buildPortableConfig,
+  buildSettingsBackup,
   machineIdFromEvent,
   mergeLocalPreferOverGistRollups,
   mergeMultiMachineGistRollups,
@@ -287,6 +289,19 @@ test("restore accepts v1 settings-only backup", async () => {
   assert.equal(r.ok, true);
   assert.ok(r.customRateCount >= 1);
   assert.equal(r.events, undefined);
+});
+
+test("unified backup file includes portable project settings (no token)", () => {
+  const s = buildSettingsBackup();
+  assert.equal(s.format, "xlab-token-backup");
+  assert.ok(s.config.timezone);
+  assert.ok(s.config.pricing);
+  assert.ok(s.config.pricing?.currency);
+  assert.equal(typeof s.config.pricing?.preferRouterCost, "boolean");
+  // PAT must never be serialized into the shared backup file
+  assert.equal((s.config.backup as { githubToken?: string } | undefined)?.githubToken, undefined);
+  const portable = buildPortableConfig();
+  assert.equal(portable.pricing?.currency, s.config.pricing?.currency);
 });
 
 test("buildPeriodStats covers byModel + byAgent for all dashboard periods", () => {
