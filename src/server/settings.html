@@ -151,9 +151,10 @@
           <div class="settings-row-text">
             <span class="settings-label">GitHub Gist (by model + agent)</span>
             <span class="settings-help">
-              Secret gist: settings, custom rates, and usage <strong>by model</strong> +
-              <strong>by agent</strong> for <strong>Today / 24h / 7D / 30D / All</strong>
-              (plus compact daily rollups for restore). Much smaller than raw events.
+              Secret gist: settings + usage <strong>by model</strong> / <strong>by agent</strong>
+              for <strong>Today / 24h / 7D / 30D / All</strong>.
+              <strong>Multi-machine:</strong> same gistId on several PCs → upload merges hosts and
+              <strong>sums usage</strong> (each machine keeps its own slice).
               Classic PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>.
             </span>
           </div>
@@ -491,8 +492,12 @@
         const models = res.modelCount || 0;
         const agents = res.agentCount || 0;
         const n = res.eventCount || 0;
+        const hosts = Array.isArray(res.machines) && res.machines.length
+          ? res.machines.join('+')
+          : (res.machineId || '');
         st.textContent =
           (g.updated ? 'Updated' : 'Created') +
+          (hosts ? ' \u00B7 ' + hosts : '') +
           ' \u00B7 ' +
           models +
           ' models \u00B7 ' +

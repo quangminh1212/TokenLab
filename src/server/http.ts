@@ -819,6 +819,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             result.backup.meta?.rollupEventCount || result.backup.events?.length || 0,
           modelCount: result.backup.meta?.modelCount || 0,
           agentCount: result.backup.meta?.agentCount || 0,
+          machineId: result.backup.meta?.machineId || null,
+          machines: result.backup.meta?.machines || [],
           mirrorFileCount: result.backup.meta?.mirrorFileCount || 0,
         });
       } catch (err) {

@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { XlabTokenConfig } from "./config.js";
 import { getConfigSync, loadConfig, saveConfig } from "./config.js";
@@ -109,6 +110,9 @@ export interface XlabBackup {
     rollupEventCount?: number;
     modelCount?: number;
     agentCount?: number;
+    /** Hostname(s) contributing to this Gist (multi-machine sync) */
+    machineId?: string;
+    machines?: string[];
     openrouterModelCount?: number;
     mirrorFileCount?: number;
     mirrorBytes?: number;
@@ -981,11 +985,53 @@ function addToRollup(row: RollupAcc, e: UsageEvent, ts: number): void {
   if (ts > row.lastTs) row.lastTs = ts;
 }
 
-function rollupAccToEvent(row: RollupAcc): UsageEvent {
+/** Stable machine id for multi-host Gist sync (hostname). */
+export function getMachineId(): string {
+  const env =
+    process.env.XLAB_MACHINE_ID?.trim() ||
+    process.env.COMPUTERNAME?.trim() ||
+    process.env.HOSTNAME?.trim() ||
+    "";
+  if (env) return sanitizeMachineId(env);
+  try {
+    return sanitizeMachineId(os.hostname() || "unknown");
+  } catch {
+    return "unknown";
+  }
+}
+
+function sanitizeMachineId(raw: string): string {
+  const s = String(raw)
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return s || "unknown";
+}
+
+/**
+ * Parse machine id from Gist rollup.
+ * `backup:gist-hour:DESKTOP-A` / `backup:gist-daily:laptop` — legacy untagged → "".
+ */
+export function machineIdFromEvent(e: UsageEvent): string {
+  const sp = typeof e.sourcePath === "string" ? e.sourcePath : "";
+  if (sp.startsWith("backup:gist-hour:") || sp.startsWith("backup:gist-daily:")) {
+    const mid = sp.split(":").slice(2).join(":").trim();
+    if (mid) return sanitizeMachineId(mid);
+  }
+  // Legacy rows stored hostname in workspace
+  if (isGistRollupEvent(e) && typeof e.workspace === "string" && e.workspace.trim()) {
+    return sanitizeMachineId(e.workspace);
+  }
+  return "";
+}
+
+function rollupAccToEvent(row: RollupAcc, machineId: string): UsageEvent {
+  const mid = sanitizeMachineId(machineId || "unknown");
   const prefix = row.kind === "hour" ? "gist-hour" : "gist-daily";
-  const path = row.kind === "hour" ? "backup:gist-hour" : "backup:gist-daily";
+  const basePath = row.kind === "hour" ? "backup:gist-hour" : "backup:gist-daily";
   return {
-    id: stableId(prefix, row.bucket, row.agent, row.model || "unknown"),
+    id: stableId(prefix, mid, row.bucket, row.agent, row.model || "unknown"),
     agent: row.agent,
     model: row.model,
     timestamp: new Date(row.lastTs).toISOString(),
@@ -997,25 +1043,32 @@ function rollupAccToEvent(row: RollupAcc): UsageEvent {
     estimatedCost: row.estimatedCost,
     currency: "USD",
     pricingStatus: "estimated",
-    workspace: null,
-    sourcePath: path,
+    workspace: mid,
+    sourcePath: `${basePath}:${mid}`,
     estimated: true,
   };
 }
 
 /**
- * Compact restore rows for Gist:
+ * Compact restore rows for Gist (per machine):
  * - last 8 days → hour × agent × model (Today / 24h / 7D stay accurate)
  * - older → day × agent × model (30D / All)
  * Timestamp = last event in bucket so rolling windows match source.
  */
-export function buildGistRestoreRollups(events: UsageEvent[], nowMs = Date.now()): UsageEvent[] {
+export function buildGistRestoreRollups(
+  events: UsageEvent[],
+  nowMs = Date.now(),
+  machineId: string = getMachineId(),
+): UsageEvent[] {
   // 8d of hourly covers rolling 7d without whole-day bleed at the window edge
   const hourCutoff = nowMs - 8 * 86_400_000;
   const map = new Map<string, RollupAcc>();
+  const mid = sanitizeMachineId(machineId || getMachineId());
 
   for (const e of events) {
     if (!e || typeof e.agent !== "string") continue;
+    // Skip already-imported rollups from other machines (do not re-bucket)
+    if (isGistRollupEvent(e)) continue;
     const ts = new Date(e.timestamp).getTime();
     if (Number.isNaN(ts)) continue;
     const model = normalizeModelName(e.model);
@@ -1046,7 +1099,7 @@ export function buildGistRestoreRollups(events: UsageEvent[], nowMs = Date.now()
     addToRollup(row, e, ts);
   }
 
-  return [...map.values()].map(rollupAccToEvent);
+  return [...map.values()].map((row) => rollupAccToEvent(row, mid));
 }
 
 /** @deprecated use buildGistRestoreRollups */
@@ -1067,13 +1120,16 @@ export function gistCoverageKey(e: UsageEvent): string {
 
 /**
  * Merge local scan with imported (Gist) events.
- * If local already has any real (non-gist) row for the same day×agent×model,
- * drop the Gist rollup so rescan never double-counts.
+ * - Always keep other machines' rollups (multi-host sum).
+ * - Drop **this machine's** Gist rollups when local already has real scan rows
+ *   for the same day×agent×model (avoids double-count after rescan).
  */
 export function mergeLocalPreferOverGistRollups(
   local: UsageEvent[],
   imported: UsageEvent[],
+  machineId: string = getMachineId(),
 ): UsageEvent[] {
+  const mid = sanitizeMachineId(machineId || getMachineId());
   const covered = new Set<string>();
   for (const e of local) {
     if (!e || typeof e.agent !== "string") continue;
@@ -1083,54 +1139,180 @@ export function mergeLocalPreferOverGistRollups(
   const filteredImported = (imported || []).filter((e) => {
     if (!e || typeof e.agent !== "string") return false;
     if (!isGistRollupEvent(e)) return true;
+    const eventMid = machineIdFromEvent(e);
+    // Other machine (or legacy untagged treated as foreign): always keep for sum
+    if (eventMid && eventMid !== mid) return true;
+    // Same machine (or untagged on this host): drop if local scan covers key
     return !covered.has(gistCoverageKey(e));
   });
   return mergeEventsByIdPreferRicher(local, filteredImported);
 }
 
 /**
- * Gist-tuned backup: settings + **by model / by agent** for Today·24h·7D·30D·All
- * + compact daily agent×model rollups for restore. No OpenRouter catalog, no mirrors.
+ * Multi-machine Gist merge:
+ * keep remote rollups from **other** machines + this machine's fresh local rollups.
+ * Same machine remote rows are replaced by local (local is source of truth).
  */
-export async function buildGistFullBackup(events: UsageEvent[]): Promise<XlabBackup> {
+export function mergeMultiMachineGistRollups(
+  localRollups: UsageEvent[],
+  remoteEvents: UsageEvent[] | undefined,
+  machineId: string = getMachineId(),
+): UsageEvent[] {
+  const mid = sanitizeMachineId(machineId || getMachineId());
+  const others: UsageEvent[] = [];
+  for (const e of remoteEvents || []) {
+    if (!e || typeof e.agent !== "string") continue;
+    if (!isGistRollupEvent(e)) {
+      // Legacy full-event backups: keep as-is (different ids)
+      others.push(e);
+      continue;
+    }
+    const eventMid = machineIdFromEvent(e);
+    // Untagged legacy rollups: treat as foreign so we don't wipe history on first multi upgrade
+    if (!eventMid || eventMid !== mid) others.push(e);
+  }
+  return mergeEventsByIdPreferRicher(others, localRollups);
+}
+
+function listMachinesFromEvents(events: UsageEvent[], fallback?: string): string[] {
+  const set = new Set<string>();
+  if (fallback) set.add(sanitizeMachineId(fallback));
+  for (const e of events) {
+    const mid = machineIdFromEvent(e);
+    if (mid) set.add(mid);
+  }
+  return [...set].sort();
+}
+
+/**
+ * Gist-tuned backup: settings + **by model / by agent** for Today·24h·7D·30D·All
+ * + hour/day rollups. Supports multi-machine: pass `remoteEvents` from existing Gist
+ * so other hosts are kept and usage is summed in periodStats.
+ */
+export async function buildGistFullBackup(
+  events: UsageEvent[],
+  opts?: {
+    remoteEvents?: UsageEvent[];
+    machineId?: string;
+    remoteConfig?: XlabBackup["config"];
+  },
+): Promise<XlabBackup> {
   const cfg = getConfigSync();
   const tz = cfg.timezone || "local";
-  const periodStats = buildPeriodStats(events, tz);
-  const rollups = buildGistRestoreRollups(events);
+  const mid = sanitizeMachineId(opts?.machineId || getMachineId());
+  const localRollups = buildGistRestoreRollups(events, Date.now(), mid);
+  const mergedRollups = mergeMultiMachineGistRollups(localRollups, opts?.remoteEvents, mid);
+  // periodStats from merged rollups = sum across all machines
+  const periodStats = buildPeriodStats(mergedRollups, tz);
   const allSnap = periodStats.all;
   const modelCount = allSnap?.byModel.length || 0;
   const agentCount = allSnap?.byAgent.length || 0;
-  const hourCount = rollups.filter((e) => e.sourcePath === "backup:gist-hour").length;
-  const dayCount = rollups.length - hourCount;
+  const hourCount = mergedRollups.filter((e) => String(e.sourcePath).includes("gist-hour")).length;
+  const dayCount = mergedRollups.length - hourCount;
+  const machines = listMachinesFromEvents(mergedRollups, mid);
 
+  // Merge custom rates from remote + local (local wins on conflict)
+  const remoteRates = opts?.remoteConfig?.pricing?.customRates || {};
+  const localRates = cfg.pricing?.customRates || {};
   const base = buildSettingsBackup({
     eventCountHint: events.length,
-    note: "XLab Token Gist: by model + by agent for Today/24h/7D/30D/All + hour/day rollups",
+    note: "XLab Token Gist: multi-machine sum · by model + by agent · Today/24h/7D/30D/All",
   });
+  base.config = {
+    ...base.config,
+    pricing: {
+      ...base.config.pricing,
+      currency: base.config.pricing?.currency || "USD",
+      preferRouterCost: base.config.pricing?.preferRouterCost !== false,
+      customRates: { ...remoteRates, ...localRates },
+    },
+  };
   base.formatVersion = BACKUP_FORMAT_VERSION;
   base.scope = "period-stats";
   base.periodStats = periodStats;
-  base.events = rollups;
+  base.events = mergedRollups;
   base.meta = {
     ...base.meta,
     eventCount: events.length,
     sourceEventCount: events.length,
-    rollupEventCount: rollups.length,
+    rollupEventCount: mergedRollups.length,
     modelCount,
     agentCount,
+    machineId: mid,
+    machines,
     openrouterModelCount: 0,
     mirrorFileCount: 0,
     mirrorBytes: 0,
     note:
       (base.meta?.note || "") +
-      ` · ${modelCount} models · ${agentCount} agents · ${hourCount}h+${dayCount}d rollups from ${events.length} events`,
+      ` · machines: ${machines.join(", ") || mid} · ${modelCount} models · ${agentCount} agents · ${hourCount}h+${dayCount}d rollups`,
   };
   return base;
 }
 
+const GIST_BACKUP_FILENAME = "xlab-token-backup.json";
+
+function githubHeaders(token: string): Record<string, string> {
+  return {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    "User-Agent": `xlab-token/${VERSION}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
 /**
- * Create or update a secret GitHub Gist with **period usage**
- * (settings + by model/agent for Today·24h·7D·30D·All + daily rollups).
+ * Fetch existing Gist backup JSON (no restore). Returns null if missing/invalid.
+ * Used for multi-machine merge before upload.
+ */
+export async function fetchGistBackup(opts: {
+  token: string;
+  gistId: string;
+}): Promise<XlabBackup | null> {
+  const gistId = String(opts.gistId || "").trim();
+  if (!gistId || !opts.token) return null;
+  try {
+    const res = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
+      method: "GET",
+      headers: githubHeaders(opts.token),
+    });
+    if (!res.ok) {
+      log("fetchGistBackup:", res.status, "for", gistId);
+      return null;
+    }
+    const data = (await res.json()) as {
+      files?: Record<string, { content?: string; truncated?: boolean; raw_url?: string }>;
+    };
+    const file =
+      data.files?.[GIST_BACKUP_FILENAME] ?? Object.values(data.files || {})[0];
+    if (!file) return null;
+
+    let text = file.content || "";
+    // Large gists may truncate content — pull raw_url
+    if (file.truncated && file.raw_url) {
+      const rawRes = await fetch(file.raw_url, {
+        headers: {
+          Authorization: `Bearer ${opts.token}`,
+          "User-Agent": `xlab-token/${VERSION}`,
+        },
+      });
+      if (rawRes.ok) text = await rawRes.text();
+    }
+    if (!text) return null;
+    const raw = JSON.parse(text) as unknown;
+    if (!isXlabBackup(raw)) return null;
+    return raw;
+  } catch (err) {
+    logError("fetchGistBackup failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/**
+ * Create or update a secret GitHub Gist with **period usage**.
+ * Multi-machine: downloads existing Gist first, keeps other hosts' rollups,
+ * replaces this host's slice, periodStats = sum of all machines.
  */
 export async function uploadBackupToGist(opts: {
   token?: string | null;
@@ -1154,11 +1336,33 @@ export async function uploadBackupToGist(opts: {
   }
   log("GitHub token resolved (length):", token.length);
 
+  const prevId =
+    (opts.gistId && String(opts.gistId).trim()) ||
+    getConfigSync().backup?.gistId ||
+    "";
+
+  // Multi-machine: pull remote before overwrite
+  let remote: XlabBackup | null = null;
+  if (prevId) {
+    remote = await fetchGistBackup({ token, gistId: prevId });
+    if (remote) {
+      log(
+        "Fetched remote Gist for merge: events=",
+        remote.events?.length ?? 0,
+        "machines=",
+        remote.meta?.machines?.join(",") || remote.meta?.machineId || "?",
+      );
+    }
+  }
+
   // Period-stats (by model + agent) when we have the event cache
   let backup: XlabBackup;
   let scope: BackupScope = "period-stats";
   if (opts.events && opts.events.length >= 0) {
-    backup = await buildGistFullBackup(opts.events);
+    backup = await buildGistFullBackup(opts.events, {
+      remoteEvents: remote?.events,
+      remoteConfig: remote?.config,
+    });
     scope = "period-stats";
   } else {
     backup = buildSettingsBackup({
@@ -1178,6 +1382,8 @@ export async function uploadBackupToGist(opts: {
     backup.meta?.modelCount ?? 0,
     "agents:",
     backup.meta?.agentCount ?? 0,
+    "machines:",
+    backup.meta?.machines?.join(",") || backup.meta?.machineId || "",
   );
 
   // Compact JSON (no pretty-print)
@@ -1191,21 +1397,11 @@ export async function uploadBackupToGist(opts: {
     );
   }
 
-  const filename = "xlab-token-backup.json";
-  const description = `XLab Token by model+agent · Today/24h/7D/30D/All · ${backup.meta?.modelCount || 0} models · ${backup.meta?.agentCount || 0} agents · ${backup.meta?.sourceEventCount || backup.events?.length || 0} src · ${backup.exportedAt} · v${backup.appVersion}`;
+  const filename = GIST_BACKUP_FILENAME;
+  const machinesLabel = (backup.meta?.machines || []).join("+") || backup.meta?.machineId || "1host";
+  const description = `XLab Token multi-machine · ${machinesLabel} · ${backup.meta?.modelCount || 0} models · ${backup.meta?.agentCount || 0} agents · ${backup.exportedAt} · v${backup.appVersion}`;
 
-  const prevId =
-    (opts.gistId && String(opts.gistId).trim()) ||
-    getConfigSync().backup?.gistId ||
-    "";
-
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-    "User-Agent": `xlab-token/${VERSION}`,
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
+  const headers = githubHeaders(token);
 
   let res: Response;
   let updated = false;
@@ -1304,50 +1500,21 @@ export async function downloadBackupFromGist(opts: {
   }
   log("Downloading gist:", gistId);
 
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    Authorization: `Bearer ${token}`,
-    "User-Agent": `xlab-token/${VERSION}`,
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
-
-  const res = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
-    method: "GET",
-    headers,
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    logError("GitHub Gist download failed:", res.status, text.slice(0, 240));
-    throw new Error(`GitHub Gist API ${res.status}: ${text.slice(0, 240) || res.statusText}`);
-  }
-
-  const data = (await res.json()) as {
-    files?: Record<string, { content?: string }>;
-    html_url?: string;
-  };
-  const filename = "xlab-token-backup.json";
-  const file = data.files?.[filename] ?? Object.values(data.files || {})[0];
-  if (!file || !file.content) {
+  const backup = await fetchGistBackup({ token, gistId });
+  if (!backup) {
     logError("Gist has no usable backup file");
-    throw new Error("Gist has no usable backup file.");
+    throw new Error("Gist has no usable backup file (or invalid format).");
   }
 
-  let raw: unknown;
-  try {
-    raw = JSON.parse(file.content);
-  } catch (err) {
-    logError("Failed to parse backup JSON:", err instanceof Error ? err.message : err);
-    throw new Error("Failed to parse backup JSON from Gist.");
-  }
-
-  if (!isXlabBackup(raw)) {
-    logError("Downloaded file is not a valid XLab backup");
-    throw new Error("Downloaded file is not a valid XLab backup.");
-  }
-
-  log("Backup downloaded, events:", raw.events?.length ?? 0, "scope:", raw.scope);
-  const restored = await restoreBackup(raw);
+  log(
+    "Backup downloaded, events:",
+    backup.events?.length ?? 0,
+    "scope:",
+    backup.scope,
+    "machines:",
+    backup.meta?.machines?.join(",") || backup.meta?.machineId || "",
+  );
+  const restored = await restoreBackup(backup);
   log("Backup restored, scope:", restored.scope);
 
   // Save gist metadata to config if not present
@@ -1358,11 +1525,10 @@ export async function downloadBackupFromGist(opts: {
       backup: {
         ...cfg.backup,
         gistId,
-        gistUrl: data.html_url,
       },
     });
     log("Saved gist metadata to config");
   }
 
-  return { backup: raw, restored };
+  return { backup, restored };
 }

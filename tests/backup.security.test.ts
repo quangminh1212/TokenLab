@@ -7,7 +7,9 @@ import {
   buildGistFullBackup,
   buildGistRestoreRollups,
   buildPeriodStats,
+  machineIdFromEvent,
   mergeLocalPreferOverGistRollups,
+  mergeMultiMachineGistRollups,
   collapseRouterDailyEvents,
   loadScanCache,
   restoreBackup,
@@ -362,20 +364,22 @@ test("buildGistRestoreRollups uses hour buckets for recent, day for older", () =
       estimatedCost: 0.1,
     }),
   ];
-  const rollups = buildGistRestoreRollups(events, now);
-  const recent = rollups.filter((e) => e.sourcePath === "backup:gist-hour");
-  const older = rollups.filter((e) => e.sourcePath === "backup:gist-daily");
+  const rollups = buildGistRestoreRollups(events, now, "pc-a");
+  const recent = rollups.filter((e) => String(e.sourcePath).startsWith("backup:gist-hour"));
+  const older = rollups.filter((e) => String(e.sourcePath).startsWith("backup:gist-daily"));
   assert.ok(recent.length >= 1);
   assert.equal(older.length, 1);
   const grok = recent.find((e) => e.agent === "grok");
   assert.ok(grok);
   assert.equal(grok!.inputTokens, 150);
   assert.equal(grok!.estimatedCost, 1.5);
+  assert.equal(machineIdFromEvent(grok!), "pc-a");
+  assert.equal(grok!.sourcePath, "backup:gist-hour:pc-a");
   // alias still works
   assert.equal(buildDailyAgentModelRollups(events).length, rollups.length);
 });
 
-test("mergeLocalPreferOverGistRollups drops gist when local covers day×agent×model", () => {
+test("mergeLocalPreferOverGistRollups drops only same-machine gist when local covers key", () => {
   const local = [
     evt({
       id: "local-1",
@@ -390,14 +394,26 @@ test("mergeLocalPreferOverGistRollups drops gist when local covers day×agent×m
   ];
   const imported = [
     evt({
-      id: "gist-1",
+      id: "gist-same",
       agent: "grok",
       model: "grok-4.5",
       timestamp: "2026-07-15T12:00:00.000Z",
       inputTokens: 9999,
       totalTokens: 9999,
       estimatedCost: 50,
-      sourcePath: "backup:gist-daily",
+      sourcePath: "backup:gist-daily:pc-a",
+      workspace: "pc-a",
+    }),
+    evt({
+      id: "gist-other",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: "2026-07-15T12:00:00.000Z",
+      inputTokens: 500,
+      totalTokens: 550,
+      estimatedCost: 5,
+      sourcePath: "backup:gist-daily:pc-b",
+      workspace: "pc-b",
     }),
     evt({
       id: "gist-2",
@@ -407,14 +423,78 @@ test("mergeLocalPreferOverGistRollups drops gist when local covers day×agent×m
       inputTokens: 10,
       totalTokens: 11,
       estimatedCost: 0.1,
-      sourcePath: "backup:gist-hour",
+      sourcePath: "backup:gist-hour:pc-a",
+      workspace: "pc-a",
     }),
   ];
-  const merged = mergeLocalPreferOverGistRollups(local, imported);
-  assert.equal(merged.length, 2);
+  const merged = mergeLocalPreferOverGistRollups(local, imported, "pc-a");
   assert.ok(merged.some((e) => e.id === "local-1"));
+  assert.ok(merged.some((e) => e.id === "gist-other"), "other machine always kept");
   assert.ok(merged.some((e) => e.id === "gist-2"), "uncovered agent kept");
-  assert.ok(!merged.some((e) => e.id === "gist-1"), "covered gist rollup dropped");
+  assert.ok(!merged.some((e) => e.id === "gist-same"), "same-machine covered rollup dropped");
+});
+
+test("mergeMultiMachineGistRollups sums two hosts and replaces same host", () => {
+  const fromA = buildGistRestoreRollups(
+    [
+      evt({
+        id: "a1",
+        agent: "grok",
+        model: "grok-4.5",
+        timestamp: new Date().toISOString(),
+        inputTokens: 100,
+        totalTokens: 110,
+        estimatedCost: 2,
+      }),
+    ],
+    Date.now(),
+    "pc-a",
+  );
+  const fromB = buildGistRestoreRollups(
+    [
+      evt({
+        id: "b1",
+        agent: "grok",
+        model: "grok-4.5",
+        timestamp: new Date().toISOString(),
+        inputTokens: 50,
+        totalTokens: 55,
+        estimatedCost: 1,
+      }),
+    ],
+    Date.now(),
+    "pc-b",
+  );
+  // B uploads after A: remote has A, local is B
+  const merged = mergeMultiMachineGistRollups(fromB, fromA, "pc-b");
+  assert.equal(merged.length, 2, "both machines kept");
+  assert.ok(merged.some((e) => machineIdFromEvent(e) === "pc-a"));
+  assert.ok(merged.some((e) => machineIdFromEvent(e) === "pc-b"));
+  const totalCost = merged.reduce((s, e) => s + (e.estimatedCost || 0), 0);
+  assert.equal(totalCost, 3);
+
+  // A re-uploads with higher cost — replaces A's old slice, keeps B
+  const fromA2 = buildGistRestoreRollups(
+    [
+      evt({
+        id: "a2",
+        agent: "grok",
+        model: "grok-4.5",
+        timestamp: new Date().toISOString(),
+        inputTokens: 200,
+        totalTokens: 220,
+        estimatedCost: 4,
+      }),
+    ],
+    Date.now(),
+    "pc-a",
+  );
+  const merged2 = mergeMultiMachineGistRollups(fromA2, merged, "pc-a");
+  assert.equal(merged2.length, 2);
+  const aRow = merged2.find((e) => machineIdFromEvent(e) === "pc-a");
+  assert.equal(aRow?.estimatedCost, 4);
+  const bRow = merged2.find((e) => machineIdFromEvent(e) === "pc-b");
+  assert.equal(bRow?.estimatedCost, 1);
 });
 
 test("buildGistFullBackup is period-stats and much smaller than raw events", async () => {
@@ -429,16 +509,54 @@ test("buildGistFullBackup is period-stats and much smaller than raw events", asy
       estimatedCost: 0.01 * (i + 1),
     }),
   );
-  const backup = await buildGistFullBackup(events);
+  const backup = await buildGistFullBackup(events, { machineId: "pc-a" });
   assert.equal(backup.scope, "period-stats");
   assert.equal(backup.formatVersion, 3);
   assert.ok(backup.periodStats?.all?.byModel.length);
   assert.ok(backup.periodStats?.all?.byAgent.length);
   assert.ok((backup.events?.length || 0) < events.length);
   assert.equal(backup.meta?.sourceEventCount, 200);
+  assert.equal(backup.meta?.machineId, "pc-a");
+  assert.ok(backup.meta?.machines?.includes("pc-a"));
   const rawSize = Buffer.byteLength(JSON.stringify(events), "utf8");
   const gistSize = Buffer.byteLength(JSON.stringify(backup), "utf8");
   assert.ok(gistSize < rawSize, `gist ${gistSize} should be < raw ${rawSize}`);
+});
+
+test("buildGistFullBackup multi-machine sums periodStats cost", async () => {
+  const now = new Date().toISOString();
+  const eventsA = [
+    evt({
+      id: "ma1",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: now,
+      inputTokens: 1000,
+      totalTokens: 1100,
+      estimatedCost: 10,
+    }),
+  ];
+  const eventsB = [
+    evt({
+      id: "mb1",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: now,
+      inputTokens: 500,
+      totalTokens: 550,
+      estimatedCost: 5,
+    }),
+  ];
+  const remoteA = await buildGistFullBackup(eventsA, { machineId: "pc-a" });
+  const merged = await buildGistFullBackup(eventsB, {
+    machineId: "pc-b",
+    remoteEvents: remoteA.events,
+  });
+  assert.ok(merged.meta?.machines?.includes("pc-a"));
+  assert.ok(merged.meta?.machines?.includes("pc-b"));
+  assert.equal(merged.events?.length, 2);
+  const allCost = merged.periodStats?.all?.totals.estimatedCost || 0;
+  assert.ok(Math.abs(allCost - 15) < 0.0001, `expected 15 got ${allCost}`);
 });
 
 test("Gist restore rollups match source totals for dashboard periods", async () => {
