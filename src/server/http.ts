@@ -799,8 +799,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           public: body.public === true,
           eventCountHint: cache.length,
           saveToken: body.saveToken === true,
-          // Always full project usage (config + rates + events + compact daily mirrors)
-          scope: "full",
+          // Period stats: by model + by agent for Today/24h/7D/30D/All
+          scope: "period-stats",
           events: cache,
         });
         return json(res, 200, {
@@ -809,7 +809,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           scope: result.scope,
           exportedAt: result.backup.exportedAt,
           customRateCount: Object.keys(result.backup.config.pricing?.customRates || {}).length,
-          eventCount: result.backup.events?.length || result.backup.meta?.eventCount || 0,
+          eventCount:
+            result.backup.meta?.sourceEventCount ||
+            result.backup.meta?.eventCount ||
+            result.backup.events?.length ||
+            0,
+          rollupEventCount:
+            result.backup.meta?.rollupEventCount || result.backup.events?.length || 0,
+          modelCount: result.backup.meta?.modelCount || 0,
+          agentCount: result.backup.meta?.agentCount || 0,
           mirrorFileCount: result.backup.meta?.mirrorFileCount || 0,
         });
       } catch (err) {

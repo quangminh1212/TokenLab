@@ -9,8 +9,15 @@ import {
   openrouterCachePath,
   type OpenRouterModelEntry,
 } from "./openrouter-models.js";
-import type { UsageEvent } from "./types.js";
-import { appDataDir, pathExists } from "./util.js";
+import { aggregate } from "./aggregate.js";
+import type { TokenTotals, UsageEvent } from "./types.js";
+import {
+  appDataDir,
+  filterByPeriod,
+  normalizeModelName,
+  pathExists,
+  stableId,
+} from "./util.js";
 import { VERSION } from "./version.js";
 
 // Simple file logger to %LOCALAPPDATA%\xlab-token\backup.txt
@@ -34,10 +41,35 @@ function logError(...args: unknown[]): void {
 }
 
 export const BACKUP_FORMAT = "xlab-token-backup" as const;
-/** v1 = settings only · v2 = full project data */
-export const BACKUP_FORMAT_VERSION = 2 as const;
+/** v1 = settings only · v2 = full events · v3 = period stats (by model + agent) */
+export const BACKUP_FORMAT_VERSION = 3 as const;
 
-export type BackupScope = "settings" | "full";
+export type BackupScope = "settings" | "full" | "period-stats";
+
+/** Dashboard periods mirrored into Gist backups */
+export type GistPeriodKey = "today" | "24h" | "7d" | "30d" | "all";
+
+export interface CompactTokenRow {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  estimatedCost: number;
+  eventCount: number;
+}
+
+export interface PeriodGroupRow extends CompactTokenRow {
+  key: string;
+}
+
+export interface PeriodSnapshot {
+  period: GistPeriodKey;
+  since: string | null;
+  totals: CompactTokenRow;
+  byModel: PeriodGroupRow[];
+  byAgent: PeriodGroupRow[];
+}
 
 export interface XlabBackup {
   format: typeof BACKUP_FORMAT;
@@ -51,7 +83,12 @@ export interface XlabBackup {
     timezone?: string;
     pricing?: XlabTokenConfig["pricing"];
   };
-  /** Scanned usage events (full scope) */
+  /**
+   * Gist v3: usage by model & agent for Today / 24h / 7D / 30D / All.
+   * Much smaller than raw event lists.
+   */
+  periodStats?: Partial<Record<GistPeriodKey, PeriodSnapshot>>;
+  /** Scanned usage events (full scope) or daily agent×model rollups (period-stats) */
   events?: UsageEvent[];
   /** Cached OpenRouter model catalog (full scope) */
   openrouter?: {
@@ -66,6 +103,12 @@ export interface XlabBackup {
   meta?: {
     note?: string;
     eventCount?: number;
+    /** Original raw events before period aggregation (Gist v3) */
+    sourceEventCount?: number;
+    /** Daily agent×model rollup rows in `events` (Gist v3) */
+    rollupEventCount?: number;
+    modelCount?: number;
+    agentCount?: number;
     openrouterModelCount?: number;
     mirrorFileCount?: number;
     mirrorBytes?: number;
@@ -820,9 +863,14 @@ export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
   const openrouterRestored = await restoreOpenrouter(raw.openrouter);
   const mirrorsRestored = await restoreMirrors(raw.mirrors);
   const scope: BackupScope =
-    raw.scope === "full" || (events && events.length > 0) || openrouterRestored || mirrorsRestored > 0
-      ? "full"
-      : "settings";
+    raw.scope === "period-stats"
+      ? "period-stats"
+      : raw.scope === "full" ||
+          (events && events.length > 0) ||
+          openrouterRestored ||
+          mirrorsRestored > 0
+        ? "full"
+        : "settings";
 
   return {
     ok: true,
@@ -855,54 +903,169 @@ function githubToken(fromBody?: string | null): string | null {
 /** GitHub Gist hard-ish limit; keep headroom under 100MB API max */
 const GIST_MAX_BYTES = 50 * 1024 * 1024;
 
-/** Compact usage rows for Gist (drop long source paths). */
-function compactEventsForGist(events: UsageEvent[]): UsageEvent[] {
-  return events.map((e) => ({
-    id: e.id,
-    agent: e.agent,
-    model: e.model,
-    timestamp: e.timestamp,
-    inputTokens: e.inputTokens,
-    outputTokens: e.outputTokens,
-    cacheReadTokens: e.cacheReadTokens,
-    cacheWriteTokens: e.cacheWriteTokens,
-    totalTokens: e.totalTokens,
-    estimatedCost: e.estimatedCost,
-    currency: e.currency || "USD",
-    pricingStatus: e.pricingStatus,
-    workspace: e.workspace ?? null,
-    sourcePath: e.sourcePath?.startsWith("backup") ? e.sourcePath : "scan",
-    estimated: e.estimated,
-  }));
+function toCompactRow(t: TokenTotals): CompactTokenRow {
+  return {
+    inputTokens: t.inputTokens || 0,
+    outputTokens: t.outputTokens || 0,
+    cacheReadTokens: t.cacheReadTokens || 0,
+    cacheWriteTokens: t.cacheWriteTokens || 0,
+    totalTokens: t.totalTokens || 0,
+    estimatedCost: t.estimatedCost || 0,
+    eventCount: t.eventCount || 0,
+  };
+}
+
+const GIST_PERIODS: ReadonlyArray<{ key: GistPeriodKey; since: string | null }> = [
+  { key: "today", since: "today" },
+  { key: "24h", since: "24h" },
+  { key: "7d", since: "7d" },
+  { key: "30d", since: "30d" },
+  { key: "all", since: null },
+];
+
+/**
+ * Aggregate usage into dashboard periods (Today / 24h / 7D / 30D / All)
+ * with both **by model** and **by agent** breakdowns.
+ */
+export function buildPeriodStats(
+  events: UsageEvent[],
+  timeZone?: string | null,
+): Record<GistPeriodKey, PeriodSnapshot> {
+  const tz = timeZone ?? getConfigSync().timezone ?? "local";
+  const out = {} as Record<GistPeriodKey, PeriodSnapshot>;
+  for (const p of GIST_PERIODS) {
+    const filtered = filterByPeriod(events, p.since, null, tz);
+    const byModel = aggregate(filtered, "model", "cost", p.since, null);
+    const byAgent = aggregate(filtered, "agent", "cost", p.since, null);
+    out[p.key] = {
+      period: p.key,
+      since: p.since,
+      totals: toCompactRow(byModel.totals),
+      byModel: byModel.groups.map((g) => ({ key: g.key, ...toCompactRow(g) })),
+      byAgent: byAgent.groups.map((g) => ({ key: g.key, ...toCompactRow(g) })),
+    };
+  }
+  return out;
 }
 
 /**
- * Full-project backup tuned for Gist: config + all usage events + compact daily mirrors.
- * OpenRouter catalog is omitted (can re-fetch); request-level jsonl never included.
+ * Collapse raw events to one row per day × agent × model for restore.
+ * Keeps multi-machine merge useful without shipping every request.
+ */
+export function buildDailyAgentModelRollups(events: UsageEvent[]): UsageEvent[] {
+  type Acc = {
+    agent: UsageEvent["agent"];
+    model: string | null;
+    day: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    totalTokens: number;
+    estimatedCost: number;
+    eventCount: number;
+  };
+  const map = new Map<string, Acc>();
+  for (const e of events) {
+    if (!e || typeof e.agent !== "string") continue;
+    const day = (e.timestamp || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    const model = normalizeModelName(e.model);
+    const key = `${day}|${e.agent}|${model || ""}`;
+    let row = map.get(key);
+    if (!row) {
+      row = {
+        agent: e.agent,
+        model,
+        day,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 0,
+        estimatedCost: 0,
+        eventCount: 0,
+      };
+      map.set(key, row);
+    }
+    row.inputTokens += Number(e.inputTokens) || 0;
+    row.outputTokens += Number(e.outputTokens) || 0;
+    row.cacheReadTokens += Number(e.cacheReadTokens) || 0;
+    row.cacheWriteTokens += Number(e.cacheWriteTokens) || 0;
+    row.totalTokens +=
+      Number(e.totalTokens) ||
+      (Number(e.inputTokens) || 0) +
+        (Number(e.outputTokens) || 0) +
+        (Number(e.cacheReadTokens) || 0) +
+        (Number(e.cacheWriteTokens) || 0);
+    row.estimatedCost += Number(e.estimatedCost) || 0;
+    row.eventCount += 1;
+  }
+
+  const out: UsageEvent[] = [];
+  for (const row of map.values()) {
+    out.push({
+      id: stableId("gist-daily", row.day, row.agent, row.model || "unknown"),
+      agent: row.agent,
+      model: row.model,
+      timestamp: `${row.day}T12:00:00.000Z`,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cacheReadTokens: row.cacheReadTokens,
+      cacheWriteTokens: row.cacheWriteTokens,
+      totalTokens: row.totalTokens,
+      estimatedCost: row.estimatedCost,
+      currency: "USD",
+      pricingStatus: "estimated",
+      workspace: null,
+      sourcePath: "backup:gist-daily",
+      estimated: true,
+    });
+  }
+  return out;
+}
+
+/**
+ * Gist-tuned backup: settings + **by model / by agent** for Today·24h·7D·30D·All
+ * + compact daily agent×model rollups for restore. No OpenRouter catalog, no mirrors.
  */
 export async function buildGistFullBackup(events: UsageEvent[]): Promise<XlabBackup> {
-  const full = await buildFullBackup({
-    events,
-    includeMirrors: true,
-    note: "XLab Token full usage backup (daily-first events + settings + compact mirrors)",
+  const cfg = getConfigSync();
+  const tz = cfg.timezone || "local";
+  const periodStats = buildPeriodStats(events, tz);
+  const rollups = buildDailyAgentModelRollups(events);
+  const allSnap = periodStats.all;
+  const modelCount = allSnap?.byModel.length || 0;
+  const agentCount = allSnap?.byAgent.length || 0;
+
+  const base = buildSettingsBackup({
+    eventCountHint: events.length,
+    note: "XLab Token Gist: by model + by agent for Today/24h/7D/30D/All + daily rollups",
   });
-  full.events = compactEventsForGist(full.events || []);
-  // Catalog is re-fetchable and large — drop from Gist to leave room for usage
-  delete full.openrouter;
-  full.meta = {
-    ...full.meta,
-    eventCount: full.events.length,
+  base.formatVersion = BACKUP_FORMAT_VERSION;
+  base.scope = "period-stats";
+  base.periodStats = periodStats;
+  base.events = rollups;
+  base.meta = {
+    ...base.meta,
+    eventCount: events.length,
+    sourceEventCount: events.length,
+    rollupEventCount: rollups.length,
+    modelCount,
+    agentCount,
     openrouterModelCount: 0,
+    mirrorFileCount: 0,
+    mirrorBytes: 0,
     note:
-      (full.meta?.note || "") +
-      " · openrouter catalog omitted (refresh from network after restore)",
+      (base.meta?.note || "") +
+      ` · ${modelCount} models · ${agentCount} agents · ${rollups.length} daily rollups from ${events.length} events`,
   };
-  return full;
+  return base;
 }
 
 /**
- * Create or update a secret GitHub Gist with **full project usage**
- * (settings + custom rates + all scanned usage events + compact daily mirrors).
+ * Create or update a secret GitHub Gist with **period usage**
+ * (settings + by model/agent for Today·24h·7D·30D·All + daily rollups).
  */
 export async function uploadBackupToGist(opts: {
   token?: string | null;
@@ -910,7 +1073,7 @@ export async function uploadBackupToGist(opts: {
   public?: boolean;
   eventCountHint?: number;
   saveToken?: boolean;
-  /** @deprecated Gist always uploads full usage when events are provided */
+  /** @deprecated Gist always uploads period-stats when events are provided */
   scope?: BackupScope;
   events?: UsageEvent[];
 }): Promise<{ backup: XlabBackup; gist: GistUploadResult; scope: BackupScope }> {
@@ -926,12 +1089,12 @@ export async function uploadBackupToGist(opts: {
   }
   log("GitHub token resolved (length):", token.length);
 
-  // Always prefer full usage on Gist when we have the event cache
+  // Period-stats (by model + agent) when we have the event cache
   let backup: XlabBackup;
-  let scope: BackupScope = "full";
+  let scope: BackupScope = "period-stats";
   if (opts.events && opts.events.length >= 0) {
     backup = await buildGistFullBackup(opts.events);
-    scope = "full";
+    scope = "period-stats";
   } else {
     backup = buildSettingsBackup({
       eventCountHint: opts.eventCountHint,
@@ -939,37 +1102,32 @@ export async function uploadBackupToGist(opts: {
     });
     scope = "settings";
   }
-  log("Backup built, scope:", scope, "events:", backup.events?.length ?? 0);
+  log(
+    "Backup built, scope:",
+    scope,
+    "sourceEvents:",
+    backup.meta?.sourceEventCount ?? 0,
+    "rollups:",
+    backup.events?.length ?? 0,
+    "models:",
+    backup.meta?.modelCount ?? 0,
+    "agents:",
+    backup.meta?.agentCount ?? 0,
+  );
 
-  // Compact JSON (no pretty-print) to maximize room for usage rows
+  // Compact JSON (no pretty-print)
   let content = JSON.stringify(backup);
   let size = Buffer.byteLength(content, "utf8");
 
-  // If still huge: drop mirrors, keep all events
-  if (size > GIST_MAX_BYTES && backup.mirrors && Object.keys(backup.mirrors).length) {
-    backup = {
-      ...backup,
-      mirrors: undefined,
-      meta: {
-        ...backup.meta,
-        mirrorFileCount: 0,
-        mirrorBytes: 0,
-        note: (backup.meta?.note || "") + " · mirrors omitted (size)",
-      },
-    };
-    content = JSON.stringify(backup);
-    size = Buffer.byteLength(content, "utf8");
-  }
-
   if (size > GIST_MAX_BYTES) {
     throw new Error(
-      `Full usage backup is ${Math.round(size / 1024 / 1024)}MB (limit ~${Math.round(GIST_MAX_BYTES / 1024 / 1024)}MB). ` +
+      `Period-stats backup is ${Math.round(size / 1024 / 1024)}MB (limit ~${Math.round(GIST_MAX_BYTES / 1024 / 1024)}MB). ` +
         `Use Export full download instead, or reduce history.`,
     );
   }
 
   const filename = "xlab-token-backup.json";
-  const description = `XLab Token full usage · ${backup.events?.length || 0} events · ${backup.exportedAt} · v${backup.appVersion}`;
+  const description = `XLab Token by model+agent · Today/24h/7D/30D/All · ${backup.meta?.modelCount || 0} models · ${backup.meta?.agentCount || 0} agents · ${backup.meta?.sourceEventCount || backup.events?.length || 0} src · ${backup.exportedAt} · v${backup.appVersion}`;
 
   const prevId =
     (opts.gistId && String(opts.gistId).trim()) ||
