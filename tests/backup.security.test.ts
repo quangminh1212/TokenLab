@@ -57,7 +57,7 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model", () =
     estimatedCost: 20,
     timestamp: "2026-07-16T15:00:00.000Z",
   });
-  // Same day as daily → dropped (daily is canonical)
+  // Requests smaller than daily → keep daily (not double)
   const requestSameDay = evt({
     id: "req-same",
     agent: "xlabrouter",
@@ -85,6 +85,46 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model", () =
   assert.equal(daily?.totalTokens, 55_000);
   assert.equal(merged.some((e) => e.id === "req-same"), false);
   assert.ok(merged.some((e) => e.id === "req-other"));
+});
+
+test("collapseRouterDailyEvents prefers requests when they exceed stale daily", () => {
+  const staleDaily = evt({
+    id: "daily-stale",
+    agent: "9router",
+    model: "mixed",
+    estimated: true,
+    inputTokens: 1_000,
+    totalTokens: 1_100,
+    estimatedCost: 1,
+    timestamp: "2026-07-16T12:00:00.000Z",
+  });
+  const r1 = evt({
+    id: "r1",
+    agent: "9router",
+    model: "gpt-5",
+    estimated: false,
+    inputTokens: 40_000,
+    totalTokens: 42_000,
+    estimatedCost: 10,
+    timestamp: "2026-07-16T08:00:00.000Z",
+  });
+  const r2 = evt({
+    id: "r2",
+    agent: "9router",
+    model: "gpt-5",
+    estimated: false,
+    inputTokens: 30_000,
+    totalTokens: 31_000,
+    estimatedCost: 8,
+    timestamp: "2026-07-16T09:00:00.000Z",
+  });
+  const merged = collapseRouterDailyEvents([staleDaily, r1, r2]);
+  // Prefer overcount: request sum (73k) > daily (1.1k) → keep both requests, drop daily
+  assert.equal(merged.some((e) => e.id === "daily-stale"), false);
+  assert.ok(merged.some((e) => e.id === "r1"));
+  assert.ok(merged.some((e) => e.id === "r2"));
+  const tok = merged.reduce((a, e) => a + (e.totalTokens || 0), 0);
+  assert.equal(tok, 73_000);
 });
 
 test("preferRicherEvent fills null model even when default cost is higher", () => {
