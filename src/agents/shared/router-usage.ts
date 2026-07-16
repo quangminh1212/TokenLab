@@ -526,6 +526,9 @@ function expandOneDay(
         `daily-${dateKey}-${modelKey}`,
       );
       if (e) {
+        // Stable id across rollup growth — token counts must NOT be in the hash
+        // or each mid-day update creates a new row and all-time totals explode.
+        e.id = stableId(agent, "daily-rollup", dateKey, modelKey);
         e.estimated = true;
         out.push(e);
       }
@@ -554,6 +557,7 @@ function expandOneDay(
     `daily-${dateKey}`,
   );
   if (!e) return [];
+  e.id = stableId(agent, "daily-rollup", dateKey, "all");
   e.estimated = true;
   return [e];
 }

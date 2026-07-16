@@ -22,29 +22,35 @@ export async function parseDevin(roots: string[]): Promise<UsageEvent[]> {
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
-    // SQLite sessions
+    let rootSqliteEvents = 0;
+    // SQLite sessions (canonical)
     for (const rel of ["cli/sessions.db", "sessions.db", "state.db"]) {
       const dbPath = path.join(root, rel);
       const dbKey = dbPath.toLowerCase();
       if (await pathExists(dbPath) && !seenDb.has(dbKey)) {
         seenDb.add(dbKey);
-        events.push(...(await parseDevinSqlite(dbPath)));
+        const batch = await parseDevinSqlite(dbPath);
+        rootSqliteEvents += batch.length;
+        events.push(...batch);
       }
     }
 
-    // JSON/JSONL fallback under root
-    events.push(
-      ...(await parseGenericJsonl([root], {
-        agent: "devin",
-        maxDepth: 8,
-        match: (n, full) =>
-          n.endsWith(".jsonl") ||
-          (n.endsWith(".json") &&
-            (n.includes("usage") ||
-              n.includes("session") ||
-              full.includes(`${path.sep}summaries${path.sep}`) === false)),
-      })),
-    );
+    // JSON/JSONL fallback only when this root had no SQLite rows —
+    // exporting the same sessions as jsonl used to double-count cache tokens.
+    if (rootSqliteEvents === 0) {
+      events.push(
+        ...(await parseGenericJsonl([root], {
+          agent: "devin",
+          maxDepth: 8,
+          match: (n, full) =>
+            n.endsWith(".jsonl") ||
+            (n.endsWith(".json") &&
+              (n.includes("usage") ||
+                n.includes("session") ||
+                full.includes(`${path.sep}summaries${path.sep}`) === false)),
+        })),
+      );
+    }
   }
 
   return events;
@@ -135,12 +141,12 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
           applyPricing({
             id: stableId(
               "devin",
-              // stable across path casing so remounts don't duplicate
+              // stable across path casing so remounts don't duplicate.
+              // row_id alone is enough — hashing tokens re-created ids when
+              // cache fields were refined and double-counted cache usage.
               dbPath.toLowerCase(),
               sid,
               String(row.row_id),
-              String(buckets.inputTokens),
-              String(buckets.outputTokens),
             ),
             agent: "devin",
             model,

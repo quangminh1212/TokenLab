@@ -47,6 +47,39 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("daily rollup ids stay stable when token totals grow", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-stable-"));
+    try {
+      const writeDaily = async (prompt: number, cost: number) => {
+        await writeFile(
+          path.join(dir, "usage-daily.json"),
+          JSON.stringify({
+            "2026-07-16": {
+              requests: 10,
+              promptTokens: prompt,
+              completionTokens: 100,
+              cost,
+            },
+          }),
+          "utf8",
+        );
+      };
+      await writeDaily(1_000, 1);
+      const first = await parseRouterUsage([dir], "xlabrouter");
+      assert.equal(first.length, 1);
+      const id1 = first[0]!.id;
+      await writeDaily(50_000, 20);
+      const second = await parseRouterUsage([dir], "xlabrouter");
+      assert.equal(second.length, 1);
+      assert.equal(second[0]!.id, id1, "same day rollup must keep stable id");
+      assert.equal(second[0]!.inputTokens, 50_000);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reconciles sparse history against dailySummary", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");

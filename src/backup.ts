@@ -156,7 +156,76 @@ export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEven
       byId.set(e.id, preferRicherEvent(prev, e));
     }
   }
-  return [...byId.values()];
+  // Heal inflated history: unstable router daily ids + exact row clones.
+  return collapseExactUsageDuplicates(collapseRouterDailyEvents([...byId.values()]));
+}
+
+/**
+ * Router daily rollups used to hash prompt/completion into the event id, so every
+ * mid-day update created a second row. Keep one richest estimated row per
+ * agent + calendar day + model; leave non-estimated request history intact.
+ */
+export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
+  if (!Array.isArray(events) || events.length === 0) return events || [];
+  const daysWithDaily = new Set<string>();
+  for (const e of events) {
+    if (!e || (e.agent !== "9router" && e.agent !== "xlabrouter") || !e.estimated) continue;
+    const day = (e.timestamp || "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) daysWithDaily.add(`${e.agent}|${day}`);
+  }
+
+  const out: UsageEvent[] = [];
+  const dailyBest = new Map<string, UsageEvent>();
+  for (const e of events) {
+    if (!e || typeof e.id !== "string") continue;
+    const isRouter = e.agent === "9router" || e.agent === "xlabrouter";
+    if (!isRouter) {
+      out.push(e);
+      continue;
+    }
+    const day = (e.timestamp || "").slice(0, 10);
+    // Daily rollup is canonical for that calendar day — drop request clones.
+    if (!e.estimated && daysWithDaily.has(`${e.agent}|${day}`)) continue;
+    if (!e.estimated) {
+      out.push(e);
+      continue;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      out.push(e);
+      continue;
+    }
+    const model = (typeof e.model === "string" && e.model.trim()) || "mixed";
+    const key = `${e.agent}|${day}|${model}`;
+    const prev = dailyBest.get(key);
+    dailyBest.set(key, prev ? preferRicherEvent(prev, e) : e);
+  }
+  for (const e of dailyBest.values()) out.push(e);
+  return out;
+}
+
+/**
+ * Drop byte-identical clones (same agent/time/tokens/source, different id).
+ * Common after Devin sqlite + jsonl both ingested the same message_nodes row.
+ */
+export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[] {
+  if (!Array.isArray(events) || events.length === 0) return events || [];
+  const best = new Map<string, UsageEvent>();
+  for (const e of events) {
+    if (!e || typeof e.id !== "string") continue;
+    const key = [
+      e.agent,
+      e.timestamp || "",
+      e.model || "",
+      e.inputTokens || 0,
+      e.outputTokens || 0,
+      e.cacheReadTokens || 0,
+      e.cacheWriteTokens || 0,
+      e.sourcePath || "",
+    ].join("|");
+    const prev = best.get(key);
+    best.set(key, prev ? preferRicherEvent(prev, e) : e);
+  }
+  return [...best.values()];
 }
 
 export async function loadImportedEvents(): Promise<UsageEvent[]> {
@@ -272,16 +341,31 @@ async function loadScanCacheCandidate(filePath: string): Promise<UsageEvent[] | 
   return null;
 }
 
+function scanCacheScore(events: UsageEvent[]): { count: number; tokens: number } {
+  let tokens = 0;
+  for (const e of events) tokens += eventTokenWeight(e);
+  return { count: events.length, tokens };
+}
+
 export async function loadScanCache(): Promise<UsageEvent[]> {
   const p = scanCachePath();
   const candidates = [p, scanCacheBackupPath(), scanCacheArchivePath()];
   let best: UsageEvent[] = [];
+  let bestScore = { count: 0, tokens: 0 };
   let bestFrom = "";
   for (const candidate of candidates) {
     const events = await loadScanCacheCandidate(candidate);
     if (!events || events.length === 0) continue;
-    if (events.length > best.length) {
+    const score = scanCacheScore(events);
+    // Prefer more events; on near-ties pick higher token weight so a truncated
+    // progressive write does not beat a slightly shorter but complete cache.
+    const better =
+      score.count > bestScore.count + 50 ||
+      (score.count >= bestScore.count - 50 && score.tokens > bestScore.tokens) ||
+      (score.count > bestScore.count && score.tokens >= bestScore.tokens * 0.9);
+    if (better || best.length === 0) {
       best = events;
+      bestScore = score;
       bestFrom = candidate;
     }
   }
@@ -289,19 +373,29 @@ export async function loadScanCache(): Promise<UsageEvent[]> {
     if (bestFrom !== p) {
       log("loadScanCache: recovered", best.length, "events from →", bestFrom);
     }
-    return best;
+    // Heal legacy unstable daily ids + exact clones so restart totals stay honest.
+    return collapseExactUsageDuplicates(collapseRouterDailyEvents(best));
   }
   logError("loadScanCache: no valid cache file (main + .bak + archive all failed)");
   return [];
 }
 
 export async function saveScanCache(events: UsageEvent[]): Promise<void> {
-  const clean = sanitizeEvents(events) || [];
+  const clean = collapseExactUsageDuplicates(
+    collapseRouterDailyEvents(sanitizeEvents(events) || []),
+  );
   const p = scanCachePath();
   const bak = scanCacheBackupPath();
   await mkdir(path.dirname(p), { recursive: true });
 
   const job = scanCacheSaveChain.then(async () => {
+    // Keep supervisor hang-watchdog happy during large JSON serialize/write.
+    try {
+      const { writeHeartbeat } = await import("./process-guard.js");
+      writeHeartbeat();
+    } catch {
+      /* optional */
+    }
     const json = JSON.stringify(clean);
     // Verify round-trip before touching the live file (catches bad rows early).
     const verified = sanitizeEvents(JSON.parse(json) as unknown) || [];
@@ -325,6 +419,12 @@ export async function saveScanCache(events: UsageEvent[]): Promise<void> {
         logError("saveScanCache: archive copy failed:", err instanceof Error ? err.message : err);
       }
       log("saveScanCache:", clean.length, "→", p);
+      try {
+        const { writeHeartbeat } = await import("./process-guard.js");
+        writeHeartbeat();
+      } catch {
+        /* optional */
+      }
     } catch (err) {
       try {
         const { unlink } = await import("node:fs/promises");

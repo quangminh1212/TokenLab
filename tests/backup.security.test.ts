@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import {
+  collapseRouterDailyEvents,
   loadScanCache,
   restoreBackup,
   mirrorsRoot,
@@ -34,6 +35,57 @@ function evt(partial: Partial<UsageEvent> & { id: string }): UsageEvent {
     ...partial,
   };
 }
+
+test("collapseRouterDailyEvents keeps richest estimated row per day+model", () => {
+  const low = evt({
+    id: "old-daily-low",
+    agent: "xlabrouter",
+    model: "mixed",
+    estimated: true,
+    inputTokens: 1_000,
+    totalTokens: 1_100,
+    estimatedCost: 1,
+    timestamp: "2026-07-16T12:00:00.000Z",
+  });
+  const high = evt({
+    id: "old-daily-high",
+    agent: "xlabrouter",
+    model: "mixed",
+    estimated: true,
+    inputTokens: 50_000,
+    totalTokens: 55_000,
+    estimatedCost: 20,
+    timestamp: "2026-07-16T15:00:00.000Z",
+  });
+  // Same day as daily → dropped (daily is canonical)
+  const requestSameDay = evt({
+    id: "req-same",
+    agent: "xlabrouter",
+    model: "gpt-5",
+    estimated: false,
+    inputTokens: 10,
+    totalTokens: 12,
+    estimatedCost: 0.01,
+    timestamp: "2026-07-16T10:00:00.000Z",
+  });
+  // Day without daily rollup → kept
+  const requestOtherDay = evt({
+    id: "req-other",
+    agent: "xlabrouter",
+    model: "gpt-5",
+    estimated: false,
+    inputTokens: 10,
+    totalTokens: 12,
+    estimatedCost: 0.01,
+    timestamp: "2026-07-10T10:00:00.000Z",
+  });
+  const merged = collapseRouterDailyEvents([low, high, requestSameDay, requestOtherDay]);
+  assert.equal(merged.length, 2);
+  const daily = merged.find((e) => e.estimated);
+  assert.equal(daily?.totalTokens, 55_000);
+  assert.equal(merged.some((e) => e.id === "req-same"), false);
+  assert.ok(merged.some((e) => e.id === "req-other"));
+});
 
 test("preferRicherEvent fills null model even when default cost is higher", () => {
   const stale = evt({
