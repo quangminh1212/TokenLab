@@ -99,6 +99,54 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
   }
 });
 
+test("parseGrok bills turn_completed without usage via prompt peak totalTokens", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-nou-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-nou");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-nou", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.5",
+        updated_at: "2026-07-16T10:00:00.000Z",
+      }),
+    );
+
+    const promptId = "prompt-no-usage-1";
+    const chunk = JSON.stringify({
+      timestamp: 1784180000,
+      method: "_x.ai/session/update",
+      params: {
+        sessionId: "sess-nou",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } },
+        _meta: { totalTokens: 50_000, promptId },
+      },
+    });
+    const done = JSON.stringify({
+      timestamp: 1784180001,
+      method: "_x.ai/session/update",
+      params: {
+        sessionId: "sess-nou",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: promptId,
+          stop_reason: "end_turn",
+        },
+      },
+    });
+    await writeFile(path.join(sessionDir, "updates.jsonl"), `${chunk}\n${done}\n`);
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.estimated, true);
+    assert.equal(events[0]!.inputTokens, 50_000);
+    assert.equal(events[0]!.totalTokens, 50_000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("parseGrok falls back to chat estimate when updates has no usage", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-fb-"));
   try {
