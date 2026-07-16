@@ -492,10 +492,26 @@ export async function loadScanCache(): Promise<UsageEvent[]> {
   return [];
 }
 
-export async function saveScanCache(events: UsageEvent[]): Promise<void> {
-  const clean = collapseExactUsageDuplicates(
-    collapseSourcePathRollups(collapseRouterDailyEvents(sanitizeEvents(events) || [])),
-  );
+export type SaveScanCacheOpts = {
+  /**
+   * - full (default): collapse + .bak + archive (shutdown / end of full scan)
+   * - quick: skip heavy collapse + archive (progressive mid-scan) — less CPU/RAM/disk
+   */
+  mode?: "full" | "quick";
+};
+
+export async function saveScanCache(
+  events: UsageEvent[],
+  opts: SaveScanCacheOpts = {},
+): Promise<void> {
+  const mode = opts.mode === "quick" ? "quick" : "full";
+  // Progressive saves already hold clean-ish rows; skip O(n) collapse passes mid-scan.
+  const clean =
+    mode === "quick"
+      ? events
+      : collapseExactUsageDuplicates(
+          collapseSourcePathRollups(collapseRouterDailyEvents(sanitizeEvents(events) || [])),
+        );
   const p = scanCachePath();
   const bak = scanCacheBackupPath();
   await mkdir(path.dirname(p), { recursive: true });
@@ -508,29 +524,31 @@ export async function saveScanCache(events: UsageEvent[]): Promise<void> {
     } catch {
       /* optional */
     }
+    // One serialize only — avoid JSON.parse(verify) which doubled peak RAM (~8MB×2+).
     const json = JSON.stringify(clean);
-    // Verify round-trip before touching the live file (catches bad rows early).
-    const verified = sanitizeEvents(JSON.parse(json) as unknown) || [];
-    if (verified.length !== clean.length) {
-      throw new Error(`scan cache verify mismatch (${verified.length} vs ${clean.length})`);
+    if (!json.startsWith("[") || !json.endsWith("]")) {
+      throw new Error("scan cache serialize produced non-array JSON");
     }
 
     const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
     try {
       await writeFile(tmp, json, "utf8");
       await rename(tmp, p);
-      // Always mirror the good file so a corrupt/interrupted main can be recovered.
+      // .bak every write so corrupt main is recoverable
       try {
         await copyFile(p, bak);
       } catch (err) {
         logError("saveScanCache: backup copy failed:", err instanceof Error ? err.message : err);
       }
-      try {
-        await copyFile(p, scanCacheArchivePath());
-      } catch (err) {
-        logError("saveScanCache: archive copy failed:", err instanceof Error ? err.message : err);
+      // Archive only on full saves (not every progressive tick)
+      if (mode === "full") {
+        try {
+          await copyFile(p, scanCacheArchivePath());
+        } catch (err) {
+          logError("saveScanCache: archive copy failed:", err instanceof Error ? err.message : err);
+        }
       }
-      log("saveScanCache:", clean.length, "→", p);
+      log("saveScanCache:", clean.length, mode, "→", p);
       try {
         const { writeHeartbeat } = await import("./process-guard.js");
         writeHeartbeat();
@@ -1129,6 +1147,10 @@ export function mergeLocalPreferOverGistRollups(
   imported: UsageEvent[],
   machineId: string = getMachineId(),
 ): UsageEvent[] {
+  // Fast path: no imports → no allocation / merge cost
+  if (!imported || imported.length === 0) return local || [];
+  if (!local || local.length === 0) return imported;
+
   const mid = sanitizeMachineId(machineId || getMachineId());
   const covered = new Set<string>();
   for (const e of local) {
@@ -1136,7 +1158,7 @@ export function mergeLocalPreferOverGistRollups(
     if (isGistRollupEvent(e)) continue;
     covered.add(gistCoverageKey(e));
   }
-  const filteredImported = (imported || []).filter((e) => {
+  const filteredImported = imported.filter((e) => {
     if (!e || typeof e.agent !== "string") return false;
     if (!isGistRollupEvent(e)) return true;
     const eventMid = machineIdFromEvent(e);
@@ -1145,6 +1167,7 @@ export function mergeLocalPreferOverGistRollups(
     // Same machine (or untagged on this host): drop if local scan covers key
     return !covered.has(gistCoverageKey(e));
   });
+  if (filteredImported.length === 0) return local;
   return mergeEventsByIdPreferRicher(local, filteredImported);
 }
 

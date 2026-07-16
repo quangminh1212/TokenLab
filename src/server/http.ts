@@ -68,17 +68,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   }
   let scanning = false;
   let scanCacheSaveTimer: ReturnType<typeof setTimeout> | null = null;
-  const scheduleSaveScanCache = (): void => {
+  /** Progressive disk writes use quick mode; final flush uses full collapse+archive. */
+  let pendingSaveMode: "full" | "quick" = "quick";
+  const scheduleSaveScanCache = (mode: "full" | "quick" = "quick"): void => {
+    // Promote to full if any waiter asked for full
+    if (mode === "full") pendingSaveMode = "full";
     if (scanCacheSaveTimer) clearTimeout(scanCacheSaveTimer);
+    const delay = pendingSaveMode === "full" ? 800 : 5_000;
     scanCacheSaveTimer = setTimeout(() => {
       scanCacheSaveTimer = null;
-      void saveScanCache(cache).catch((err) => {
+      const saveMode = pendingSaveMode;
+      pendingSaveMode = "quick";
+      void saveScanCache(cache, { mode: saveMode }).catch((err) => {
         console.warn(
           "[xlab-token] save scan cache failed:",
           err instanceof Error ? err.message : err,
         );
       });
-    }, 2_000);
+    }, delay);
     scanCacheSaveTimer.unref?.();
   };
   /** Shared promise so concurrent /api/scan waits for the in-flight scan (not empty cache). */
@@ -165,25 +172,56 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         list.push(e);
         byAgent.set(e.agent, list);
       }
-      const rebuild = (): void => {
-        const scanned: UsageEvent[] = [];
-        for (const list of byAgent.values()) {
-          for (const e of list) scanned.push(e);
+
+      // Throttle full-cache rebuild: every agent was O(n) and blew RAM/CPU on 20k+ events.
+      let rebuildDirty = false;
+      let lastRebuildAt = 0;
+      const REBUILD_MIN_MS = 3_000;
+      let progressBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+      let lastProgressPayload: Record<string, unknown> | null = null;
+
+      const rebuild = (force = false): void => {
+        const now = Date.now();
+        if (!force && now - lastRebuildAt < REBUILD_MIN_MS) {
+          rebuildDirty = true;
+          return;
         }
-        // Keep imported + local. Drop Gist day/hour rollups when local already
-        // covers the same day×agent×model (avoids double-count after restore).
+        rebuildDirty = false;
+        lastRebuildAt = now;
+        let total = 0;
+        for (const list of byAgent.values()) total += list.length;
+        const scanned: UsageEvent[] = new Array(total);
+        let i = 0;
+        for (const list of byAgent.values()) {
+          for (const e of list) scanned[i++] = e;
+        }
+        // Keep imported + local. Drop same-machine Gist rollups when local covers key.
         cache = mergeLocalPreferOverGistRollups(scanned, importedEvents);
       };
+
+      const scheduleProgressBroadcast = (payload: Record<string, unknown>): void => {
+        lastProgressPayload = payload;
+        if (progressBroadcastTimer) return;
+        progressBroadcastTimer = setTimeout(() => {
+          progressBroadcastTimer = null;
+          if (lastProgressPayload) {
+            // Refresh eventCount after possible delayed rebuild
+            lastProgressPayload.eventCount = cache.length;
+            broadcastStream(lastProgressPayload);
+            lastProgressPayload = null;
+          }
+        }, 750);
+        progressBroadcastTimer.unref?.();
+      };
+
       try {
-        // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+
-        // Full boot/manual scan: no timeout — read complete history so nothing is missed.
-        // Periodic: longer soft timeout; results are always UNIONED with previous so a
-        // short/partial pass never deletes usage we already discovered.
+        // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+.
+        // Lower concurrency reduces peak RAM when heavy agents (Grok/Devin) parse together.
         await scanAll({
-          concurrency: full ? 3 : 4,
+          concurrency: full ? 2 : 2,
           // Full: no timeout (0) — wait for every agent so large Grok logs are never cut.
-          // Periodic: long soft timeout; results always unioned with previous.
-          timeoutMs: full ? 0 : 300_000,
+          // Periodic: soft timeout; results always unioned with previous.
+          timeoutMs: full ? 0 : 180_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
             // Long agent parsers can block the event loop; refresh hang watchdog.
             writeHeartbeat();
@@ -192,14 +230,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               // Timeout/crash with nothing parsed — keep previous (never wipe)
             } else if (events.length === 0 && prevForAgent.length > 0) {
               // Parser returned empty but we already had data — keep previous
-              // (empty often means path flaky / lock, not "agent deleted history")
             } else {
               // Union scan + previous for this agent; prefer richer rows on same id.
-              // Full and periodic both keep history — never shrink all-time totals.
               byAgent.set(agent, mergeEventsByIdPreferRicher(events, prevForAgent));
-              rebuild();
-              // Persist progressive results so restart never loses a long in-flight scan.
-              scheduleSaveScanCache();
+              rebuild(false);
+              // Progressive disk write (debounced, quick mode) — not every agent.
+              scheduleSaveScanCache("quick");
             }
             agentStats.push({
               agent,
@@ -207,10 +243,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               durationMs,
               error: error || undefined,
             });
-            // Touch scanUpdatedAt so UIs polling health reload when tokens change
-            // even if eventCount stays the same mid-scan.
             scanUpdatedAt = Date.now();
-            broadcastStream({
+            scheduleProgressBroadcast({
               type: "scan",
               revision: scanRevision,
               updatedAt: scanUpdatedAt,
@@ -231,9 +265,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             }
           },
         });
-        rebuild();
+        if (progressBroadcastTimer) {
+          clearTimeout(progressBroadcastTimer);
+          progressBroadcastTimer = null;
+        }
+        if (rebuildDirty) rebuild(true);
+        else rebuild(true);
         bumpScan(full ? "complete-full" : "complete");
-        scheduleSaveScanCache();
+        // Final durable write: collapse + .bak + archive
+        scheduleSaveScanCache("full");
         if (full) {
           const failed = agentStats.filter((s) => s.error);
           console.log(
@@ -245,6 +285,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         return cache.length;
       } catch (err) {
         // Keep last progressive cache rather than wiping
+        if (rebuildDirty) rebuild(true);
         bumpScan("error");
         throw err;
       } finally {
@@ -1001,17 +1042,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
 
   let periodicTick = 0;
+  // Lighter cadence: every 60s light rescan; full thorough pass every 15 ticks (~15 min).
+  // Previous 30s×full/5min drove high CPU + multi‑GB peak RAM on large histories.
   const timer = setInterval(() => {
     periodicTick += 1;
-    // Full thorough pass every 10 ticks (≈5 min) — catches heavy agents that need minutes.
-    const doFull = periodicTick % 10 === 0;
+    // Skip tick if a scan is already running (coalesced by rescan itself, but avoid churn)
+    if (scanPromise) return;
+    // Full thorough pass every 15 ticks (≈15 min)
+    const doFull = periodicTick % 15 === 0;
     void rescan({ full: doFull }).catch((err) => {
       console.error(
         "[xlab-token] periodic scan failed:",
         err instanceof Error ? err.message : err,
       );
     });
-  }, 30_000);
+  }, 60_000);
   timer.unref?.();
 
   return {
@@ -1024,8 +1069,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         scanCacheSaveTimer = null;
       }
       try {
-        // Flush immediately on shutdown — do not rely on the 2s debounce timer.
-        await saveScanCache(cache);
+        // Flush immediately on shutdown — full mode (collapse + archive).
+        if (scanCacheSaveTimer) {
+          clearTimeout(scanCacheSaveTimer);
+          scanCacheSaveTimer = null;
+        }
+        await saveScanCache(cache, { mode: "full" });
       } catch (err) {
         console.warn(
           "[xlab-token] final scan cache save failed:",

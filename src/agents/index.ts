@@ -191,6 +191,9 @@ export async function scanAll(
     )
   ).filter((j): j is Job => j != null);
 
+  // When caller streams via onAgentDone (server rescan), skip giant combined array
+  // to avoid holding ~2× events in RAM (batch lists + `all`).
+  const collectAll = !onAgentDone;
   const all: UsageEvent[] = [];
   let cursor = 0;
 
@@ -201,7 +204,9 @@ export async function scanAll(
       const t0 = Date.now();
       try {
         const batch = await withTimeout(job.parse(job.roots), timeoutMs, `parser ${job.id}`);
-        for (const e of batch) all.push(e);
+        if (collectAll) {
+          for (const e of batch) all.push(e);
+        }
         onAgentDone?.({ agent: job.id, events: batch, durationMs: Date.now() - t0 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
