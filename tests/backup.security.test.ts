@@ -9,6 +9,7 @@ import {
   buildPeriodStats,
   buildPortableConfig,
   buildSettingsBackup,
+  isBackupDoneToday,
   machineIdFromEvent,
   mergeLocalPreferOverGistRollups,
   mergeMultiMachineGistRollups,
@@ -302,6 +303,14 @@ test("unified backup file includes portable project settings (no token)", () => 
   assert.equal((s.config.backup as { githubToken?: string } | undefined)?.githubToken, undefined);
   const portable = buildPortableConfig();
   assert.equal(portable.pricing?.currency, s.config.pricing?.currency);
+});
+
+test("isBackupDoneToday uses local calendar day", () => {
+  assert.equal(isBackupDoneToday(null, "UTC"), false);
+  assert.equal(isBackupDoneToday(undefined, "local"), false);
+  const now = new Date().toISOString();
+  assert.equal(isBackupDoneToday(now, "local"), true);
+  assert.equal(isBackupDoneToday("2020-01-01T12:00:00.000Z", "UTC"), false);
 });
 
 test("buildPeriodStats covers byModel + byAgent for all dashboard periods", () => {

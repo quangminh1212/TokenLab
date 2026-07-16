@@ -15,6 +15,7 @@ import {
   restoreBackup,
   saveImportedEvents,
   saveScanCache,
+  tryAutoDailyGistBackup,
   uploadBackupToGist,
 } from "../backup.js";
 import { loadConfig, saveConfig, setCustomRates, configPath, getConfigSync } from "../config.js";
@@ -281,6 +282,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               ` from ${agentStats.length} agents` +
               (failed.length ? ` (${failed.length} failed: ${failed.map((f) => f.agent).join(", ")})` : ""),
           );
+          // Prefer auto Gist after a complete full scan (has freshest usage)
+          setTimeout(() => {
+            if (cache.length === 0) return;
+            void tryAutoDailyGistBackup(cache).then((r) => {
+              if (!r.ok) {
+                console.warn("[xlab-token] auto Gist (post-full):", r.error);
+                return;
+              }
+              if (!r.skipped) {
+                console.log("[xlab-token] auto daily Gist backup OK (post-full):", r.gist.htmlUrl);
+              }
+            });
+          }, 5_000).unref?.();
         }
         return cache.length;
       } catch (err) {
@@ -805,6 +819,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           gistUrl: cfg.backup?.gistUrl || null,
           lastBackupAt: cfg.backup?.lastBackupAt || null,
           hasGithubToken: hasToken,
+          // default on when unset
+          autoDaily: cfg.backup?.autoDaily !== false,
         },
       });
     }
@@ -927,6 +943,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         typeof body.timezone === "string" && body.timezone.trim()
           ? body.timezone.trim()
           : prev.timezone;
+      const bodyBackup =
+        body.backup && typeof body.backup === "object"
+          ? (body.backup as Record<string, unknown>)
+          : null;
       const next = await saveConfig({
         ...prev,
         timezone: bodyTz || "local",
@@ -938,6 +958,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             bodyRates && typeof bodyRates === "object"
               ? (bodyRates as NonNullable<typeof prev.pricing>["customRates"])
               : prev.pricing?.customRates,
+        },
+        backup: {
+          ...prev.backup,
+          ...(bodyBackup && typeof bodyBackup.autoDaily === "boolean"
+            ? { autoDaily: bodyBackup.autoDaily }
+            : {}),
         },
       });
       // Reprice when preferRouterCost flips
@@ -1059,11 +1085,34 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   }, 60_000);
   timer.unref?.();
 
+  /** Once per local day when gistId + token exist (autoDaily default on). */
+  const scheduleAutoGist = (reason: string): void => {
+    if (scanning || cache.length === 0) return;
+    void tryAutoDailyGistBackup(cache).then((r) => {
+      if (!r.ok) {
+        console.warn(`[xlab-token] auto Gist (${reason}):`, r.error);
+        return;
+      }
+      if (r.skipped) return;
+      console.log(`[xlab-token] auto daily Gist backup OK (${reason}):`, r.gist.htmlUrl);
+    });
+  };
+
+  // After first full scan settles, try daily Gist (non-blocking)
+  const autoGistAfterBoot = setTimeout(() => scheduleAutoGist("boot"), 90_000);
+  autoGistAfterBoot.unref?.();
+
+  // Hourly check — catches midnight rollover without busy work
+  const autoGistTimer = setInterval(() => scheduleAutoGist("hourly"), 60 * 60_000);
+  autoGistTimer.unref?.();
+
   return {
     host,
     port,
     close: async () => {
       clearInterval(timer);
+      clearInterval(autoGistTimer);
+      clearTimeout(autoGistAfterBoot);
       if (scanCacheSaveTimer) {
         clearTimeout(scanCacheSaveTimer);
         scanCacheSaveTimer = null;

@@ -25,6 +25,11 @@ export interface XlabTokenConfig {
     lastBackupAt?: string;
     /** Optional classic PAT with `gist` scope (prefer env XLAB_GITHUB_TOKEN). */
     githubToken?: string;
+    /**
+     * When true (default) and gistId + token exist, server auto-uploads once per local day.
+     * Set false to disable background daily Gist backup.
+     */
+    autoDaily?: boolean;
   };
 }
 

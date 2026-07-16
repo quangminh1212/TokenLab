@@ -18,6 +18,7 @@ import {
   normalizeModelName,
   pathExists,
   stableId,
+  startOfDayInTimeZone,
 } from "./util.js";
 import { VERSION } from "./version.js";
 
@@ -87,6 +88,7 @@ export type PortableBackupConfig = {
     gistId?: string;
     gistUrl?: string;
     lastBackupAt?: string;
+    autoDaily?: boolean;
   };
 };
 
@@ -151,11 +153,17 @@ export function buildPortableConfig(): PortableBackupConfig {
   };
   if (cfg.host) out.host = cfg.host;
   if (typeof cfg.port === "number" && Number.isFinite(cfg.port)) out.port = cfg.port;
-  if (cfg.backup?.gistId || cfg.backup?.gistUrl || cfg.backup?.lastBackupAt) {
+  if (
+    cfg.backup?.gistId ||
+    cfg.backup?.gistUrl ||
+    cfg.backup?.lastBackupAt ||
+    cfg.backup?.autoDaily !== undefined
+  ) {
     out.backup = {
       ...(cfg.backup.gistId ? { gistId: cfg.backup.gistId } : {}),
       ...(cfg.backup.gistUrl ? { gistUrl: cfg.backup.gistUrl } : {}),
       ...(cfg.backup.lastBackupAt ? { lastBackupAt: cfg.backup.lastBackupAt } : {}),
+      ...(cfg.backup.autoDaily !== undefined ? { autoDaily: cfg.backup.autoDaily !== false } : {}),
     };
   }
   return out;
@@ -946,6 +954,7 @@ export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
       ...(inBackup?.gistId ? { gistId: String(inBackup.gistId) } : {}),
       ...(inBackup?.gistUrl ? { gistUrl: String(inBackup.gistUrl) } : {}),
       ...(inBackup?.lastBackupAt ? { lastBackupAt: String(inBackup.lastBackupAt) } : {}),
+      ...(typeof inBackup?.autoDaily === "boolean" ? { autoDaily: inBackup.autoDaily } : {}),
     },
   });
 
@@ -1626,4 +1635,76 @@ export async function downloadBackupFromGist(opts: {
   }
 
   return { backup, restored };
+}
+
+/**
+ * True if lastBackupAt is on or after the start of "today" in the given timezone
+ * (same calendar day as dashboard "Today").
+ */
+export function isBackupDoneToday(
+  lastBackupAt: string | null | undefined,
+  timeZone?: string | null,
+): boolean {
+  if (!lastBackupAt) return false;
+  const last = new Date(lastBackupAt);
+  if (Number.isNaN(last.getTime())) return false;
+  const start = startOfDayInTimeZone(timeZone, new Date());
+  return last.getTime() >= start.getTime();
+}
+
+export type AutoDailyGistResult =
+  | { ok: true; skipped: true; reason: string }
+  | { ok: true; skipped: false; gist: GistUploadResult; exportedAt: string }
+  | { ok: false; error: string };
+
+let autoDailyGistInFlight: Promise<AutoDailyGistResult> | null = null;
+
+/**
+ * Background daily Gist backup when gistId + token exist and autoDaily !== false.
+ * At most one successful upload per local calendar day (uses lastBackupAt).
+ */
+export async function tryAutoDailyGistBackup(events: UsageEvent[]): Promise<AutoDailyGistResult> {
+  if (autoDailyGistInFlight) return autoDailyGistInFlight;
+
+  autoDailyGistInFlight = (async (): Promise<AutoDailyGistResult> => {
+    try {
+      const cfg = getConfigSync();
+      if (cfg.backup?.autoDaily === false) {
+        return { ok: true, skipped: true, reason: "disabled" };
+      }
+      const gistId = cfg.backup?.gistId?.trim();
+      const token = githubToken();
+      if (!gistId) return { ok: true, skipped: true, reason: "no-gist" };
+      if (!token) return { ok: true, skipped: true, reason: "no-token" };
+      if (isBackupDoneToday(cfg.backup?.lastBackupAt, cfg.timezone)) {
+        return { ok: true, skipped: true, reason: "already-today" };
+      }
+      if (!events || events.length === 0) {
+        return { ok: true, skipped: true, reason: "no-events" };
+      }
+
+      log("auto daily Gist backup starting…", events.length, "events");
+      const result = await uploadBackupToGist({
+        token,
+        gistId,
+        events,
+        public: false,
+      });
+      log("auto daily Gist backup OK:", result.gist.htmlUrl);
+      return {
+        ok: true,
+        skipped: false,
+        gist: result.gist,
+        exportedAt: result.backup.exportedAt,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError("auto daily Gist backup failed:", msg);
+      return { ok: false, error: msg };
+    } finally {
+      autoDailyGistInFlight = null;
+    }
+  })();
+
+  return autoDailyGistInFlight;
 }

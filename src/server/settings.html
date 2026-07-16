@@ -180,6 +180,10 @@
               <input type="checkbox" id="gistSaveToken" />
               <span>Remember token in local config</span>
             </label>
+            <label class="settings-check">
+              <input type="checkbox" id="gistAutoDaily" checked />
+              <span>Auto backup once per day (when gist + token exist)</span>
+            </label>
             <div class="settings-inline-actions">
               <button type="button" class="btn btn-primary" id="backupGistBtn">Backup to Gist</button>
               <span class="settings-status" id="backupGistStatus" aria-live="polite"></span>
@@ -390,6 +394,9 @@
         if (c.backup?.hasGithubToken) {
           $('gistToken').placeholder = 'Token saved / env set \u2014 leave blank to reuse';
         }
+        if ($('gistAutoDaily')) {
+          $('gistAutoDaily').checked = c.backup?.autoDaily !== false;
+        }
         showGistLink(c.backup?.gistUrl, c.backup?.lastBackupAt);
         await loadHealth();
       } catch {
@@ -531,6 +538,20 @@
       }
     };
 
+    async function saveAutoDailyPref() {
+      const on = $('gistAutoDaily') ? $('gistAutoDaily').checked : true;
+      await fetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backup: { autoDaily: on } }),
+      });
+    }
+    if ($('gistAutoDaily')) {
+      $('gistAutoDaily').onchange = () => {
+        void saveAutoDailyPref().catch(() => {});
+      };
+    }
+
     $('savePrefs').onclick = async () => {
       const btn = $('savePrefs');
       btn.disabled = true;
@@ -543,6 +564,7 @@
           body: JSON.stringify({
             timezone: tz,
             pricing: { preferRouterCost: $('preferRouterCost').checked },
+            backup: { autoDaily: $('gistAutoDaily') ? $('gistAutoDaily').checked : true },
           }),
         }).then((x) => x.json());
         $('prefsStatus').textContent = 'Saved';
