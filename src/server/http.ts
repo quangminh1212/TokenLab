@@ -24,6 +24,7 @@ import {
   loadOpenRouterCacheFromDisk,
 } from "../openrouter-models.js";
 import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
+import { writeHeartbeat } from "../process-guard.js";
 import type { AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
 import { filterByPeriod, normalizeModelName, pathExists, startOfDayInTimeZone } from "../util.js";
 import { VERSION } from "../version.js";
@@ -183,6 +184,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           // Periodic: long soft timeout; results always unioned with previous.
           timeoutMs: full ? 0 : 300_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
+            // Long agent parsers can block the event loop; refresh hang watchdog.
+            writeHeartbeat();
             const prevForAgent = byAgent.get(agent) ?? [];
             if (error && events.length === 0) {
               // Timeout/crash with nothing parsed — keep previous (never wipe)

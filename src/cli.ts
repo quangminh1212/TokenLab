@@ -142,13 +142,12 @@ async function main(): Promise<void> {
         if (shuttingDown) return;
         log("Shutdown signal received:", signal);
         shuttingDown = true;
-        try {
-          stopHeartbeat();
-        } catch {
-          // ignore
-        }
-        // Tell the autostart supervisor (if any) not to restart us.
-        // Skip on SIGHUP (tsx watch hot-reload) so dev restarts keep working.
+        // Order matters on Windows supervised runs:
+        // 1) stop.flag first so supervisor will not auto-restart
+        // 2) flush scan-cache + close HTTP while heartbeat still ticks
+        //    (supervisor waits for graceful exit before force-kill)
+        // 3) only then stop heartbeat / tray and exit
+        // Skip stop.flag on SIGHUP (tsx watch) so dev restarts keep working.
         if (signal !== "SIGHUP") {
           try {
             await writeStopSentinel();
@@ -157,15 +156,22 @@ async function main(): Promise<void> {
           }
         }
         try {
-          trayStop?.();
+          // Persist usage BEFORE process.exit — tray Quit used to race the
+          // supervisor KillPid and drop today's cost/token totals.
+          await srv.close();
+          log("Server closed (scan cache flushed)");
+        } catch {
+          // ignore close errors on hot-reload restart
+        }
+        try {
+          stopHeartbeat();
         } catch {
           // ignore
         }
         try {
-          await srv.close();
-          log("Server closed");
+          trayStop?.();
         } catch {
-          // ignore close errors on hot-reload restart
+          // ignore
         }
         process.exit(0);
       };
