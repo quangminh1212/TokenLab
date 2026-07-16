@@ -8,6 +8,7 @@ import {
   mirrorsRoot,
   mergeEventsByIdPreferRicher,
   preferRicherEvent,
+  salvageScanCacheJson,
   saveScanCache,
   scanCacheBackupPath,
   scanCachePath,
@@ -133,6 +134,14 @@ test("saveScanCache round-trips and loadScanCache recovers from .bak when main i
     else process.env.XLAB_TOKEN_DATA_DIR = prev;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("salvageScanCacheJson recovers objects from truncated JSON array", () => {
+  const good = evt({ id: "salv-a", agent: "grok", inputTokens: 900, totalTokens: 1000, estimatedCost: 3 });
+  const prefix = `[${JSON.stringify(good)},{"id":"broken"`;
+  const salvaged = salvageScanCacheJson(prefix);
+  assert.equal(salvaged.length, 1);
+  assert.equal(salvaged[0]?.id, "salv-a");
 });
 
 test("concurrent saveScanCache calls do not corrupt output", async () => {

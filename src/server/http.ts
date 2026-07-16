@@ -25,7 +25,7 @@ import {
 } from "../openrouter-models.js";
 import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
 import type { AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
-import { filterByPeriod, normalizeModelName, startOfDayInTimeZone } from "../util.js";
+import { filterByPeriod, normalizeModelName, pathExists, startOfDayInTimeZone } from "../util.js";
 import { VERSION } from "../version.js";
 
 function configuredTimeZone(): string {
@@ -956,11 +956,35 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       );
     });
 
-  // Boot: full historical scan (long per-agent cap) so history is not missed.
-  // Periodic: quick union refresh; every 5 minutes another full pass.
-  void rescan({ full: true }).catch((err) => {
-    console.error("[xlab-token] initial full scan failed:", err instanceof Error ? err.message : err);
-  });
+  // Refresh VPS router mirrors (best-effort) before first scan so remote usage is not stale.
+  void Promise.resolve()
+    .then(async () => {
+      const { spawn } = await import("node:child_process");
+      const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/sync-vps-mirrors.py");
+      if (!(await pathExists(script))) return;
+      await new Promise<void>((resolve) => {
+        const child = spawn("python", [script], { stdio: "ignore", windowsHide: true });
+        child.on("error", () => resolve());
+        child.on("exit", () => resolve());
+        setTimeout(() => {
+          try {
+            child.kill();
+          } catch {
+            /* ignore */
+          }
+          resolve();
+        }, 120_000).unref?.();
+      });
+    })
+    .catch(() => {
+      /* optional */
+    })
+    .finally(() => {
+      void rescan({ full: true }).catch((err) => {
+        console.error("[xlab-token] initial full scan failed:", err instanceof Error ? err.message : err);
+      });
+    });
+
   let periodicTick = 0;
   const timer = setInterval(() => {
     periodicTick += 1;

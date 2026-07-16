@@ -188,6 +188,11 @@ export function scanCacheBackupPath(): string {
   return `${scanCachePath()}.bak`;
 }
 
+/** Last-known-good archive — survives corrupt main + .bak (e.g. interrupted rename). */
+export function scanCacheArchivePath(): string {
+  return path.join(dataRoot(), "scan-cache.archive.json");
+}
+
 /** Serialize writes — concurrent saveScanCache must not interleave on the same file. */
 let scanCacheSaveChain: Promise<void> = Promise.resolve();
 
@@ -196,32 +201,97 @@ async function readScanCacheFile(filePath: string): Promise<UsageEvent[]> {
   return sanitizeEvents(raw) || [];
 }
 
-export async function loadScanCache(): Promise<UsageEvent[]> {
-  const p = scanCachePath();
-  const bak = scanCacheBackupPath();
-  const candidates = [p, bak];
-  let lastErr: unknown;
-  for (const candidate of candidates) {
-    try {
-      if (!(await pathExists(candidate))) continue;
-      const events = await readScanCacheFile(candidate);
-      if (events.length === 0) continue;
-      if (candidate !== p) {
-        log("loadScanCache: recovered", events.length, "events from backup →", candidate);
+/**
+ * Recover individual event objects from a truncated / corrupt JSON array.
+ * Used when a large scan-cache write is interrupted mid-file.
+ */
+export function salvageScanCacheJson(text: string): UsageEvent[] {
+  const out: UsageEvent[] = [];
+  if (!text || !text.includes("{")) return out;
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
       }
-      return events;
-    } catch (err) {
-      lastErr = err;
-      logError(
-        "loadScanCache failed:",
-        candidate,
-        err instanceof Error ? err.message : err,
-      );
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (ch === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        try {
+          const obj = JSON.parse(text.slice(start, i + 1)) as unknown;
+          const batch = sanitizeEvents([obj]);
+          if (batch?.[0]) out.push(batch[0]);
+        } catch {
+          /* skip partial object */
+        }
+        start = -1;
+      }
     }
   }
-  if (lastErr) {
-    logError("loadScanCache: no valid cache file (main + .bak both failed)");
+  return out;
+}
+
+async function loadScanCacheCandidate(filePath: string): Promise<UsageEvent[] | null> {
+  if (!(await pathExists(filePath))) return null;
+  try {
+    const events = await readScanCacheFile(filePath);
+    return events.length > 0 ? events : null;
+  } catch {
+    try {
+      const text = await readFile(filePath, "utf8");
+      const salvaged = salvageScanCacheJson(text);
+      if (salvaged.length > 0) {
+        log("loadScanCache: salvaged", salvaged.length, "events from corrupt →", filePath);
+        return salvaged;
+      }
+    } catch {
+      /* ignore */
+    }
   }
+  return null;
+}
+
+export async function loadScanCache(): Promise<UsageEvent[]> {
+  const p = scanCachePath();
+  const candidates = [p, scanCacheBackupPath(), scanCacheArchivePath()];
+  let best: UsageEvent[] = [];
+  let bestFrom = "";
+  for (const candidate of candidates) {
+    const events = await loadScanCacheCandidate(candidate);
+    if (!events || events.length === 0) continue;
+    if (events.length > best.length) {
+      best = events;
+      bestFrom = candidate;
+    }
+  }
+  if (best.length > 0) {
+    if (bestFrom !== p) {
+      log("loadScanCache: recovered", best.length, "events from →", bestFrom);
+    }
+    return best;
+  }
+  logError("loadScanCache: no valid cache file (main + .bak + archive all failed)");
   return [];
 }
 
@@ -248,6 +318,11 @@ export async function saveScanCache(events: UsageEvent[]): Promise<void> {
         await copyFile(p, bak);
       } catch (err) {
         logError("saveScanCache: backup copy failed:", err instanceof Error ? err.message : err);
+      }
+      try {
+        await copyFile(p, scanCacheArchivePath());
+      } catch (err) {
+        logError("saveScanCache: archive copy failed:", err instanceof Error ? err.message : err);
       }
       log("saveScanCache:", clean.length, "→", p);
     } catch (err) {
