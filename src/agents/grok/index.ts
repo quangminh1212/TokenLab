@@ -236,6 +236,20 @@ async function mtimeIso(file: string): Promise<string | null> {
   }
 }
 
+/** Track peak stream totalTokens per prompt_id from chunk _meta (for turns without usage). */
+function notePromptPeak(line: string, promptPeak: Map<string, number>): void {
+  if (!line.includes("totalTokens")) return;
+  const m = line.match(/"totalTokens"\s*:\s*(\d+)/);
+  if (!m) return;
+  const tt = Number(m[1]);
+  if (!Number.isFinite(tt) || tt <= 0) return;
+  const pm = line.match(/"promptId"\s*:\s*"([^"]+)"/) ?? line.match(/"prompt_id"\s*:\s*"([^"]+)"/);
+  const promptId = pm?.[1];
+  if (!promptId) return;
+  const prev = promptPeak.get(promptId) ?? 0;
+  if (tt > prev) promptPeak.set(promptId, tt);
+}
+
 /** Stream updates.jsonl and emit one event per turn_completed with usage. */
 async function parseUpdatesUsage(
   updatesPath: string,
@@ -250,23 +264,22 @@ async function parseUpdatesUsage(
   let idx = 0;
   let maxStreamTokens = 0;
   let maxStreamTs = ctx.fallbackTs;
+  const promptPeak = new Map<string, number>();
 
   const stream = createReadStream(updatesPath, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
   try {
     for await (const line of rl) {
-      const maybeTurn = line.includes("turn_completed") && line.includes('"usage"');
-      // Cheap stream-floor without full JSON parse on millions of chunks
-      if (!maybeTurn) {
+      notePromptPeak(line, promptPeak);
+
+      // Session-level stream floor (in-progress turns)
+      if (!line.includes("turn_completed")) {
         if (line.includes("totalTokens")) {
           const m = line.match(/"totalTokens"\s*:\s*(\d+)/);
           if (m) {
             const tt = Number(m[1]);
-            if (Number.isFinite(tt) && tt > maxStreamTokens) {
-              maxStreamTokens = tt;
-              // timestamp optional; keep fallback until a turn stamps it
-            }
+            if (Number.isFinite(tt) && tt > maxStreamTokens) maxStreamTokens = tt;
           }
         }
         continue;
@@ -285,33 +298,7 @@ async function parseUpdatesUsage(
 
       if (update.sessionUpdate !== "turn_completed") continue;
 
-      const usage = update.usage as Record<string, unknown> | undefined;
-      if (!usage || typeof usage !== "object") continue;
-
-      const buckets = bucketsFromUsage(usage);
-      if (!buckets) continue;
-
       idx += 1;
-
-      const modelUsage = usage.modelUsage as Record<string, unknown> | undefined;
-      let model = ctx.model;
-      if (modelUsage && typeof modelUsage === "object") {
-        const keys = Object.keys(modelUsage);
-        if (keys.length === 1 && keys[0]) model = keys[0];
-        else if (keys.length > 1) {
-          let best = keys[0];
-          let bestTot = -1;
-          for (const k of keys) {
-            const m = modelUsage[k] as Record<string, unknown> | undefined;
-            const t = num(m?.totalTokens ?? m?.inputTokens);
-            if (t > bestTot) {
-              bestTot = t;
-              best = k;
-            }
-          }
-          if (best) model = best;
-        }
-      }
 
       const promptId =
         (typeof update.prompt_id === "string" && update.prompt_id) ||
@@ -321,26 +308,67 @@ async function parseUpdatesUsage(
       const ts = timestampFromUpdate(row, ctx.fallbackTs);
       maxStreamTs = ts;
 
+      const usage = update.usage as Record<string, unknown> | undefined;
+      const buckets =
+        usage && typeof usage === "object" ? bucketsFromUsage(usage) : null;
+
+      if (buckets) {
+        const modelUsage = usage!.modelUsage as Record<string, unknown> | undefined;
+        let model = ctx.model;
+        if (modelUsage && typeof modelUsage === "object") {
+          const keys = Object.keys(modelUsage);
+          if (keys.length === 1 && keys[0]) model = keys[0];
+          else if (keys.length > 1) {
+            let best = keys[0];
+            let bestTot = -1;
+            for (const k of keys) {
+              const mu = modelUsage[k] as Record<string, unknown> | undefined;
+              const t = num(mu?.totalTokens ?? mu?.inputTokens);
+              if (t > bestTot) {
+                bestTot = t;
+                best = k;
+              }
+            }
+            if (best) model = best;
+          }
+        }
+
+        events.push(
+          applyPricing({
+            id: stableId("grok", ctx.sessionId, "tc", promptId),
+            agent: "grok",
+            model,
+            timestamp: ts,
+            ...buckets,
+            workspace: ctx.workspace,
+            sourcePath: updatesPath,
+            estimated: false,
+          }),
+        );
+        promptPeak.delete(promptId);
+        continue;
+      }
+
+      // Newer Grok CLI: turn_completed without usage — bill peak stream tokens for prompt
+      const peak = promptPeak.get(promptId) ?? 0;
+      if (peak <= 0) continue;
+
       events.push(
         applyPricing({
-          id: stableId(
-            "grok",
-            ctx.sessionId,
-            "tc",
-            promptId,
-            String(buckets.inputTokens),
-            String(buckets.outputTokens),
-            String(buckets.cacheReadTokens),
-          ),
+          id: stableId("grok", ctx.sessionId, "tc", promptId),
           agent: "grok",
-          model,
+          model: ctx.model,
           timestamp: ts,
-          ...buckets,
+          inputTokens: peak,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
           workspace: ctx.workspace,
           sourcePath: updatesPath,
-          estimated: false,
+          estimated: true,
         }),
       );
+      promptPeak.delete(promptId);
     }
   } finally {
     rl.close();
