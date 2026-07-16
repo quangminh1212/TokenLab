@@ -149,10 +149,11 @@
 
         <div class="settings-row settings-row-stack">
           <div class="settings-row-text">
-            <span class="settings-label">GitHub Gist (full usage)</span>
+            <span class="settings-label">GitHub Gist (by model + agent)</span>
             <span class="settings-help">
-              Secret gist with <strong>all project usage</strong>: settings, custom rates,
-              scanned events (daily-first), and compact daily mirrors.
+              Secret gist: settings, custom rates, and usage <strong>by model</strong> +
+              <strong>by agent</strong> for <strong>Today / 24h / 7D / 30D / All</strong>
+              (plus compact daily rollups for restore). Much smaller than raw events.
               Classic PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>.
             </span>
           </div>
@@ -170,7 +171,7 @@
               <span>Remember token in local config</span>
             </label>
             <div class="settings-inline-actions">
-              <button type="button" class="btn btn-primary" id="backupGistBtn">Backup full usage to Gist</button>
+              <button type="button" class="btn btn-primary" id="backupGistBtn">Backup model+agent periods to Gist</button>
               <span class="settings-status" id="backupGistStatus" aria-live="polite"></span>
             </div>
             <p class="settings-help" id="gistLinkRow" hidden>
@@ -472,7 +473,7 @@
       const btn = $('backupGistBtn');
       const st = $('backupGistStatus');
       btn.disabled = true;
-      st.textContent = 'Uploading full usage\u2026';
+      st.textContent = 'Uploading by model+agent periods\u2026';
       try {
         const token = ($('gistToken').value || '').trim();
         const res = await fetch('/api/backup/gist', {
@@ -482,13 +483,23 @@
             token: token || undefined,
             saveToken: $('gistSaveToken').checked,
             public: false,
-            scope: 'full',
+            scope: 'period-stats',
           }),
         }).then((r) => r.json());
         if (res.error) throw new Error(res.error.message || 'Gist backup failed');
         const g = res.gist || {};
+        const models = res.modelCount || 0;
+        const agents = res.agentCount || 0;
         const n = res.eventCount || 0;
-        st.textContent = (g.updated ? 'Updated' : 'Created') + ' \u00B7 ' + n + ' events';
+        st.textContent =
+          (g.updated ? 'Updated' : 'Created') +
+          ' \u00B7 ' +
+          models +
+          ' models \u00B7 ' +
+          agents +
+          ' agents \u00B7 ' +
+          n +
+          ' src events';
         showGistLink(g.htmlUrl, res.exportedAt);
         if ($('gistSaveToken').checked) $('gistToken').value = '';
         setTimeout(() => { st.textContent = ''; }, 4000);

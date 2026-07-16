@@ -3,6 +3,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import {
+  buildDailyAgentModelRollups,
+  buildGistFullBackup,
+  buildPeriodStats,
   collapseRouterDailyEvents,
   loadScanCache,
   restoreBackup,
@@ -280,4 +283,110 @@ test("restore accepts v1 settings-only backup", async () => {
   assert.equal(r.ok, true);
   assert.ok(r.customRateCount >= 1);
   assert.equal(r.events, undefined);
+});
+
+test("buildPeriodStats covers byModel + byAgent for all dashboard periods", () => {
+  const now = Date.now();
+  const events = [
+    evt({
+      id: "p1",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: new Date(now - 60_000).toISOString(),
+      inputTokens: 1000,
+      totalTokens: 1100,
+      estimatedCost: 2,
+    }),
+    evt({
+      id: "p2",
+      agent: "windsurf",
+      model: "swe-1-6",
+      timestamp: new Date(now - 2 * 86_400_000).toISOString(),
+      inputTokens: 500,
+      totalTokens: 550,
+      estimatedCost: 1,
+    }),
+    evt({
+      id: "p3",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: new Date(now - 10 * 86_400_000).toISOString(),
+      inputTokens: 200,
+      totalTokens: 220,
+      estimatedCost: 0.5,
+    }),
+  ];
+  const stats = buildPeriodStats(events, "UTC");
+  for (const key of ["today", "24h", "7d", "30d", "all"] as const) {
+    assert.ok(stats[key], `missing period ${key}`);
+    assert.ok(Array.isArray(stats[key].byModel));
+    assert.ok(Array.isArray(stats[key].byAgent));
+  }
+  assert.ok(stats.all.byModel.some((r) => r.key.includes("grok")));
+  assert.ok(stats.all.byAgent.some((r) => r.key === "grok"));
+  assert.ok(stats.all.byAgent.some((r) => r.key === "windsurf"));
+  assert.equal(stats.all.totals.eventCount, 3);
+});
+
+test("buildDailyAgentModelRollups merges same day×agent×model", () => {
+  const events = [
+    evt({
+      id: "r1",
+      agent: "grok",
+      model: "grok-4.5 (xAI)",
+      timestamp: "2026-07-15T10:00:00.000Z",
+      inputTokens: 100,
+      totalTokens: 110,
+      estimatedCost: 1,
+    }),
+    evt({
+      id: "r2",
+      agent: "grok",
+      model: "grok-4.5",
+      timestamp: "2026-07-15T18:00:00.000Z",
+      inputTokens: 50,
+      totalTokens: 55,
+      estimatedCost: 0.5,
+    }),
+    evt({
+      id: "r3",
+      agent: "windsurf",
+      model: "swe-1-6",
+      timestamp: "2026-07-15T12:00:00.000Z",
+      inputTokens: 10,
+      totalTokens: 11,
+      estimatedCost: 0.1,
+    }),
+  ];
+  const rollups = buildDailyAgentModelRollups(events);
+  assert.equal(rollups.length, 2);
+  const grok = rollups.find((e) => e.agent === "grok");
+  assert.ok(grok);
+  assert.equal(grok!.inputTokens, 150);
+  assert.equal(grok!.estimatedCost, 1.5);
+  assert.equal(grok!.sourcePath, "backup:gist-daily");
+});
+
+test("buildGistFullBackup is period-stats and much smaller than raw events", async () => {
+  const events = Array.from({ length: 200 }, (_, i) =>
+    evt({
+      id: `bulk-${i}`,
+      agent: i % 2 === 0 ? "grok" : "windsurf",
+      model: i % 3 === 0 ? "grok-4.5" : "swe-1-6",
+      timestamp: new Date(Date.now() - (i % 40) * 86_400_000).toISOString(),
+      inputTokens: 100 + i,
+      totalTokens: 110 + i,
+      estimatedCost: 0.01 * (i + 1),
+    }),
+  );
+  const backup = await buildGistFullBackup(events);
+  assert.equal(backup.scope, "period-stats");
+  assert.equal(backup.formatVersion, 3);
+  assert.ok(backup.periodStats?.all?.byModel.length);
+  assert.ok(backup.periodStats?.all?.byAgent.length);
+  assert.ok((backup.events?.length || 0) < events.length);
+  assert.equal(backup.meta?.sourceEventCount, 200);
+  const rawSize = Buffer.byteLength(JSON.stringify(events), "utf8");
+  const gistSize = Buffer.byteLength(JSON.stringify(backup), "utf8");
+  assert.ok(gistSize < rawSize, `gist ${gistSize} should be < raw ${rawSize}`);
 });
