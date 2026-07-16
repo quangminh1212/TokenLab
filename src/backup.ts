@@ -156,50 +156,115 @@ export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEven
       byId.set(e.id, preferRicherEvent(prev, e));
     }
   }
-  // Heal inflated history: unstable router daily ids + exact row clones.
-  return collapseExactUsageDuplicates(collapseRouterDailyEvents([...byId.values()]));
+  // Policy: thà tính thừa còn hơn bỏ sót.
+  // Only drop true clones / stale rollup versions — never the richer day total.
+  return collapseExactUsageDuplicates(
+    collapseSourcePathRollups(collapseRouterDailyEvents([...byId.values()])),
+  );
 }
 
 /**
- * Router daily rollups used to hash prompt/completion into the event id, so every
- * mid-day update created a second row. Keep one richest estimated row per
- * agent + calendar day + model; leave non-estimated request history intact.
+ * Windsurf progressive rescans mint new ids for the same .pb when tokens grow.
+ * Keep the richest row per file. Do NOT collapse Grok by timestamp — turns can
+ * share a second and must all be kept (prefer overcount over missing turns).
+ */
+export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
+  if (!Array.isArray(events) || events.length === 0) return events || [];
+  const best = new Map<string, UsageEvent>();
+  const out: UsageEvent[] = [];
+
+  for (const e of events) {
+    if (!e || typeof e.sourcePath !== "string" || !e.sourcePath) {
+      out.push(e);
+      continue;
+    }
+    const sp = e.sourcePath.replace(/\\/g, "/").toLowerCase();
+    // Only Windsurf cascade files: one logical session per .pb, keep richest.
+    if (e.agent === "windsurf" && sp.endsWith(".pb")) {
+      const key = `ws|${sp}`;
+      const prev = best.get(key);
+      best.set(key, prev ? preferRicherEvent(prev, e) : e);
+      continue;
+    }
+    out.push(e);
+  }
+  for (const e of best.values()) out.push(e);
+  return out;
+}
+
+/**
+ * Router days: collapse multi-version estimated rollups (unstable ids) to the
+ * richest per model, then keep max(daily totals, request totals) for that day.
+ * Never drop the higher side — stale daily must not hide fuller request history
+ * and request samples must not hide a complete daily rollup.
  */
 export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
   if (!Array.isArray(events) || events.length === 0) return events || [];
-  const daysWithDaily = new Set<string>();
-  for (const e of events) {
-    if (!e || (e.agent !== "9router" && e.agent !== "xlabrouter") || !e.estimated) continue;
-    const day = (e.timestamp || "").slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) daysWithDaily.add(`${e.agent}|${day}`);
-  }
 
-  const out: UsageEvent[] = [];
-  const dailyBest = new Map<string, UsageEvent>();
+  type DayBucket = { dailies: UsageEvent[]; requests: UsageEvent[] };
+  const nonRouter: UsageEvent[] = [];
+  const byAgentDay = new Map<string, DayBucket>();
+
   for (const e of events) {
     if (!e || typeof e.id !== "string") continue;
     const isRouter = e.agent === "9router" || e.agent === "xlabrouter";
     if (!isRouter) {
-      out.push(e);
+      nonRouter.push(e);
       continue;
     }
     const day = (e.timestamp || "").slice(0, 10);
-    // Daily rollup is canonical for that calendar day — drop request clones.
-    if (!e.estimated && daysWithDaily.has(`${e.agent}|${day}`)) continue;
-    if (!e.estimated) {
-      out.push(e);
-      continue;
-    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-      out.push(e);
+      nonRouter.push(e);
       continue;
     }
-    const model = (typeof e.model === "string" && e.model.trim()) || "mixed";
-    const key = `${e.agent}|${day}|${model}`;
-    const prev = dailyBest.get(key);
-    dailyBest.set(key, prev ? preferRicherEvent(prev, e) : e);
+    const key = `${e.agent}|${day}`;
+    let bucket = byAgentDay.get(key);
+    if (!bucket) {
+      bucket = { dailies: [], requests: [] };
+      byAgentDay.set(key, bucket);
+    }
+    if (e.estimated) bucket.dailies.push(e);
+    else bucket.requests.push(e);
   }
-  for (const e of dailyBest.values()) out.push(e);
+
+  const out: UsageEvent[] = [...nonRouter];
+  for (const bucket of byAgentDay.values()) {
+    // Same logical daily rollup rewritten many times → keep richest per model.
+    const dailyByModel = new Map<string, UsageEvent>();
+    for (const e of bucket.dailies) {
+      const model = (typeof e.model === "string" && e.model.trim()) || "mixed";
+      const prev = dailyByModel.get(model);
+      dailyByModel.set(model, prev ? preferRicherEvent(prev, e) : e);
+    }
+    const dailies = [...dailyByModel.values()];
+    const requests = bucket.requests;
+
+    if (dailies.length === 0) {
+      out.push(...requests);
+      continue;
+    }
+    if (requests.length === 0) {
+      out.push(...dailies);
+      continue;
+    }
+
+    const dailyTok = dailies.reduce((a, e) => a + eventTokenWeight(e), 0);
+    const reqTok = requests.reduce((a, e) => a + eventTokenWeight(e), 0);
+    const dailyCost = dailies.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
+    const reqCost = requests.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
+
+    // Prefer overcount: always keep the higher token side; never both (double).
+    // Tie → higher cost; still tie → more rows (more detail, slight overcount bias).
+    const preferRequests =
+      reqTok > dailyTok ||
+      (reqTok === dailyTok && reqCost > dailyCost) ||
+      (reqTok === dailyTok &&
+        reqCost === dailyCost &&
+        requests.length > dailies.length);
+
+    if (preferRequests) out.push(...requests);
+    else out.push(...dailies);
+  }
   return out;
 }
 
@@ -382,7 +447,7 @@ export async function loadScanCache(): Promise<UsageEvent[]> {
 
 export async function saveScanCache(events: UsageEvent[]): Promise<void> {
   const clean = collapseExactUsageDuplicates(
-    collapseRouterDailyEvents(sanitizeEvents(events) || []),
+    collapseSourcePathRollups(collapseRouterDailyEvents(sanitizeEvents(events) || [])),
   );
   const p = scanCachePath();
   const bak = scanCacheBackupPath();
