@@ -1,0 +1,30 @@
+{
+  "name": "read_hakinet_logs",
+  "description": "Read ui.log and/or svc.log. kind=ui|svc|both.",
+  "inputSchema": {
+    "properties": {
+      "kind": {
+        "default": "both",
+        "title": "Kind",
+        "type": "string"
+      },
+      "tail": {
+        "default": 80,
+        "title": "Tail",
+        "type": "integer"
+      },
+      "pattern": {
+        "default": "",
+        "title": "Pattern",
+        "type": "string"
+      },
+      "since": {
+        "default": "",
+        "title": "Since",
+        "type": "string"
+      }
+    },
+    "title": "read_hakinet_logsArguments",
+    "type": "object"
+  }
+}

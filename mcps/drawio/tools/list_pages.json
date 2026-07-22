@@ -1,0 +1,16 @@
+{
+  "name": "list_pages",
+  "description": "Lists the pages (diagrams) in a local .drawio file without loading full page content. Returns each page's index, id, name, and approximate stored size in bytes. Call this first on large multi-page files before get_page/set_page, so only the page you actually need gets loaded into context.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the local file. Must end in .drawio or .xml."
+      }
+    },
+    "required": [
+      "path"
+    ]
+  }
+}

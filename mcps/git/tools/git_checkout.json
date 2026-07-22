@@ -1,0 +1,22 @@
+{
+  "name": "git_checkout",
+  "description": "Switches branches",
+  "inputSchema": {
+    "properties": {
+      "repo_path": {
+        "title": "Repo Path",
+        "type": "string"
+      },
+      "branch_name": {
+        "title": "Branch Name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "repo_path",
+      "branch_name"
+    ],
+    "title": "GitCheckout",
+    "type": "object"
+  }
+}

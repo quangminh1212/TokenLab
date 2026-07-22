@@ -1,0 +1,9 @@
+{
+  "name": "start_hakinet",
+  "description": "Run start.bat (may UAC).",
+  "inputSchema": {
+    "properties": {},
+    "title": "start_hakinetArguments",
+    "type": "object"
+  }
+}

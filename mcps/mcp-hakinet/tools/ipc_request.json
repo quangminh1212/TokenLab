@@ -1,0 +1,32 @@
+{
+  "name": "ipc_request",
+  "description": "Send MessagePack IPC to agent-svc. code: name (GET_TIME_REMAINING) or int. See feature_checklist ipc_codes.",
+  "inputSchema": {
+    "properties": {
+      "code": {
+        "title": "Code",
+        "type": "string"
+      },
+      "client_message": {
+        "default": "",
+        "title": "Client Message",
+        "type": "string"
+      },
+      "wait_response": {
+        "default": true,
+        "title": "Wait Response",
+        "type": "boolean"
+      },
+      "timeout_sec": {
+        "default": 10.0,
+        "title": "Timeout Sec",
+        "type": "number"
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "title": "ipc_requestArguments",
+    "type": "object"
+  }
+}

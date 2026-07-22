@@ -1,0 +1,31 @@
+{
+  "name": "pulumi-registry-get-function",
+  "description": "Returns information about a Pulumi Registry function",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "provider": {
+        "type": "string",
+        "description": "The cloud provider (e.g., 'aws', 'azure', 'gcp', 'random') or github.com/org/repo for Git-hosted components"
+      },
+      "module": {
+        "type": "string",
+        "description": "The module to query (e.g., 's3', 'ec2', 'lambda'). If not specified it will match functions with the given name in any module."
+      },
+      "function": {
+        "type": "string",
+        "description": "The function type to query (e.g., 'getBucket', 'getFunction', 'getInstance')"
+      },
+      "version": {
+        "type": "string",
+        "description": "The provider version to use (e.g., '6.0.0'). If not specified, uses the latest available version."
+      }
+    },
+    "required": [
+      "provider",
+      "function"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

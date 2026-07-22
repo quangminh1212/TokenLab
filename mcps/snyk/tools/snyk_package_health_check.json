@@ -1,0 +1,25 @@
+{
+  "name": "snyk_package_health_check",
+  "description": "Retrieves package information and health metrics from Snyk's package intelligence API. Returns details about a package including security vulnerabilities, maintenance status, popularity metrics, and community health indicators.\nWhen to use: When evaluating a package before adding it as a dependency, when changing a package version, or when assessing the health and security of existing dependencies.",
+  "inputSchema": {
+    "properties": {
+      "ecosystem": {
+        "description": "The package ecosystem. Must be one of: npm, golang, pypi, maven, nuget.",
+        "type": "string"
+      },
+      "package_name": {
+        "description": "The name of the package to look up. For scoped npm packages, include the scope (e.g., '@angular/core'). For Maven packages, use 'groupId:artifactId' format.",
+        "type": "string"
+      },
+      "package_version": {
+        "description": "The specific version of the package to look up. If not provided, returns information about the package in general (latest version info).",
+        "type": "string"
+      }
+    },
+    "required": [
+      "package_name",
+      "ecosystem"
+    ],
+    "type": "object"
+  }
+}

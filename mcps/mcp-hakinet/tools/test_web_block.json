@@ -1,0 +1,32 @@
+{
+  "name": "test_web_block",
+  "description": "Open URL and check ForceBlock/block.html signals + screenshot.",
+  "inputSchema": {
+    "properties": {
+      "url": {
+        "title": "Url",
+        "type": "string"
+      },
+      "domain": {
+        "default": "",
+        "title": "Domain",
+        "type": "string"
+      },
+      "wait_sec": {
+        "default": 12,
+        "title": "Wait Sec",
+        "type": "integer"
+      },
+      "browser": {
+        "default": "msedge",
+        "title": "Browser",
+        "type": "string"
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "title": "test_web_blockArguments",
+    "type": "object"
+  }
+}

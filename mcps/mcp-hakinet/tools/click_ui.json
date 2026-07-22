@@ -1,0 +1,22 @@
+{
+  "name": "click_ui",
+  "description": "Click first invokable control whose Name contains text.",
+  "inputSchema": {
+    "properties": {
+      "name_contains": {
+        "title": "Name Contains",
+        "type": "string"
+      },
+      "process_name": {
+        "default": "agent-ui",
+        "title": "Process Name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name_contains"
+    ],
+    "title": "click_uiArguments",
+    "type": "object"
+  }
+}

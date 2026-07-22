@@ -1,0 +1,27 @@
+{
+  "name": "run_feature_case",
+  "description": "Run one catalog case, e.g. feature_id=screentime case_id=ST1, or web W3 with params_json={\"url\":\"https://...\"}.",
+  "inputSchema": {
+    "properties": {
+      "feature_id": {
+        "title": "Feature Id",
+        "type": "string"
+      },
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "params_json": {
+        "default": "",
+        "title": "Params Json",
+        "type": "string"
+      }
+    },
+    "required": [
+      "feature_id",
+      "case_id"
+    ],
+    "title": "run_feature_caseArguments",
+    "type": "object"
+  }
+}

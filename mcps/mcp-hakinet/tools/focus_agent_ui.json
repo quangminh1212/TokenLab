@@ -1,0 +1,15 @@
+{
+  "name": "focus_agent_ui",
+  "description": "Bring agent-ui to foreground.",
+  "inputSchema": {
+    "properties": {
+      "process_name": {
+        "default": "agent-ui",
+        "title": "Process Name",
+        "type": "string"
+      }
+    },
+    "title": "focus_agent_uiArguments",
+    "type": "object"
+  }
+}

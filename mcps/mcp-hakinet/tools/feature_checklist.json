@@ -1,0 +1,9 @@
+{
+  "name": "feature_checklist",
+  "description": "Full product feature checklist: all features, user-story cases, modes (auto/semi/manual), IPC codes, permissions.",
+  "inputSchema": {
+    "properties": {},
+    "title": "feature_checklistArguments",
+    "type": "object"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "ipc_has_permission",
+  "description": "HAS_PERMISSION IPC for one PERM_* flag (e.g. INSTANT_LOCK, SAFE_SEARCH).",
+  "inputSchema": {
+    "properties": {
+      "permission_name": {
+        "title": "Permission Name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "permission_name"
+    ],
+    "title": "ipc_has_permissionArguments",
+    "type": "object"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "health_check",
+  "description": "Processes, service, IPC pipe, logs, project paths.",
+  "inputSchema": {
+    "properties": {},
+    "title": "health_checkArguments",
+    "type": "object"
+  }
+}

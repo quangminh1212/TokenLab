@@ -1,0 +1,9 @@
+{
+  "name": "run_smoke_checks",
+  "description": "Non-destructive smoke: health + screen-time + recent errors + windows.",
+  "inputSchema": {
+    "properties": {},
+    "title": "run_smoke_checksArguments",
+    "type": "object"
+  }
+}

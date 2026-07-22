@@ -1,0 +1,20 @@
+{
+  "name": "search_shapes",
+  "description": "Search the draw.io shape library by keywords. Returns matching shapes with their exact style strings, dimensions, and titles. Use ONLY for diagrams that need industry-specific or branded icons (cloud architecture, network topology, P&ID, electrical, Cisco, Kubernetes, BPMN). Do NOT use for standard diagram types like flowcharts, UML, ERD, org charts, or mind maps — these use basic geometric shapes (rectangles, diamonds, circles, cylinders) that are already covered in the XML reference. Also skip if the user asks to use basic/simple shapes or says not to search. The style string from the results can be used directly in mxCell style attributes.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Space-separated search keywords (e.g. 'pid globe valve', 'aws lambda', 'cisco router', 'kubernetes pod')"
+      },
+      "limit": {
+        "type": "number",
+        "description": "Maximum number of results to return (default: 10, max: 50)"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  }
+}

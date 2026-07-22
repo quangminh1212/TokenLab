@@ -1,0 +1,21 @@
+{
+  "name": "add-memory",
+  "description": "Add a new memory. This method is called everytime the user informs anything about themselves, their preferences, or anything that has any relevent information whcih can be useful in the future conversation. This can also be called when the user asks you to remember something.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "content": {
+        "type": "string",
+        "description": "The content to store in memory"
+      },
+      "userId": {
+        "type": "string",
+        "description": "User ID for memory storage. If not provided explicitly, use a generic user ID like, 'mem0-mcp-user'"
+      }
+    },
+    "required": [
+      "content",
+      "userId"
+    ]
+  }
+}

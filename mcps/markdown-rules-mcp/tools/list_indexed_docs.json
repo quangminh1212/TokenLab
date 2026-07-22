@@ -1,0 +1,9 @@
+{
+  "name": "list_indexed_docs",
+  "description": "Print a full count & summary of the docs in the index. Also shows the usage instructions for the `get_relevant_docs` tool. Useful for debugging. Will only show the first 20 docs in each category & a small preview of the content.",
+  "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+  }
+}

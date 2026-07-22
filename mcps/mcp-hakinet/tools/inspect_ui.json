@@ -1,0 +1,20 @@
+{
+  "name": "inspect_ui",
+  "description": "UI Automation tree dump.",
+  "inputSchema": {
+    "properties": {
+      "process_name": {
+        "default": "agent-ui",
+        "title": "Process Name",
+        "type": "string"
+      },
+      "max_nodes": {
+        "default": 80,
+        "title": "Max Nodes",
+        "type": "integer"
+      }
+    },
+    "title": "inspect_uiArguments",
+    "type": "object"
+  }
+}

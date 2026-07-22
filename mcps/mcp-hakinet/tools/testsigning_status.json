@@ -1,0 +1,9 @@
+{
+  "name": "testsigning_status",
+  "description": "bcdedit testsigning on/off.",
+  "inputSchema": {
+    "properties": {},
+    "title": "testsigning_statusArguments",
+    "type": "object"
+  }
+}

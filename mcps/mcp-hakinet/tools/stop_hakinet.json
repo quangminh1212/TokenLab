@@ -1,0 +1,9 @@
+{
+  "name": "stop_hakinet",
+  "description": "Run stop.bat or fallback kill.",
+  "inputSchema": {
+    "properties": {},
+    "title": "stop_hakinetArguments",
+    "type": "object"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "get_paths",
+  "description": "Configured project/install/log/artifact paths.",
+  "inputSchema": {
+    "properties": {},
+    "title": "get_pathsArguments",
+    "type": "object"
+  }
+}

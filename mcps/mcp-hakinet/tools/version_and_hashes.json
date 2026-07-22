@@ -1,0 +1,9 @@
+{
+  "name": "version_and_hashes",
+  "description": "config version + sha256 of running/discovered agent binaries.",
+  "inputSchema": {
+    "properties": {},
+    "title": "version_and_hashesArguments",
+    "type": "object"
+  }
+}
