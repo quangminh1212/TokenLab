@@ -1,10 +1,10 @@
 /**
- * After global `npm i -g xlab-token`: enable login autostart + start dashboard.
+ * After global `npm i -g tokenlab`: enable login autostart + start dashboard.
  * Never fails the install (always exit 0).
  *
  * Skip when:
  * - not a global install
- * - CI / XLAB_TOKEN_SKIP_POSTINSTALL=1
+ * - CI / TOKENLAB_SKIP_POSTINSTALL=1
  * - dist/cli.js missing (source tree without build)
  */
 import { spawnSync } from "node:child_process";
@@ -16,7 +16,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cli = path.join(root, "dist", "cli.js");
 
 function shouldRun() {
-  if (process.env.XLAB_TOKEN_SKIP_POSTINSTALL === "1") return false;
+  if (process.env.TOKENLAB_SKIP_POSTINSTALL === "1") return false;
   if (process.env.CI === "true" || process.env.CI === "1") return false;
   // npm sets this for `npm install -g`
   if (String(process.env.npm_config_global) !== "true") return false;

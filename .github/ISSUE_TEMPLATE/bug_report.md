@@ -25,7 +25,7 @@ If applicable, add screenshots to help explain your problem.
 ## Environment
 - OS: [e.g. Windows 10, macOS 12, Ubuntu 20.04]
 - Node.js version: [e.g. 20.0.0]
-- XLab Token version: [e.g. 1.0.4]
+- TokenLab version: [e.g. 1.0.4]
 - Installation method: [npm global, desktop app, local clone]
 
 ## Additional context

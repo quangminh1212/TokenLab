@@ -39,11 +39,11 @@ export interface SetupResult {
 }
 
 function defaultHost(): string {
-  return process.env.XLAB_TOKEN_HOST || "127.0.0.1";
+  return process.env.TOKENLAB_HOST || "127.0.0.1";
 }
 
 function defaultPort(): number {
-  return Number(process.env.XLAB_TOKEN_PORT || 3737);
+  return Number(process.env.TOKENLAB_PORT || 3737);
 }
 
 export async function isServerReachable(host: string, port: number): Promise<boolean> {

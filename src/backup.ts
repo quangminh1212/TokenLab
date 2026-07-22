@@ -22,8 +22,8 @@ import {
 } from "./util.js";
 import { VERSION } from "./version.js";
 
-// Simple file logger to %LOCALAPPDATA%\xlab-token\backup.txt
-const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "xlab-token");
+// Simple file logger to %LOCALAPPDATA%\tokenlab\backup.txt
+const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "tokenlab");
 const logFile = path.join(logDir, "backup.txt");
 
 function log(...args: unknown[]): void {
@@ -42,7 +42,7 @@ function logError(...args: unknown[]): void {
   log("[ERROR]", ...args);
 }
 
-export const BACKUP_FORMAT = "xlab-token-backup" as const;
+export const BACKUP_FORMAT = "tokenlab-backup" as const;
 /** v1 = settings only · v2 = full events · v3 = period stats (by model + agent) */
 export const BACKUP_FORMAT_VERSION = 3 as const;
 
@@ -94,7 +94,7 @@ export type PortableBackupConfig = {
 
 /**
  * Single on-disk / Gist file format for all backup features:
- * `format: "xlab-token-backup"` — settings-only, full, or period-stats (Gist).
+ * `format: "tokenlab-backup"` — settings-only, full, or period-stats (Gist).
  */
 export interface XlabBackup {
   format: typeof BACKUP_FORMAT;
@@ -118,7 +118,7 @@ export interface XlabBackup {
     models: OpenRouterModelEntry[];
   };
   /**
-   * Mirror files under %APPDATA%/xlab-token/mirrors (full scope).
+   * Mirror files under %APPDATA%/tokenlab/mirrors (full scope).
    * Keys are relative paths like "9router/usage-daily.json".
    */
   mirrors?: Record<string, string>;
@@ -170,7 +170,7 @@ export function buildPortableConfig(): PortableBackupConfig {
 }
 
 export function dataRoot(): string {
-  return process.env.XLAB_TOKEN_DATA_DIR || path.join(appDataDir(), "xlab-token");
+  return process.env.TOKENLAB_DATA_DIR || path.join(appDataDir(), "tokenlab");
 }
 
 export function mirrorsRoot(): string {
@@ -724,7 +724,7 @@ export function buildSettingsBackup(opts?: { eventCountHint?: number; note?: str
     meta: {
       note:
         opts?.note ||
-        "XLab Token backup file (settings): timezone, pricing, host/port, gist link — same format as Gist/full",
+        "TokenLab backup file (settings): timezone, pricing, host/port, gist link — same format as Gist/full",
       eventCount: opts?.eventCountHint,
       machineId: mid,
       machines: [mid],
@@ -746,7 +746,7 @@ export async function buildFullBackup(opts: {
     eventCountHint: opts.events.length,
     note:
       opts.note ||
-      "XLab Token backup file (full): settings + events + periodStats + OpenRouter + mirrors",
+      "TokenLab backup file (full): settings + events + periodStats + OpenRouter + mirrors",
   });
   base.scope = "full";
 
@@ -920,7 +920,7 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
 /** Restore config (+ optional events / openrouter / mirrors). Same file format as Gist. */
 export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
   if (!isXlabBackup(raw)) {
-    throw new Error("Invalid backup file (expected xlab-token-backup format)");
+    throw new Error("Invalid backup file (expected tokenlab-backup format)");
   }
   const prev = await loadConfig();
   const incoming = raw.config || {};
@@ -1316,7 +1316,7 @@ export async function buildGistFullBackup(
   const localRates = cfg.pricing?.customRates || {};
   const base = buildSettingsBackup({
     eventCountHint: events.length,
-    note: "XLab Token backup file (Gist/period-stats): full project settings + multi-machine usage sum",
+    note: "TokenLab backup file (Gist/period-stats): full project settings + multi-machine usage sum",
   });
   // Same portable config as export; merge rates; keep remote gist id if local missing
   base.config = {
@@ -1354,14 +1354,14 @@ export async function buildGistFullBackup(
   return base;
 }
 
-const GIST_BACKUP_FILENAME = "xlab-token-backup.json";
+const GIST_BACKUP_FILENAME = "tokenlab-backup.json";
 
 function githubHeaders(token: string): Record<string, string> {
   return {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
-    "User-Agent": `xlab-token/${VERSION}`,
+    "User-Agent": `tokenlab/${VERSION}`,
     "X-GitHub-Api-Version": "2022-11-28",
   };
 }
@@ -1398,7 +1398,7 @@ export async function fetchGistBackup(opts: {
       const rawRes = await fetch(file.raw_url, {
         headers: {
           Authorization: `Bearer ${opts.token}`,
-          "User-Agent": `xlab-token/${VERSION}`,
+          "User-Agent": `tokenlab/${VERSION}`,
         },
       });
       if (rawRes.ok) text = await rawRes.text();
@@ -1503,7 +1503,7 @@ export async function uploadBackupToGist(opts: {
 
   const filename = GIST_BACKUP_FILENAME;
   const machinesLabel = (backup.meta?.machines || []).join("+") || backup.meta?.machineId || "1host";
-  const description = `XLab Token multi-machine · ${machinesLabel} · ${backup.meta?.modelCount || 0} models · ${backup.meta?.agentCount || 0} agents · ${backup.exportedAt} · v${backup.appVersion}`;
+  const description = `TokenLab multi-machine · ${machinesLabel} · ${backup.meta?.modelCount || 0} models · ${backup.meta?.agentCount || 0} agents · ${backup.exportedAt} · v${backup.appVersion}`;
 
   const headers = githubHeaders(token);
 

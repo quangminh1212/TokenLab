@@ -1,6 +1,6 @@
-# Contributing to XLab Token
+# Contributing to TokenLab
 
-Thank you for your interest in contributing to XLab Token! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to TokenLab! This document provides guidelines and instructions for contributing.
 
 ## Code of Conduct
 

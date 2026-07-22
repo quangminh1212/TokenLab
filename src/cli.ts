@@ -18,8 +18,8 @@ import type { GroupBy } from "./types.js";
 import { filterByPeriod, formatTokens, formatUsd, openBrowser } from "./util.js";
 import { VERSION } from "./version.js";
 
-// Simple file logger to %LOCALAPPDATA%\xlab-token\server.txt
-const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "xlab-token");
+// Simple file logger to %LOCALAPPDATA%\tokenlab\server.txt
+const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "tokenlab");
 const logFile = path.join(logDir, "server.txt");
 
 function log(...args: unknown[]): void {
@@ -39,23 +39,23 @@ function logError(...args: unknown[]): void {
 }
 
 function printHelp(): void {
-  console.log(`xlab-token v${VERSION}
+  console.log(`tokenlab v${VERSION}
 
 Local-first token API usage & cost tracker for AI agents on this machine.
 
 Usage:
-  xlab-token serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open] [--no-tray]
-  xlab-token setup [--no-open] [--no-autostart] [--no-desktop] [--no-serve] [--json]
-  xlab-token stats [--since 24h|7d|30d] [--by agent|model|day] [--sort tokens|cost] [--json]
-  xlab-token cost  [--since 7d] [--json]
-  xlab-token scan  [--json]
-  xlab-token doctors [--json]
-  xlab-token autostart [on|off|status] [--json]
-  xlab-token backup upload [--token <token>] [--gist <id>] [--public] [--save-token] [--json]
-  xlab-token backup download [--token <token>] [--gist <id>] [--json]
-  xlab-token backup status
-  xlab-token --version
-  xlab-token --help
+  tokenlab serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open] [--no-tray]
+  tokenlab setup [--no-open] [--no-autostart] [--no-desktop] [--no-serve] [--json]
+  tokenlab stats [--since 24h|7d|30d] [--by agent|model|day] [--sort tokens|cost] [--json]
+  tokenlab cost  [--since 7d] [--json]
+  tokenlab scan  [--json]
+  tokenlab doctors [--json]
+  tokenlab autostart [on|off|status] [--json]
+  tokenlab backup upload [--token <token>] [--gist <id>] [--public] [--save-token] [--json]
+  tokenlab backup download [--token <token>] [--gist <id>] [--json]
+  tokenlab backup status
+  tokenlab --version
+  tokenlab --help
 
 Serve options:
   --open       Open dashboard in browser
@@ -72,11 +72,11 @@ Setup (also runs after global npm install):
   Enables Windows login autostart, creates a Desktop shortcut, and starts the dashboard if not already running.
   --no-open       Do not open the browser
   --no-autostart  Skip login autostart registration
-  --no-desktop    Skip Desktop shortcut (XLab Token.lnk)
+  --no-desktop    Skip Desktop shortcut (TokenLab.lnk)
   --no-serve      Do not start the server
 
 Autostart (Windows):
-  on           Start xlab-token serve at Windows login (supervised, auto-restart)
+  on           Start tokenlab serve at Windows login (supervised, auto-restart)
   off          Remove login autostart
   status       Show whether autostart is enabled
 
@@ -119,17 +119,17 @@ async function main(): Promise<void> {
     const host = getFlag(args, "--host") || undefined;
     const port = getFlag(args, "--port") ? Number(getFlag(args, "--port")) : undefined;
     const noUi = has(args, "--no-ui");
-    const shouldOpen = has(args, "--open") || process.env.XLAB_TOKEN_OPEN === "1";
+    const shouldOpen = has(args, "--open") || process.env.TOKENLAB_OPEN === "1";
     const noTray =
       has(args, "--no-tray") ||
-      process.env.XLAB_TOKEN_NO_TRAY === "1" ||
+      process.env.TOKENLAB_NO_TRAY === "1" ||
       noUi;
     try {
       log("Starting server with host:", host, "port:", port, "noUi:", noUi);
       const srv = await startServer({ host, port, noUi });
       const uiUrl = `http://${srv.host}:${srv.port}/`;
       log("Server started at", `${srv.host}:${srv.port}`);
-      console.log(`XLab Token v${VERSION}  (${process.platform}/${process.arch})`);
+      console.log(`TokenLab v${VERSION}  (${process.platform}/${process.arch})`);
       console.log(`API  http://${srv.host}:${srv.port}/api/health`);
       if (!noUi) console.log(`UI   ${uiUrl}`);
       console.log("Scanning agents in background…");
@@ -180,8 +180,8 @@ async function main(): Promise<void> {
       // SIGHUP only for dev hot-reload (tsx watch). On Windows production, SIGHUP
       // has been observed killing a healthy serve — ignore unless explicitly enabled.
       const allowSighup =
-        process.env.XLAB_TOKEN_DEV === "1" ||
-        process.env.XLAB_TOKEN_WATCH === "1" ||
+        process.env.TOKENLAB_DEV === "1" ||
+        process.env.TOKENLAB_WATCH === "1" ||
         process.platform !== "win32";
       if (allowSighup) {
         process.on("SIGHUP", () => void shutdown("SIGHUP"));
@@ -191,8 +191,8 @@ async function main(): Promise<void> {
         try {
           const tray = await startTray({
             url: uiUrl,
-            title: "XLab Token",
-            tooltip: `XLab Token :${srv.port}`,
+            title: "TokenLab",
+            tooltip: `TokenLab :${srv.port}`,
             onQuit: () => void shutdown("tray"),
           });
           if (tray) {
@@ -233,10 +233,10 @@ async function main(): Promise<void> {
       if (asJson) {
         console.log(JSON.stringify(result, null, 2));
       } else if (fromPostinstall) {
-        console.log(`xlab-token: ${result.message}`);
-        console.log(`xlab-token: dashboard ${result.url}`);
+        console.log(`tokenlab: ${result.message}`);
+        console.log(`tokenlab: dashboard ${result.url}`);
         if (result.desktopShortcut) {
-          console.log(`xlab-token: desktop ${result.desktopShortcut}`);
+          console.log(`tokenlab: desktop ${result.desktopShortcut}`);
         }
       } else {
         console.log(result.message);
@@ -253,7 +253,7 @@ async function main(): Promise<void> {
       // Never break npm install when invoked from postinstall
       const msg = err instanceof Error ? err.message : String(err);
       if (fromPostinstall) {
-        console.warn(`xlab-token: setup skipped (${msg})`);
+        console.warn(`tokenlab: setup skipped (${msg})`);
       } else {
         console.error(msg);
         process.exitCode = 1;
@@ -300,7 +300,7 @@ async function main(): Promise<void> {
       return;
     }
     console.error(`Unknown autostart subcommand: ${sub}`);
-    console.error("Use: xlab-token autostart on|off|status");
+    console.error("Use: tokenlab autostart on|off|status");
     process.exitCode = 1;
     return;
   }
@@ -376,7 +376,7 @@ async function main(): Promise<void> {
         }
       } else {
         console.error(`Unknown backup subcommand: ${sub}`);
-        console.error("Use: xlab-token backup upload|download|status");
+        console.error("Use: tokenlab backup upload|download|status");
         process.exitCode = 1;
       }
     } catch (err) {
@@ -404,7 +404,7 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({ ...meta, agents }, null, 2));
       return;
     }
-    console.log(`XLab Token doctors v${VERSION}  (${meta.platform}/${meta.arch} ${meta.node})\n`);
+    console.log(`TokenLab doctors v${VERSION}  (${meta.platform}/${meta.arch} ${meta.node})\n`);
     for (const a of agents) {
       const mark = a.detected ? (a.enabled ? "OK " : "PATH") : " -- ";
       console.log(
@@ -428,7 +428,7 @@ async function main(): Promise<void> {
       return;
     }
     const t = stats.totals;
-    console.log(`XLab Token stats  (groupBy=${by}, sort=${sort})`);
+    console.log(`TokenLab stats  (groupBy=${by}, sort=${sort})`);
     if (since || until) console.log(`Period: since=${since || "-"} until=${until || "-"}`);
     console.log(
       `TOTAL  tokens=${formatTokens(t.totalTokens)}  in=${formatTokens(t.inputTokens)}  out=${formatTokens(t.outputTokens)}  cost=${formatUsd(t.estimatedCost)}  events=${t.eventCount}`,
@@ -451,7 +451,7 @@ async function main(): Promise<void> {
       console.log(JSON.stringify(report, null, 2));
       return;
     }
-    console.log(`XLab Token cost  since=${since}`);
+    console.log(`TokenLab cost  since=${since}`);
     console.log(`TOTAL estimated: ${formatUsd(report.totalEstimatedCost)} ${report.currency}`);
     console.log("\nBy agent:");
     for (const row of report.byAgent) {

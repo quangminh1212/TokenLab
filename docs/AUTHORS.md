@@ -1,6 +1,6 @@
 # Authors
 
-This project is developed and maintained by the XLab Token community.
+This project is developed and maintained by the TokenLab community.
 
 ## Core Contributors
 

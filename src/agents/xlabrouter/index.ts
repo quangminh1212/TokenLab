@@ -14,11 +14,11 @@ import { parseRouterUsage } from "../shared/router-usage.js";
 export function xlabRouterRoots(): string[] {
   const { home, appData, localApp, xdgData, xdgConfig, path: p, expandHome } = pathEnv();
   const xlabData =
-    process.env.XLAB_TOKEN_DATA_DIR ||
-    p.join(appDataDir(), "xlab-token");
+    process.env.TOKENLAB_DATA_DIR ||
+    p.join(appDataDir(), "tokenlab");
   return unique([
     // Explicit overrides (preferred)
-    expandHome(process.env.XLAB_TOKEN_XLABROUTER_DIR || ""),
+    expandHome(process.env.TOKENLAB_XLABROUTER_DIR || ""),
     expandHome(process.env.XLABROUTER_HOME || process.env.XLAB_ROUTER_HOME || ""),
     expandHome(process.env.XLABROUTER_DATA_DIR || ""),
     // Service DATA_DIR (VPS production)
@@ -35,7 +35,7 @@ export function xlabRouterRoots(): string[] {
     p.join(home, ".xlab_router"),
     // Local mirrors of VPS DATA_DIR
     p.join(xlabData, "mirrors", "xlabrouter"),
-    p.join(homeDir(), ".xlab-token", "mirrors", "xlabrouter"),
+    p.join(homeDir(), ".tokenlab", "mirrors", "xlabrouter"),
     process.platform === "win32" ? "C:\\Dev\\VPS\\my.bnix.one\\xlabrouter\\data" : "",
     p.join(home, "Dev", "VPS", "my.bnix.one", "xlabrouter", "data"),
   ]);

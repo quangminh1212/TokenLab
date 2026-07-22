@@ -2,9 +2,9 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title XLab Token (hot reload)
+title TokenLab (hot reload)
 echo.
-echo  === XLab Token ===
+echo  === TokenLab ===
 echo  Dev server + hot reload (tsx watch)
 echo.
 

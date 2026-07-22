@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# XLab Token — hot-reload dev server (Linux / macOS)
+# TokenLab — hot-reload dev server (Linux / macOS)
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 echo ""
-echo " === XLab Token ==="
+echo " === TokenLab ==="
 echo " Dev server + hot reload (tsx watch)"
 echo " Platform: $(uname -s) $(uname -m)"
 echo ""
@@ -38,8 +38,8 @@ if [ ! -d node_modules/tsx ]; then
   npm install
 fi
 
-PORT="${XLAB_TOKEN_PORT:-3737}"
-HOST="${XLAB_TOKEN_HOST:-127.0.0.1}"
+PORT="${TOKENLAB_PORT:-3737}"
+HOST="${TOKENLAB_HOST:-127.0.0.1}"
 URL="http://${HOST}:${PORT}"
 
 echo "[2/2] Starting hot-reload server on ${URL}"
@@ -58,5 +58,5 @@ echo ""
   fi
 ) &
 
-export XLAB_TOKEN_OPEN=0
+export TOKENLAB_OPEN=0
 npm run serve:watch

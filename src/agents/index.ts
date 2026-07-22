@@ -210,7 +210,7 @@ export async function scanAll(
         onAgentDone?.({ agent: job.id, events: batch, durationMs: Date.now() - t0 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error("[xlab-token] parser " + job.id + " failed:", msg);
+        console.error("[tokenlab] parser " + job.id + " failed:", msg);
         onAgentDone?.({ agent: job.id, events: [], durationMs: Date.now() - t0, error: msg });
       }
     }

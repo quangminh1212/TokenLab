@@ -45,9 +45,9 @@ const DEFAULT_CONFIG: XlabTokenConfig = {
 let cached: XlabTokenConfig | null = null;
 
 export function configPath(): string {
-  if (process.env.XLAB_TOKEN_CONFIG) return process.env.XLAB_TOKEN_CONFIG;
+  if (process.env.TOKENLAB_CONFIG) return process.env.TOKENLAB_CONFIG;
   return path.join(
-    process.env.XLAB_TOKEN_DATA_DIR || path.join(appDataDir(), "xlab-token"),
+    process.env.TOKENLAB_DATA_DIR || path.join(appDataDir(), "tokenlab"),
     "config.json",
   );
 }
@@ -60,7 +60,7 @@ export function configPath(): string {
 export function normalizeTimezone(tz: string | null | undefined): string {
   const t = (tz && String(tz).trim()) || "local";
   if (t === "UTC" || t === "Etc/UTC") {
-    if (process.env.XLAB_TOKEN_FORCE_UTC === "1") return "UTC";
+    if (process.env.TOKENLAB_FORCE_UTC === "1") return "UTC";
     // getTimezoneOffset: minutes *west* of UTC; 0 only on real UTC hosts
     if (new Date().getTimezoneOffset() !== 0) return "local";
   }

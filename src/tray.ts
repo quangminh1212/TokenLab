@@ -22,8 +22,8 @@ export interface TrayOptions {
   onQuit: () => void;
 }
 
-// Simple file logger to %LOCALAPPDATA%\xlab-token\tray.txt
-const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "xlab-token");
+// Simple file logger to %LOCALAPPDATA%\tokenlab\tray.txt
+const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "tokenlab");
 const logFile = path.join(logDir, "tray.txt");
 
 function log(...args: unknown[]): void {
@@ -159,7 +159,7 @@ $form.Size = New-Object System.Drawing.Size(1, 1)
 $form.add_Load({
   $icon.Visible = $true
   try {
-    $icon.ShowBalloonTip(5000, '${title}', 'XLab Token is running. Click the tray icon to open the dashboard.', [System.Windows.Forms.ToolTipIcon]::Info)
+    $icon.ShowBalloonTip(5000, '${title}', 'TokenLab is running. Click the tray icon to open the dashboard.', [System.Windows.Forms.ToolTipIcon]::Info)
   } catch {}
   [Console]::Out.WriteLine('form-loaded')
   [Console]::Out.Flush()
@@ -179,13 +179,13 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
     log("Tray disabled: not Windows");
     return null;
   }
-  if (process.env.XLAB_TOKEN_NO_TRAY === "1") {
-    log("Tray disabled: XLAB_TOKEN_NO_TRAY=1");
+  if (process.env.TOKENLAB_NO_TRAY === "1") {
+    log("Tray disabled: TOKENLAB_NO_TRAY=1");
     return null;
   }
 
-  const title = opts.title || "XLab Token";
-  const tooltip = opts.tooltip || "XLab Token — click to open dashboard";
+  const title = opts.title || "TokenLab";
+  const tooltip = opts.tooltip || "TokenLab — click to open dashboard";
   const iconPath = await resolveIconPath();
   log("Resolved icon path:", iconPath);
   const script = buildPsScript({
@@ -198,7 +198,7 @@ export async function startTray(opts: TrayOptions): Promise<TrayHandle | null> {
   // Write script to a temp .ps1 — more reliable than -Command with long scripts
   let scriptPath = "";
   try {
-    const dir = path.join(os.tmpdir(), "xlab-token");
+    const dir = path.join(os.tmpdir(), "tokenlab");
     await mkdir(dir, { recursive: true });
     scriptPath = path.join(dir, `tray-${process.pid}.ps1`);
     await writeFile(scriptPath, script, "utf8");

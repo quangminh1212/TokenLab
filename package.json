@@ -1,9 +1,10 @@
 {
-  "name": "xlab-token",
+  "name": "tokenlab",
   "version": "1.0.6",
   "description": "Local-first token API usage and cost tracker for AI coding agents on one machine",
   "type": "module",
   "bin": {
+    "tokenlab": "installer/dist/cli.js",
     "xlab-token": "installer/dist/cli.js"
   },
   "main": "./installer/dist/cli.js",

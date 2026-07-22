@@ -1,8 +1,8 @@
-# XLab Token
+# TokenLab
 
 **Local-first token API usage & cost tracker for every AI agent on one machine.**
 
-XLab Token is an npm package that runs a lightweight **localhost** service and dashboard. It aggregates **token API consumption** and **estimated spend (cost)** from all AI coding agents and CLIs installed on the host — including **Cursor**, **Grok**, **Windsurf**, **Codex**, **Claude Code**, and more — so you always know **how many tokens each agent used and how much it cost**.
+TokenLab is an npm package that runs a lightweight **localhost** service and dashboard. It aggregates **token API consumption** and **estimated spend (cost)** from all AI coding agents and CLIs installed on the host — including **Cursor**, **Grok**, **Windsurf**, **Codex**, **Claude Code**, and more — so you always know **how many tokens each agent used and how much it cost**.
 
 No cloud account required by default. Data stays on your machine.
 
@@ -62,7 +62,7 @@ Modern machines often run **multiple AI agents in parallel**. Each tool stores u
 | No cross-agent ranking | Hard to know which tool is expensive |
 | Cloud-only dashboards | Privacy / offline limits |
 
-XLab Token scans **local agent usage artifacts**, normalizes them into one schema, computes **token totals + cost**, and serves them on **localhost HTTP + UI**.
+TokenLab scans **local agent usage artifacts**, normalizes them into one schema, computes **token totals + cost**, and serves them on **localhost HTTP + UI**.
 
 ---
 
@@ -188,7 +188,7 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | **9Router** | `9router` | `~/.9router` / `db/data.sqlite` / `usage-history.jsonl` (VPS mirror OK) | Yes |
 | **XLab Router** | `xlabrouter` | `~/.xlabrouter` / `%APPDATA%/xlabrouter` / `db.json` | Yes |
 
-> XLab Token only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
+> TokenLab only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
 
 #### 9Router / XLab Router data paths
 
@@ -197,12 +197,12 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | Local 9Router | `~/.9router` (Linux/macOS) · `%APPDATA%\\9router` (Windows) |
 | Local XLab Router | `~/.xlabrouter` · `%APPDATA%\\xlabrouter` |
 | VPS install (my.bnix.one) | `/root/.9router` · `/root/.xlabrouter` |
-| Local mirror (optional) | `%APPDATA%\\xlab-token\\mirrors\\{9router,xlabrouter}` · `C:\\Dev\\VPS\\my.bnix.one\\{9router,xlabrouter}\\data` |
-| Env overrides | `XLAB_TOKEN_9ROUTER_DIR` · `XLAB_TOKEN_XLABROUTER_DIR` · `NINEROUTER_HOME` · `XLABROUTER_HOME` |
+| Local mirror (optional) | `%APPDATA%\\tokenlab\\mirrors\\{9router,xlabrouter}` · `C:\\Dev\\VPS\\my.bnix.one\\{9router,xlabrouter}\\data` |
+| Env overrides | `TOKENLAB_9ROUTER_DIR` · `TOKENLAB_XLABROUTER_DIR` · `NINEROUTER_HOME` · `XLABROUTER_HOME` |
 
 Parsers read `usageHistory` (SQLite), `usage.json` history, `db.json` → `usageData.history`, or exported `usage-history.jsonl`. Router-reported `cost` is preferred when present.
 
-Parsers ship incrementally; `xlab-token doctors` reports which agents are detected and which parsers are active.
+Parsers ship incrementally; `tokenlab doctors` reports which agents are detected and which parsers are active.
 
 ---
 
@@ -235,18 +235,18 @@ The desktop app automatically handles server startup and provides a native windo
 ### One-shot
 
 ```bash
-npx xlab-token@latest serve
+npx tokenlab@latest serve
 # or
-bunx xlab-token@latest serve
+bunx tokenlab@latest serve
 ```
 
 ### Global install
 
 ```bash
-npm install -g xlab-token
-xlab-token serve
+npm install -g tokenlab
+tokenlab serve
 # optional: open default browser
-xlab-token serve --open
+tokenlab serve --open
 ```
 
 Open:
@@ -277,16 +277,16 @@ npm run serve:watch
 
 ```bash
 # All agents: tokens and estimated spend
-xlab-token stats --json
+tokenlab stats --json
 
 # Last 24 hours, ranked by cost
-xlab-token stats --since 24h --by agent --sort cost
+tokenlab stats --since 24h --by agent --sort cost
 
 # Cost only summary
-xlab-token cost --since 7d --currency USD
+tokenlab cost --since 7d --currency USD
 
 # Which agents exist on this machine
-xlab-token doctors
+tokenlab doctors
 ```
 
 ---
@@ -295,13 +295,13 @@ xlab-token doctors
 
 | Command | Description |
 |---------|-------------|
-| `xlab-token serve` | Start localhost API + dashboard (tokens + cost) |
-| `xlab-token scan` | Rescan all agent sources |
-| `xlab-token stats` | Aggregate **tokens + spend** to stdout |
-| `xlab-token cost` | Focused **spend** report (totals, by agent/model) |
-| `xlab-token export` | Export events (tokens + cost fields) as JSON/CSV |
-| `xlab-token doctors` | Detect agents, paths, parser health |
-| `xlab-token --version` | Package version |
+| `tokenlab serve` | Start localhost API + dashboard (tokens + cost) |
+| `tokenlab scan` | Rescan all agent sources |
+| `tokenlab stats` | Aggregate **tokens + spend** to stdout |
+| `tokenlab cost` | Focused **spend** report (totals, by agent/model) |
+| `tokenlab export` | Export events (tokens + cost fields) as JSON/CSV |
+| `tokenlab doctors` | Detect agents, paths, parser health |
+| `tokenlab --version` | Package version |
 
 ### Common flags
 
@@ -493,13 +493,13 @@ cost = (inputTokens      × priceInputPer1M
 
 ```text
 # Windows
-%APPDATA%\xlab-token\config.json
+%APPDATA%\tokenlab\config.json
 
 # macOS
-~/Library/Application Support/xlab-token/config.json
+~/Library/Application Support/tokenlab/config.json
 
 # Linux
-~/.config/xlab-token/config.json
+~/.config/tokenlab/config.json
 ```
 
 ```json
@@ -534,11 +534,11 @@ cost = (inputTokens      × priceInputPer1M
 
 | Environment variable | Meaning |
 |----------------------|---------|
-| `XLAB_TOKEN_HOST` | Bind host |
-| `XLAB_TOKEN_PORT` | Bind port |
-| `XLAB_TOKEN_DATA_DIR` | Data directory |
-| `XLAB_TOKEN_CURRENCY` | Cost currency |
-| `XLAB_TOKEN_NO_UI` | `1` = API only |
+| `TOKENLAB_HOST` | Bind host |
+| `TOKENLAB_PORT` | Bind port |
+| `TOKENLAB_DATA_DIR` | Data directory |
+| `TOKENLAB_CURRENCY` | Cost currency |
+| `TOKENLAB_NO_UI` | `1` = API only |
 
 ---
 
@@ -666,7 +666,7 @@ Agent data paths are resolved per platform (`%APPDATA%` / `~/Library/Application
 src/
   agents/   # one folder per agent (paths + parser)
   server/   # HTTP API + dashboard
-  cli.ts    # xlab-token binary
+  cli.ts    # tokenlab binary
 ```
 
 | Script | Purpose |
@@ -688,7 +688,7 @@ Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (
 | Multi-agent local scanners | **Done** — 23 agents incl. Codex (deep), Hermes, OpenClaw |
 | Token + cost aggregation | **Done** — `stats` / `cost` / `/api/stats` / `/api/cost` |
 | Bundled offline pricing | **Done** — LiteLLM-style rates in `src/pricing.ts` |
-| Localhost dashboard | **Done** — `xlab-token serve` → `http://127.0.0.1:3737` |
+| Localhost dashboard | **Done** — `tokenlab serve` → `http://127.0.0.1:3737` |
 | Agent detection (`doctors`) | **Done** |
 | Hermes SQLite (`state.db`) | **Done** — via `node:sqlite` + JSONL fallback |
 | OpenClaw / clawdbot / moltbot | **Done** — sessions index + JSONL usage |
@@ -749,4 +749,4 @@ MIT License — see [`LICENSE`](./LICENSE) when published.
 
 ## Disclaimer
 
-XLab Token reads **local usage artifacts** from third-party agents. Formats may change without notice. **Token counts and costs are best-effort estimates** and may differ from official provider billing dashboards or invoices.
+TokenLab reads **local usage artifacts** from third-party agents. Formats may change without notice. **Token counts and costs are best-effort estimates** and may differ from official provider billing dashboards or invoices.
