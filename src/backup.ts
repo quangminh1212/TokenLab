@@ -42,7 +42,9 @@ function logError(...args: unknown[]): void {
   log("[ERROR]", ...args);
 }
 
-export const BACKUP_FORMAT = "tokenlab-backup" as const;
+export const BACKUP_FORMAT = "tokenlab" as const;
+/** Legacy format name accepted on import for backward compatibility. */
+const BACKUP_FORMAT_LEGACY = "tokenlab-backup";
 /** v1 = settings only · v2 = full events · v3 = period stats (by model + agent) */
 export const BACKUP_FORMAT_VERSION = 3 as const;
 
@@ -94,7 +96,7 @@ export type PortableBackupConfig = {
 
 /**
  * Single on-disk / Gist file format for all backup features:
- * `format: "tokenlab-backup"` — settings-only, full, or period-stats (Gist).
+ * `format: "tokenlab"` — settings-only, full, or period-stats (Gist).
  */
 export interface XlabBackup {
   format: typeof BACKUP_FORMAT;
@@ -825,7 +827,7 @@ export async function buildFullBackup(opts: {
 export function isXlabBackup(raw: unknown): raw is XlabBackup {
   if (!raw || typeof raw !== "object") return false;
   const o = raw as Record<string, unknown>;
-  return o.format === BACKUP_FORMAT && typeof o.config === "object" && o.config != null;
+  return (o.format === BACKUP_FORMAT || o.format === BACKUP_FORMAT_LEGACY) && typeof o.config === "object" && o.config != null;
 }
 
 export type RestoreResult = {
@@ -920,7 +922,7 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
 /** Restore config (+ optional events / openrouter / mirrors). Same file format as Gist. */
 export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
   if (!isXlabBackup(raw)) {
-    throw new Error("Invalid backup file (expected tokenlab-backup format)");
+    throw new Error("Invalid backup file (expected tokenlab format)");
   }
   const prev = await loadConfig();
   const incoming = raw.config || {};
