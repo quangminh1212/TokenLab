@@ -1354,7 +1354,7 @@ export async function buildGistFullBackup(
   return base;
 }
 
-const GIST_BACKUP_FILENAME = "tokenlab-backup.json";
+const GIST_BACKUP_FILENAME = "tokenlab.json";
 
 function githubHeaders(token: string): Record<string, string> {
   return {
