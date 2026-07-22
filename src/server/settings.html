@@ -114,7 +114,7 @@
         <div class="settings-section-head">
           <h2>Backup &amp; restore</h2>
           <p>
-            One file format: <code>tokenlab-backup.json</code>
+            One file format: <code>tokenlab.json</code>
             (<code>format: "tokenlab-backup"</code>).
             Includes <strong>project settings</strong> (timezone, pricing, custom rates, host/port, gist link)
             plus usage — same JSON for Export, Import, and GitHub Gist.
@@ -146,7 +146,7 @@
           <div class="settings-row-text">
             <span class="settings-label">Import file</span>
             <span class="settings-help">
-              Any <code>tokenlab-backup-*.json</code> from Export or Gist (settings / full / period-stats).
+              Any <code>tokenlab-*.json</code> from Export or Gist (settings / full / period-stats).
             </span>
           </div>
           <div class="settings-inline-actions">
@@ -428,7 +428,7 @@
         const events = backup.meta?.eventCount || backup.events?.length || 0;
         a.href = url;
         // Unified filename family for all backup features
-        a.download = `tokenlab-backup-${tag}-${day}.json`;
+        a.download = `tokenlab-${tag}-${day}.json`;
         a.click();
         URL.revokeObjectURL(url);
         const st = $('backupRestoreStatus');
@@ -496,7 +496,7 @@
       const btn = $('backupGistBtn');
       const st = $('backupGistStatus');
       btn.disabled = true;
-      st.textContent = 'Uploading tokenlab-backup.json\u2026';
+      st.textContent = 'Uploading tokenlab.json\u2026';
       try {
         const token = ($('gistToken').value || '').trim();
         const res = await fetch('/api/backup/gist', {
