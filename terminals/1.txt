@@ -1,0 +1,119 @@
+---
+pid: 17176
+cwd: "C:\Dev\XLab_Token"
+command: "cd C:\\Dev\\XLab_Token; node installer/dist/cli.js serve --open"
+started_at: 2026-07-16T07:28:40.636Z
+running_for_ms: 4085015  
+---
+[xlab-token] loaded 42684 cached scan events
+[xlab-token] loaded 35018 imported events
+[xlab-token] warm cache ready: 42684 events (scan + import)
+[xlab-token] full historical scan started (all agent usage on disk)…
+XLab Token v1.0.6  (win32/x64)
+API  http://127.0.0.1:3737/api/health
+UI   http://127.0.0.1:3737/
+Scanning agents in background…
+Press Ctrl+C to stop
+[xlab-token] OpenRouter models ready: 332
+Tray icon enabled (double-click or menu → Open Dashboard)
+(node:14132) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[xlab-token]   codex: 0 new → 0 total (511ms)
+[xlab-token]   windsurf: 23 new → 64 total (1691ms)
+[xlab-token]   copilot: 0 new → 0 total (282ms)
+[xlab-token]   hermes: 188 new → 2641 total (29787ms)
+[xlab-token]   devin: 36473 new → 36475 total (28522ms)
+[xlab-token]   9router: 555 new → 653 total (621ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (694ms)
+[xlab-token]   grok: 490 new → 1622 total (45443ms)
+[xlab-token] full historical scan done: 42687 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (350ms)
+[xlab-token]   windsurf: 23 new → 64 total (1078ms)
+[xlab-token]   copilot: 0 new → 0 total (147ms)
+[xlab-token]   hermes: 188 new → 2641 total (22151ms)
+[xlab-token]   9router: 555 new → 653 total (257ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (286ms)
+[xlab-token]   devin: 36475 new → 36477 total (22058ms)
+[xlab-token]   grok: 494 new → 1626 total (31951ms)
+[xlab-token] full historical scan done: 42693 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (444ms)
+[xlab-token]   windsurf: 23 new → 64 total (1151ms)
+[xlab-token]   copilot: 0 new → 0 total (190ms)
+[xlab-token]   hermes: 188 new → 2641 total (7885ms)
+[xlab-token]   9router: 555 new → 653 total (221ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (189ms)
+[xlab-token]   devin: 36475 new → 36477 total (9369ms)
+[xlab-token]   grok: 494 new → 1626 total (15198ms)
+[xlab-token] full historical scan done: 42693 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (127ms)
+[xlab-token]   windsurf: 23 new → 64 total (841ms)
+[xlab-token]   copilot: 0 new → 0 total (79ms)
+[xlab-token]   hermes: 188 new → 2641 total (7251ms)
+[xlab-token]   9router: 555 new → 653 total (209ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (205ms)
+[xlab-token]   devin: 36477 new → 36479 total (9300ms)
+[xlab-token]   grok: 498 new → 1630 total (16501ms)
+[xlab-token] full historical scan done: 42699 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (241ms)
+[xlab-token]   windsurf: 23 new → 64 total (782ms)
+[xlab-token]   copilot: 0 new → 0 total (72ms)
+[xlab-token]   hermes: 188 new → 2641 total (6927ms)
+[xlab-token]   9router: 555 new → 653 total (186ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (127ms)
+[xlab-token]   devin: 36479 new → 36481 total (8391ms)
+[xlab-token]   grok: 498 new → 1630 total (13328ms)
+[xlab-token] full historical scan done: 42701 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (102ms)
+[xlab-token]   windsurf: 23 new → 64 total (841ms)
+[xlab-token]   copilot: 0 new → 0 total (74ms)
+[xlab-token]   hermes: 188 new → 2641 total (6899ms)
+[xlab-token]   9router: 555 new → 653 total (185ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (136ms)
+[xlab-token]   devin: 36481 new → 36483 total (8214ms)
+[xlab-token]   grok: 498 new → 1630 total (13336ms)
+[xlab-token] full historical scan done: 42703 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (111ms)
+[xlab-token]   windsurf: 23 new → 64 total (808ms)
+[xlab-token]   copilot: 0 new → 0 total (73ms)
+[xlab-token]   hermes: 188 new → 2641 total (6839ms)
+[xlab-token]   9router: 555 new → 653 total (178ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (140ms)
+[xlab-token]   devin: 36483 new → 36485 total (8225ms)
+[xlab-token]   grok: 498 new → 1630 total (13848ms)
+[xlab-token] full historical scan done: 42705 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (109ms)
+[xlab-token]   windsurf: 23 new → 64 total (861ms)
+[xlab-token]   copilot: 0 new → 0 total (279ms)
+[xlab-token]   hermes: 188 new → 2641 total (8560ms)
+[xlab-token]   9router: 555 new → 653 total (214ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (168ms)
+[xlab-token]   devin: 36485 new → 36487 total (10334ms)
+[xlab-token]   grok: 498 new → 1630 total (16283ms)
+[xlab-token] full historical scan done: 42707 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (125ms)
+[xlab-token]   windsurf: 23 new → 64 total (1045ms)
+[xlab-token]   copilot: 0 new → 0 total (151ms)
+[xlab-token]   devin: 36487 new → 36489 total (8217ms)
+[xlab-token]   9router: 555 new → 653 total (250ms)
+[xlab-token]   hermes: 188 new → 2641 total (9780ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (255ms)
+[xlab-token]   grok: 498 new → 1630 total (18923ms)
+[xlab-token] full historical scan done: 42709 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (107ms)
+[xlab-token]   windsurf: 23 new → 64 total (874ms)
+[xlab-token]   copilot: 0 new → 0 total (72ms)
+[xlab-token]   hermes: 188 new → 2641 total (7035ms)
+[xlab-token]   9router: 558 new → 657 total (256ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (141ms)
+[xlab-token]   devin: 36491 new → 36493 total (8310ms)
+[xlab-token]   grok: 498 new → 1630 total (13218ms)
+[xlab-token] full historical scan done: 42717 events from 8 agents

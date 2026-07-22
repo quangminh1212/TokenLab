@@ -1,0 +1,12 @@
+---
+pid: 36124
+cwd: "C:\Dev\XLab_Token"
+command: "cd C:\\Dev\\XLab_Token; npx tsx src/cli.ts scan --json 2>&1 | Select-Object -Last 5"
+started_at: 2026-07-16T07:31:29.125Z
+running_for_ms: 3900000  
+---
+{
+  "ok": true,
+  "eventsIngested": 37927,
+  "durationMs": 71498
+}

@@ -1,0 +1,41 @@
+---
+pid: 32564
+cwd: "C:\Dev\XLab_Token"
+command: "Set-Location C:\\Dev\\XLab_Token; npx tsx scripts/diag-grok-ws.mjs"
+started_at: 2026-07-16T08:17:15.318Z
+running_for_ms: 1155006  
+---
+CACHE total 0 {}
+CACHE today VN 16/7 grok: 0 cost 0.00 cache 0 tokens 0
+CACHE today VN 16/7 windsurf: 0 cost 0.00 cache 0 tokens 0
+
+WINDSURF unique pb 25 parsed 23
+decrypt 24/25 hasUsage 17 tiny<64 0
+missing from parse: 2
+{
+  f: 'a0474b64-faf1-4fd9-8593-38dd72b4f6e5.pb',
+  size: 186,
+  decrypt: true,
+  usage: { model: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
+  reason: 'tiny<256 no metrics'
+}
+{
+  f: 'user_settings.pb',
+  size: 97563,
+  decrypt: false,
+  usage: null,
+  reason: 'unknown'
+}
+
+GROK no turn_completed sessions: 56 with chat: 56
+parsed estimated 62 / 503
+sample no-turn dirs: [
+  '019f42f5-65aa-78a1-95ac-85624a606f15',
+  '019f430b-e1e8-7d03-9025-256dfd7f8e6c',
+  '019f4316-5fce-7743-919f-10fa99e61179',
+  '019f44a3-931b-7d82-bfef-b88572617b57',
+  '019f4539-2244-7e33-b288-283723afdb90',
+  '019f453a-4068-76c1-bf4e-4e6f3bb496d4',
+  '019f453a-406a-7421-9640-e0e826857f93',
+  '019f453a-406c-7dd2-bc09-a1ff2add84c0'
+]

@@ -1,0 +1,40 @@
+---
+pid: 30984
+cwd: "C:\Dev\XLab_Token"
+command: "$listenPid = (netstat -ano | findstr \":3737\" | findstr LISTENING | ForEach-Object { ($_ -split '\\s+')[-1] } | Select-Object -First 1); if ($listenPid) { taskkill /PID $listenPid /F 2>$null }; Start-Sleep -Seconds 2; cd C:\\Dev\\XLab_Token; node installer/dist/cli.js serve"
+started_at: 2026-07-16T08:14:58.594Z
+running_for_ms: 1305002  
+---
+SUCCESS: The process with PID 14132 has been terminated.
+[xlab-token] loaded 42717 cached scan events
+[xlab-token] loaded 35018 imported events
+[xlab-token] warm cache ready: 42717 events (scan + import)
+XLab Token v1.0.6  (win32/x64)
+API  http://127.0.0.1:3737/api/health
+UI   http://127.0.0.1:3737/
+Scanning agents in background…
+Press Ctrl+C to stop
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token] OpenRouter models ready: 332
+(node:23204) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Tray icon enabled (double-click or menu → Open Dashboard)
+[xlab-token]   codex: 0 new → 0 total (161ms)
+[xlab-token]   windsurf: 23 new → 64 total (824ms)
+[xlab-token]   copilot: 0 new → 0 total (104ms)
+[xlab-token]   hermes: 188 new → 2641 total (7394ms)
+[xlab-token]   9router: 558 new → 657 total (192ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (192ms)
+[xlab-token]   devin: 36491 new → 36493 total (8711ms)
+[xlab-token]   grok: 502 new → 1634 total (13799ms)
+[xlab-token] full historical scan done: 42721 events from 8 agents
+[xlab-token] full historical scan started (all agent usage on disk)…
+[xlab-token]   codex: 0 new → 0 total (339ms)
+[xlab-token]   windsurf: 23 new → 64 total (1125ms)
+[xlab-token]   copilot: 0 new → 0 total (98ms)
+[xlab-token]   hermes: 188 new → 2641 total (9310ms)
+[xlab-token]   9router: 558 new → 657 total (397ms)
+[xlab-token]   xlabrouter: 192 new → 304 total (211ms)
+[xlab-token]   devin: 36750 new → 36752 total (10872ms)
+[xlab-token]   grok: 503 new → 1642 total (20013ms)
+[xlab-token] full historical scan done: 42988 events from 8 agents

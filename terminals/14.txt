@@ -1,0 +1,20 @@
+---
+pid: 34620
+cwd: "C:\Dev\XLab_Token"
+command: "Set-Location C:\\Dev\\XLab_Token; npx tsx scripts/audit-grok-windsurf.mjs 2>&1 | Select-String -Pattern \"PARSED|RAW|gap|TODAY|GROK\""
+started_at: 2026-07-16T08:25:00.242Z
+running_for_ms: 690013   
+---
+
+grok roots: [ 'C:\\Users\\GHC\\.grok', 'C:\\Users\\GHC\\AppData\\Roaming\\Grok' ]
+PARSED grok ALL { events: 1070, cost: '416.31', tokens: 464741302, cache: 341699653 }
+PARSED windsurf ALL { events: 23, cost: '74.63', tokens: 205808553, cache: 111980271 }
+PARSED grok TODAY VN { events: 56, cost: '18.18', tokens: 42448024, cache: 40658245 }
+PARSED windsurf TODAY VN { events: 4, cost: '6.97', tokens: 16867289, cache: 14339292 }
+RAW grok updates: {
+GROK gap turns: -627
+RAW windsurf .pb files by root: {
+WINDSURF gap pb: 27
+windsurf parsed by source kind: { cascade: 11, implicit: 12 }
+
+

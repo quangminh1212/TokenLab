@@ -1,0 +1,32 @@
+---
+pid: 24476
+cwd: "C:\Dev\XLab_Token"
+command: "Set-Location C:\\Dev\\XLab_Token; npx tsx scripts/audit-grok-windsurf.mjs 2>&1 | Select-Object -Last 25"
+started_at: 2026-07-16T08:19:54.939Z
+running_for_ms: 995001   
+---
+  'C:\\Users\\GHC\\AppData\\Local\\Windsurf - Insiders\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\AppData\\Local\\Windsurf - Insiders\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\.windsurf---insiders\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\.windsurf---insiders\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\AppData\\Roaming\\Trae\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\AppData\\Roaming\\Trae\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\AppData\\Local\\Trae\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\AppData\\Local\\Trae\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\.trae\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\.trae\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\AppData\\Roaming\\Void\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\AppData\\Roaming\\Void\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\AppData\\Local\\Void\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\AppData\\Local\\Void\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\.void\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\.void\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\AppData\\Roaming\\Antigravity\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\AppData\\Roaming\\Antigravity\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\AppData\\Local\\Antigravity\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\AppData\\Local\\Antigravity\\User\\globalStorage\\codeium.codeium': 0,
+  'C:\\Users\\GHC\\.antigravity\\User\\globalStorage\\codeium.windsurf': 0,
+  'C:\\Users\\GHC\\.antigravity\\User\\globalStorage\\codeium.codeium': 0
+} total 50
+WINDSURF gap pb: 27
+windsurf parsed by source kind: { cascade: 11, implicit: 12 }

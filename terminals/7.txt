@@ -1,0 +1,15 @@
+---
+pid: 35632
+cwd: "C:\Dev\XLab_Token"
+command: "$pid = (netstat -ano | findstr \":3737\" | findstr LISTENING | ForEach-Object { ($_ -split '\\s+')[-1] } | Select-Object -First 1); if ($pid) { taskkill /PID $pid /F }; Start-Sleep 2; cd C:\\Dev\\XLab_Token; node installer/dist/cli.js serve"
+started_at: 2026-07-16T08:12:27.263Z
+running_for_ms: 1455001  
+---
+Cannot overwrite variable PID because it is read-only or constant.
+At line:1 char:1
++ $pid = (netstat -ano | findstr ":3737" | findstr LISTENING | ForEach- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : WriteError: (PID:String) [], SessionStateUnauthorizedAccessException
+    + FullyQualifiedErrorId : VariableNotWritable
+ 
+SUCCESS: The process with PID 35632 has been terminated.

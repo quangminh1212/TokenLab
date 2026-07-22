@@ -1,0 +1,15 @@
+---
+pid: 2496
+cwd: "C:\Dev\XLab_Token"
+command: "Start-Sleep -Seconds 30; try { Invoke-RestMethod http://127.0.0.1:3737/api/health -TimeoutSec 5 | Select-Object eventCount,scanning,scanRevision | Format-List } catch { $_ }"
+started_at: 2026-07-16T08:19:54.939Z
+running_for_ms: 995001   
+---
+
+
+eventCount   : 42988
+scanning     : False
+scanRevision : 11
+
+
+

@@ -1,0 +1,16 @@
+---
+pid: 16824
+cwd: "C:\Dev\XLab_Token"
+command: "Set-Location C:\\Dev\\XLab_Token; npx tsx scripts/diag-grok-ws.mjs 2>&1 | Select-String -Pattern \"CACHE|WINDSURF|GROK|today\""
+started_at: 2026-07-16T08:22:57.973Z
+running_for_ms: 810007   
+---
+
+CACHE total 0 {}
+CACHE today VN 16/7 grok: 0 cost 0.00 cache 0 tokens 0
+CACHE today VN 16/7 windsurf: 0 cost 0.00 cache 0 tokens 0
+WINDSURF unique pb 25 parsed 23
+  usage: { model: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
+GROK no turn_completed sessions: 56 with chat: 56
+
+

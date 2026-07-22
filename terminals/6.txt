@@ -1,0 +1,14 @@
+---
+pid: 8256
+cwd: "C:\Dev\XLab_Token"
+command: "cd C:\\Dev\\XLab_Token; npx tsx scripts/recover-vn16.mjs"
+started_at: 2026-07-16T08:09:55.759Z
+running_for_ms: 1595009  
+---
+(node:11888) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+grok { events: 49, cost: '15.51', tokens: 31498517, cache: 30243537 }
+devin { events: 1950, cost: '87.09', tokens: 219720492, cache: 194259079 }
+windsurf { events: 0, cost: '0.00', tokens: 0, cache: 0 }
+9router-mirror-history { events: 0, cost: '0.00', tokens: 0, cache: 0 }
+FRESH_REPARSE_VN16_TOTAL { cost: '102.60', tokens: 251219009 }

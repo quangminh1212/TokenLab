@@ -1,0 +1,8 @@
+---
+pid: 14392
+cwd: "C:\Dev\XLab_Token"
+command: "$deadline = (Get-Date).AddMinutes(8); do { Start-Sleep -Seconds 15; try { $h = Invoke-RestMethod -Uri \"http://127.0.0.1:3737/api/health\" -TimeoutSec 20; if (-not $h.scanning) { $s = Invoke-RestMethod -Uri \"http://127.0.0.1:3737/api/stats?since=today\" -TimeoutSec 30; Write-Host \"DONE events=$($h.eventCount) rev=$($h.scanRevision) today_cost=$([math]::Round($s.totals.estimatedCost,2)) today_tokens=$($s.totals.totalTokens) today_cache=$($s.totals.cacheReadTokens)\"; break } else { Write-Host \"scanning... events=$($h.eventCount)\" } } catch { Write-Host \"err $($_.Exception.Message)\" } } while ((Get-Date) -lt $deadline)"
+started_at: 2026-07-16T07:35:21.000Z
+running_for_ms: 3670008  
+---
+DONE events=42693 rev=8 today_cost=116.02 today_tokens=283015899 today_cache=251725983

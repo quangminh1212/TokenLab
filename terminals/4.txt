@@ -1,0 +1,59 @@
+---
+pid: 23912
+cwd: "C:\Dev\XLab_Token"
+command: "node --input-type=module -e \"
+import { DatabaseSync } from 'node:sqlite';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
+import path from 'node:path';
+import os from 'node:os';
+
+// Devin DB stats
+const dbPath = path.join(process.env.APPDATA, 'devin/cli/sessions.db');
+const db = new DatabaseSync(dbPath, { readOnly: true });
+const total = db.prepare('SELECT COUNT(*) AS n FROM message_nodes').get().n;
+const withMsg = db.prepare('SELECT COUNT(*) AS n FROM message_nodes WHERE chat_message IS NOT NULL').get().n;
+console.log('devin message_nodes total', total, 'with chat_message', withMsg);
+
+// Grok: sample count turn_completed with usage across all sessions
+const sessionsRoot = path.join(os.homedir(), '.grok/sessions');
+let files = [];
+async function walk(dir, depth=0){
+  if(depth>14) return;
+  const {readdir, stat} = await import('node:fs/promises');
+  for(const ent of await readdir(dir,{withFileTypes:true})){
+    const full = path.join(dir, ent.name);
+    if(ent.isDirectory()) await walk(full, depth+1);
+    else if(ent.name==='updates.jsonl') files.push(full);
+  }
+}
+await walk(sessionsRoot);
+console.log('grok updates files', files.length);
+let turns=0, cache=0, input=0, output=0, parseErr=0;
+for(const f of files){
+  const rl = createInterface({input:createReadStream(f,{encoding:'utf8'}), crlfDelay:Infinity});
+  for await (const line of rl){
+    if(!line.includes('turn_completed') || !line.includes('usage')) continue;
+    try{
+      const row = JSON.parse(line);
+      const u = row?.params?.update?.usage;
+      if(!u) continue;
+      turns++;
+      const cr = Number(u.cachedReadTokens||u.cache_read_input_tokens||u.cacheReadTokens||0);
+      const ci = Number(u.inputTokens||u.input_tokens||0);
+      const co = Number(u.outputTokens||u.output_tokens||0);
+      cache += cr; input += ci; output += co;
+    }catch{ parseErr++; }
+  }
+}
+console.log('grok raw turn_completed', turns, 'cache', cache, 'input', ciSum(input), 'output', output, 'parseErr', parseErr);
+function ciSum(x){return x}
+\""
+started_at: 2026-07-16T07:32:21.179Z
+running_for_ms: 3850011  
+---
+devin message_nodes total 67472 with chat_message 67472
+(node:27136) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+grok updates files 95
+grok raw turn_completed 433 cache 327926298 input 334816158 output 1517503 parseErr 0

@@ -1,0 +1,14 @@
+---
+pid: 24392
+cwd: "C:\Dev\XLab_Token"
+command: "Start-Sleep -Seconds 90; Invoke-RestMethod http://127.0.0.1:3737/api/health | Select-Object eventCount,scanning; Invoke-RestMethod 'http://127.0.0.1:3737/api/stats?since=today&by=agent&sort=cost' | ConvertTo-Json -Compress"
+started_at: 2026-07-16T08:24:42.806Z
+running_for_ms: 705013   
+---
+
+eventCount scanning
+---------- --------
+     19928     True
+{"totals":{"inputTokens":17554435,"outputTokens":509781,"cacheReadTokens":146135606,"cacheWriteTokens":0,"totalTokens":164199822,"estimatedCost":68.80949760999994,"currency":"USD","eventCount":1007},"groups":[{"key":"devin","inputTokens":12714244,"outputTokens":141800,"cacheReadTokens":91138069,"cacheWriteTokens":0,"totalTokens":103994113,"estimatedCost":42.119759539999954,"currency":"USD","eventCount":933},{"key":"grok","inputTokens":2400519,"outputTokens":279656,"cacheReadTokens":40658245,"cacheWriteTokens":0,"totalTokens":43338420,"estimatedCost":19.722887550000003,"currency":"USD","eventCount":70},{"key":"windsurf","inputTokens":2439672,"outputTokens":88325,"cacheReadTokens":14339292,"cacheWriteTokens":0,"totalTokens":16867289,"estimatedCost":6.9668505199999995,"currency":"USD","eventCount":4}],"groupBy":"agent","period":{"since":"today","until":null}}
+
+
