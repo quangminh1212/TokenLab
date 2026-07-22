@@ -1,6 +1,6 @@
 # Attribution
 
-XLab Token is an **independent** local-first project. Feature ideas and local data-path conventions were informed by the open-source ecosystem below. No proprietary code was copied; parsers and the cost engine are original TypeScript implementations.
+TokenLab is an **independent** local-first project. Feature ideas and local data-path conventions were informed by the open-source ecosystem below. No proprietary code was copied; parsers and the cost engine are original TypeScript implementations.
 
 ## Reference projects
 

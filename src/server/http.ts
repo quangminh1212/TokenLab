@@ -47,9 +47,9 @@ export interface ServerOptions {
 
 export async function startServer(opts: ServerOptions = {}): Promise<{ close: () => Promise<void>; port: number; host: string }> {
   await loadConfig();
-  const host = opts.host || process.env.XLAB_TOKEN_HOST || "127.0.0.1";
-  const port = Number(opts.port || process.env.XLAB_TOKEN_PORT || 3737);
-  const noUi = opts.noUi || process.env.XLAB_TOKEN_NO_UI === "1";
+  const host = opts.host || process.env.TOKENLAB_HOST || "127.0.0.1";
+  const port = Number(opts.port || process.env.TOKENLAB_PORT || 3737);
+  const noUi = opts.noUi || process.env.TOKENLAB_NO_UI === "1";
   const startedAt = Date.now();
 
   let cache: UsageEvent[] = [];
@@ -59,13 +59,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const diskScanCache = await loadScanCache();
   cache = mergeLocalPreferOverGistRollups(diskScanCache, importedEvents);
   if (diskScanCache.length > 0) {
-    console.log(`[xlab-token] loaded ${diskScanCache.length} cached scan events`);
+    console.log(`[tokenlab] loaded ${diskScanCache.length} cached scan events`);
   }
   if (importedEvents.length > 0) {
-    console.log(`[xlab-token] loaded ${importedEvents.length} imported events`);
+    console.log(`[tokenlab] loaded ${importedEvents.length} imported events`);
   }
   if (cache.length > 0) {
-    console.log(`[xlab-token] warm cache ready: ${cache.length} events (scan + import)`);
+    console.log(`[tokenlab] warm cache ready: ${cache.length} events (scan + import)`);
   }
   let scanning = false;
   let scanCacheSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -82,7 +82,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       pendingSaveMode = "quick";
       void saveScanCache(cache, { mode: saveMode }).catch((err) => {
         console.warn(
-          "[xlab-token] save scan cache failed:",
+          "[tokenlab] save scan cache failed:",
           err instanceof Error ? err.message : err,
         );
       });
@@ -161,7 +161,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       pricingRevision,
     });
     if (full) {
-      console.log("[xlab-token] full historical scan started (all agent usage on disk)…");
+      console.log("[tokenlab] full historical scan started (all agent usage on disk)…");
     }
     scanPromise = (async () => {
       const prev = cache;
@@ -262,7 +262,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               const status = error
                 ? `error: ${error} (kept ${kept})`
                 : `${events.length} new → ${kept} total`;
-              console.log(`[xlab-token]   ${agent}: ${status} (${durationMs}ms)`);
+              console.log(`[tokenlab]   ${agent}: ${status} (${durationMs}ms)`);
             }
           },
         });
@@ -278,7 +278,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         if (full) {
           const failed = agentStats.filter((s) => s.error);
           console.log(
-            `[xlab-token] full historical scan done: ${cache.length} events` +
+            `[tokenlab] full historical scan done: ${cache.length} events` +
               ` from ${agentStats.length} agents` +
               (failed.length ? ` (${failed.length} failed: ${failed.map((f) => f.agent).join(", ")})` : ""),
           );
@@ -287,11 +287,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             if (cache.length === 0) return;
             void tryAutoDailyGistBackup(cache).then((r) => {
               if (!r.ok) {
-                console.warn("[xlab-token] auto Gist (post-full):", r.error);
+                console.warn("[tokenlab] auto Gist (post-full):", r.error);
                 return;
               }
               if (!r.skipped) {
-                console.log("[xlab-token] auto daily Gist backup OK (post-full):", r.gist.htmlUrl);
+                console.log("[tokenlab] auto daily Gist backup OK (post-full):", r.gist.htmlUrl);
               }
             });
           }, 5_000).unref?.();
@@ -516,7 +516,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         url.searchParams.get("wait") === "0";
       if (asyncMode) {
         void rescan({ full: true }).catch((err) => {
-          console.error("[xlab-token] async scan failed:", err instanceof Error ? err.message : err);
+          console.error("[tokenlab] async scan failed:", err instanceof Error ? err.message : err);
         });
         return json(res, 202, {
           ok: true,
@@ -1029,11 +1029,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   void loadOpenRouterCacheFromDisk()
     .then(() => fetchOpenRouterModels({ force: false }))
     .then((list) => {
-      console.log(`[xlab-token] OpenRouter models ready: ${list.length}`);
+      console.log(`[tokenlab] OpenRouter models ready: ${list.length}`);
     })
     .catch((err) => {
       console.warn(
-        "[xlab-token] OpenRouter models fetch failed:",
+        "[tokenlab] OpenRouter models fetch failed:",
         err instanceof Error ? err.message : err,
       );
     });
@@ -1063,7 +1063,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     })
     .finally(() => {
       void rescan({ full: true }).catch((err) => {
-        console.error("[xlab-token] initial full scan failed:", err instanceof Error ? err.message : err);
+        console.error("[tokenlab] initial full scan failed:", err instanceof Error ? err.message : err);
       });
     });
 
@@ -1078,7 +1078,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     const doFull = periodicTick % 15 === 0;
     void rescan({ full: doFull }).catch((err) => {
       console.error(
-        "[xlab-token] periodic scan failed:",
+        "[tokenlab] periodic scan failed:",
         err instanceof Error ? err.message : err,
       );
     });
@@ -1090,11 +1090,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if (scanning || cache.length === 0) return;
     void tryAutoDailyGistBackup(cache).then((r) => {
       if (!r.ok) {
-        console.warn(`[xlab-token] auto Gist (${reason}):`, r.error);
+        console.warn(`[tokenlab] auto Gist (${reason}):`, r.error);
         return;
       }
       if (r.skipped) return;
-      console.log(`[xlab-token] auto daily Gist backup OK (${reason}):`, r.gist.htmlUrl);
+      console.log(`[tokenlab] auto daily Gist backup OK (${reason}):`, r.gist.htmlUrl);
     });
   };
 
@@ -1126,7 +1126,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         await saveScanCache(cache, { mode: "full" });
       } catch (err) {
         console.warn(
-          "[xlab-token] final scan cache save failed:",
+          "[tokenlab] final scan cache save failed:",
           err instanceof Error ? err.message : err,
         );
       }
@@ -1174,7 +1174,7 @@ async function forceFreePort(port: number): Promise<boolean> {
       for (const pid of pids) {
         try {
           execSync(`taskkill /F /PID ${pid}`, { stdio: "ignore" });
-          console.warn(`[xlab-token] freed port ${port} (stopped PID ${pid})`);
+          console.warn(`[tokenlab] freed port ${port} (stopped PID ${pid})`);
           freed = true;
         } catch {
           // ignore access denied / already gone
@@ -1188,7 +1188,7 @@ async function forceFreePort(port: number): Promise<boolean> {
           if (!pid || pid === process.pid) continue;
           try {
             process.kill(pid, "SIGKILL");
-            console.warn(`[xlab-token] freed port ${port} (stopped PID ${pid})`);
+            console.warn(`[tokenlab] freed port ${port} (stopped PID ${pid})`);
             freed = true;
           } catch {
             // ignore
@@ -1241,7 +1241,7 @@ async function listenWithRetry(
       if (code !== "EADDRINUSE" || i === attempts - 1) break;
       if (i === 0 || (i + 1) % 5 === 0) {
         console.warn(
-          `[xlab-token] port ${host}:${port} busy (EADDRINUSE), retry ${i + 1}/${attempts}…`,
+          `[tokenlab] port ${host}:${port} busy (EADDRINUSE), retry ${i + 1}/${attempts}…`,
         );
       }
       // After a few failures, force-kill the occupant (stale node from previous watch run)

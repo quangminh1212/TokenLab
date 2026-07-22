@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { localAppDataDir } from "./util.js";
 
-const dataDir = (): string => path.join(localAppDataDir(), "xlab-token");
+const dataDir = (): string => path.join(localAppDataDir(), "tokenlab");
 const crashLogPath = (): string => path.join(dataDir(), "crash.txt");
 export const heartbeatPath = (): string => path.join(dataDir(), "heartbeat.txt");
 
@@ -88,8 +88,8 @@ export function startHeartbeat(intervalMs = 15_000): () => void {
 export function installProcessGuard(opts?: { log?: LogFn; logError?: LogFn }): void {
   if (installed) return;
   installed = true;
-  const logError: LogFn = opts?.logError || ((...a) => console.error("[xlab-token]", ...a));
-  const log: LogFn = opts?.log || ((...a) => console.log("[xlab-token]", ...a));
+  const logError: LogFn = opts?.logError || ((...a) => console.error("[tokenlab]", ...a));
+  const log: LogFn = opts?.log || ((...a) => console.log("[tokenlab]", ...a));
 
   process.on("unhandledRejection", (reason) => {
     const msg = formatReason(reason);

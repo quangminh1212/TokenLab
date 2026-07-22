@@ -1,5 +1,5 @@
 /**
- * Login autostart for xlab-token serve.
+ * Login autostart for tokenlab serve.
  * Windows (no admin): Startup folder + HKCU Run registry.
  * Other platforms: not implemented yet.
  */
@@ -13,8 +13,8 @@ import { localAppDataDir } from "./util.js";
 
 const execFileAsync = promisify(execFile);
 
-// Simple file logger to %LOCALAPPDATA%\xlab-token\autostart.txt
-const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "xlab-token");
+// Simple file logger to %LOCALAPPDATA%\tokenlab\autostart.txt
+const logDir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "tokenlab");
 const logFile = path.join(logDir, "autostart.txt");
 
 function log(...args: unknown[]): void {
@@ -59,7 +59,7 @@ export function resolveServeInvocation(): { node: string; cli: string; args: str
 }
 
 function dataDir(): string {
-  return path.join(localAppDataDir(), "xlab-token");
+  return path.join(localAppDataDir(), "tokenlab");
 }
 
 function launcherPath(): string {
@@ -155,7 +155,7 @@ async function writeWindowsLauncher(): Promise<string> {
   // Hang = no heartbeat refresh for 120s after grace 90s from start.
   // Never give up restarting (only stop.flag ends the loop).
   const content = [
-    "' XLab Token autostart supervisor (generated) - anti-crash / anti-hang",
+    "' TokenLab autostart supervisor (generated) - anti-crash / anti-hang",
     "Set sh = CreateObject(\"WScript.Shell\")",
     "Set fso = CreateObject(\"Scripting.FileSystemObject\")",
     "On Error Resume Next",
@@ -444,7 +444,7 @@ async function installWindows(): Promise<AutostartResult> {
   return {
     ok: true,
     message:
-      "Autostart enabled (supervised). xlab-token serve starts at login, auto-restarts on crash/hang, and keeps a tray icon; use Quit to stop.",
+      "Autostart enabled (supervised). tokenlab serve starts at login, auto-restarts on crash/hang, and keeps a tray icon; use Quit to stop.",
     status,
   };
 }
@@ -475,7 +475,7 @@ async function uninstallWindows(): Promise<AutostartResult> {
       "Start Menu",
       "Programs",
       "Startup",
-      "XLab Token.vbs",
+      "TokenLab.vbs",
     );
     if (legacy && (await pathExists(legacy))) {
       await unlink(legacy);
@@ -674,7 +674,7 @@ async function writeDesktopLauncherVbs(): Promise<string> {
   const cliQ = cli.replace(/"/g, '""');
   // setup: ensure autostart, start supervised serve + tray, open browser (hidden console)
   const content = [
-    "' XLab Token desktop launcher (generated)",
+    "' TokenLab desktop launcher (generated)",
     "Set sh = CreateObject(\"WScript.Shell\")",
     `sh.Run """${nodeQ}"" ""${cliQ}"" setup", 0, False`,
     "",
@@ -720,7 +720,7 @@ function osHomedirFallback(): string {
 }
 
 /**
- * Create/refresh "XLab Token.lnk" on the user Desktop (Windows).
+ * Create/refresh "TokenLab.lnk" on the user Desktop (Windows).
  * Called from setup / global npm postinstall so users can double-click to start the app.
  */
 export async function installDesktopShortcut(): Promise<{
@@ -754,7 +754,7 @@ export async function installDesktopShortcut(): Promise<{
 
     const desktop = await resolveWindowsDesktopDir();
     await mkdir(desktop, { recursive: true });
-    const lnkPath = path.join(desktop, "XLab Token.lnk");
+    const lnkPath = path.join(desktop, "TokenLab.lnk");
 
     const ps = [
       "$ErrorActionPreference = 'Stop'",
@@ -768,7 +768,7 @@ export async function installDesktopShortcut(): Promise<{
       "$s.Arguments = '\"' + $vbs + '\"'",
       "$s.WorkingDirectory = [IO.Path]::GetDirectoryName($vbs)",
       "$s.WindowStyle = 7",
-      "$s.Description = 'XLab Token — start local usage dashboard'",
+      "$s.Description = 'TokenLab — start local usage dashboard'",
       "if ($icon -and (Test-Path -LiteralPath $icon)) { $s.IconLocation = $icon }",
       "$s.Save()",
       "Write-Output $lnkPath",
@@ -807,7 +807,7 @@ async function installDesktopShortcutNonWindows(): Promise<{
     }
 
     if (process.platform === "darwin") {
-      const cmdPath = path.join(desktop, "XLab Token.command");
+      const cmdPath = path.join(desktop, "TokenLab.command");
       const body = [
         "#!/bin/bash",
         `cd ${JSON.stringify(path.dirname(cli))}`,
@@ -824,12 +824,12 @@ async function installDesktopShortcutNonWindows(): Promise<{
     }
 
     // Linux .desktop
-    const desktopFile = path.join(desktop, "xlab-token.desktop");
+    const desktopFile = path.join(desktop, "tokenlab.desktop");
     const iconSrc = resolvePackageIcon();
     const lines = [
       "[Desktop Entry]",
       "Type=Application",
-      "Name=XLab Token",
+      "Name=TokenLab",
       "Comment=Local AI token usage & cost dashboard",
       `Exec=${JSON.stringify(node)} ${JSON.stringify(cli)} setup`,
       "Terminal=false",

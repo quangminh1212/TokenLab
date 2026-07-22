@@ -1,6 +1,6 @@
-# XLab Token Documentation
+# TokenLab Documentation
 
-This directory contains comprehensive documentation for the XLab Token project.
+This directory contains comprehensive documentation for the TokenLab project.
 
 ## Available Documentation
 

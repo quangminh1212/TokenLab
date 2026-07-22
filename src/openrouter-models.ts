@@ -33,9 +33,9 @@ let memory: CacheFile | null = null;
 let inflight: Promise<OpenRouterModelEntry[]> | null = null;
 
 export function openrouterCachePath(): string {
-  if (process.env.XLAB_TOKEN_OPENROUTER_CACHE) return process.env.XLAB_TOKEN_OPENROUTER_CACHE;
+  if (process.env.TOKENLAB_OPENROUTER_CACHE) return process.env.TOKENLAB_OPENROUTER_CACHE;
   return path.join(
-    process.env.XLAB_TOKEN_DATA_DIR || path.join(appDataDir(), "xlab-token"),
+    process.env.TOKENLAB_DATA_DIR || path.join(appDataDir(), "tokenlab"),
     "openrouter-models.json",
   );
 }
@@ -123,7 +123,7 @@ export async function fetchOpenRouterModels(opts: { force?: boolean } = {}): Pro
       }
 
       const res = await fetch(OPENROUTER_MODELS_URL, {
-        headers: { Accept: "application/json", "User-Agent": "xlab-token" },
+        headers: { Accept: "application/json", "User-Agent": "tokenlab" },
         signal: AbortSignal.timeout(45_000),
       });
       if (!res.ok) {

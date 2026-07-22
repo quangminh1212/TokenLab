@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Settings &middot; XLab Token</title>
+  <title>Settings &middot; TokenLab</title>
   <!-- Use project logo as favicon -->
   <link rel="icon" type="image/png" href="/assets/logo.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
@@ -15,15 +15,15 @@
   <link rel="prefetch" href="/agents" as="document" />
   <link rel="prefetch" href="/model" as="document" />
   <script>
-    try { if (localStorage.getItem('xlab-token-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}
+    try { if (localStorage.getItem('tokenlab-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}
   </script>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <a class="brand-logo-wrap" href="/" title="XLab Token" aria-label="XLab Token">
-          <img class="brand-logo" src="/assets/logo.png" alt="XLab Token" width="140" height="56"
+        <a class="brand-logo-wrap" href="/" title="TokenLab" aria-label="TokenLab">
+          <img class="brand-logo" src="/assets/logo.png" alt="TokenLab" width="140" height="56"
             onerror="this.style.display='none'; document.querySelector('.brand-mark').style.display='flex';" />
           <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
         </a>
@@ -114,8 +114,8 @@
         <div class="settings-section-head">
           <h2>Backup &amp; restore</h2>
           <p>
-            One file format: <code>xlab-token-backup.json</code>
-            (<code>format: "xlab-token-backup"</code>).
+            One file format: <code>tokenlab-backup.json</code>
+            (<code>format: "tokenlab-backup"</code>).
             Includes <strong>project settings</strong> (timezone, pricing, custom rates, host/port, gist link)
             plus usage — same JSON for Export, Import, and GitHub Gist.
           </p>
@@ -146,7 +146,7 @@
           <div class="settings-row-text">
             <span class="settings-label">Import file</span>
             <span class="settings-help">
-              Any <code>xlab-token-backup-*.json</code> from Export or Gist (settings / full / period-stats).
+              Any <code>tokenlab-backup-*.json</code> from Export or Gist (settings / full / period-stats).
             </span>
           </div>
           <div class="settings-inline-actions">
@@ -270,7 +270,7 @@
 
     function applyTheme(mode) {
       document.documentElement.classList.toggle('dark', mode === 'dark');
-      localStorage.setItem('xlab-token-theme', mode);
+      localStorage.setItem('tokenlab-theme', mode);
       const btn = $('themeBtn');
       btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
       btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
@@ -278,7 +278,7 @@
       const icon = mode === 'dark' ? ICONS.sun : ICONS.moon;
       $('settingsThemeBtn').innerHTML = icon + '<span>' + label + '</span>';
     }
-    applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
+    applyTheme(localStorage.getItem('tokenlab-theme') === 'dark' ? 'dark' : 'light');
     $('themeBtn').onclick = () => {
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
@@ -428,7 +428,7 @@
         const events = backup.meta?.eventCount || backup.events?.length || 0;
         a.href = url;
         // Unified filename family for all backup features
-        a.download = `xlab-token-backup-${tag}-${day}.json`;
+        a.download = `tokenlab-backup-${tag}-${day}.json`;
         a.click();
         URL.revokeObjectURL(url);
         const st = $('backupRestoreStatus');
@@ -496,7 +496,7 @@
       const btn = $('backupGistBtn');
       const st = $('backupGistStatus');
       btn.disabled = true;
-      st.textContent = 'Uploading xlab-token-backup.json\u2026';
+      st.textContent = 'Uploading tokenlab-backup.json\u2026';
       try {
         const token = ($('gistToken').value || '').trim();
         const res = await fetch('/api/backup/gist', {

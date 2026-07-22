@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Model &middot; XLab Token</title>
+  <title>Model &middot; TokenLab</title>
   <!-- Use project logo as favicon -->
   <link rel="icon" type="image/png" href="/assets/logo.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
@@ -15,15 +15,15 @@
   <link rel="prefetch" href="/agents" as="document" />
   <link rel="prefetch" href="/settings" as="document" />
   <script>
-    try { if (localStorage.getItem('xlab-token-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}
+    try { if (localStorage.getItem('tokenlab-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}
   </script>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <a class="brand-logo-wrap" href="/" title="XLab Token" aria-label="XLab Token">
-          <img class="brand-logo" src="/assets/logo.png" alt="XLab Token" width="140" height="56"
+        <a class="brand-logo-wrap" href="/" title="TokenLab" aria-label="TokenLab">
+          <img class="brand-logo" src="/assets/logo.png" alt="TokenLab" width="140" height="56"
             onerror="this.style.display='none'; document.querySelector('.brand-mark').style.display='flex';" />
           <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
         </a>
@@ -146,12 +146,12 @@
 
     function applyTheme(mode) {
       document.documentElement.classList.toggle('dark', mode === 'dark');
-      localStorage.setItem('xlab-token-theme', mode);
+      localStorage.setItem('tokenlab-theme', mode);
       const btn = $('themeBtn');
       btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
       btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
     }
-    applyTheme(localStorage.getItem('xlab-token-theme') === 'dark' ? 'dark' : 'light');
+    applyTheme(localStorage.getItem('tokenlab-theme') === 'dark' ? 'dark' : 'light');
     if ($('settingsBtn')) $('settingsBtn').innerHTML = ICONS.settings;
     $('pricingReload').innerHTML = ICONS.reload + '<span>Refresh</span>';
     $('pricingSave').innerHTML = ICONS.save + '<span>Save</span>';
