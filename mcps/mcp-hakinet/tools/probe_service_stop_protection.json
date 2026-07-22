@@ -1,0 +1,9 @@
+{
+  "name": "probe_service_stop_protection",
+  "description": "Try sc stop agent-svc; report access denied (do not run elevated if testing protection).",
+  "inputSchema": {
+    "properties": {},
+    "title": "probe_service_stop_protectionArguments",
+    "type": "object"
+  }
+}

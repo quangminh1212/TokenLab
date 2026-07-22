@@ -1,0 +1,25 @@
+{
+  "name": "git_add",
+  "description": "Adds file contents to the staging area",
+  "inputSchema": {
+    "properties": {
+      "repo_path": {
+        "title": "Repo Path",
+        "type": "string"
+      },
+      "files": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Files",
+        "type": "array"
+      }
+    },
+    "required": [
+      "repo_path",
+      "files"
+    ],
+    "title": "GitAdd",
+    "type": "object"
+  }
+}

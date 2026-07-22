@@ -1,0 +1,15 @@
+{
+  "name": "list_hakinet_windows",
+  "description": "List visible windows filtered by title/process.",
+  "inputSchema": {
+    "properties": {
+      "filter_name": {
+        "default": "agent",
+        "title": "Filter Name",
+        "type": "string"
+      }
+    },
+    "title": "list_hakinet_windowsArguments",
+    "type": "object"
+  }
+}

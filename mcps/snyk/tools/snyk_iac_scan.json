@@ -1,0 +1,76 @@
+{
+  "name": "snyk_iac_scan",
+  "description": "Analyzes Infrastructure as Code (IaC) files for security misconfigurations. Supports Terraform (.tf, .tf.json, plan files), Kubernetes (YAML, JSON), AWS CloudFormation (YAML, JSON), Azure Resource Manager (ARM JSON), and Serverless Framework. \nWhen to use: Locally by developers while writing IaC. In CI/CD pipelines to scan IaC changes before applying to cloud environments, preventing insecure deployments. The `report` option sends results to Snyk UI for ongoing visibility. \nHow to use: Test directory: <snyk_iac_scan> `path`=`absolute/path/to/dir`. Test specific TF file: <snyk_iac_scan> `path`=`absolute/path/to/file.tf`. Test dir, report to UI: <snyk_iac_scan> `path`=`absolute/path/to/dir` `report` `org`=`my-org`. Test K8s configs, report to UI, high severity: <snyk_iac_scan> `path`=`./k8s/` `report` `target_name`=`prod-k8s` `severity_threshold`=`high`. Test with custom rules: `<snyk_iac_scan> `path`=`/absolute/path/to/infra/` `rules`=`rules.tar.gz`.",
+  "inputSchema": {
+    "properties": {
+      "ignore_policy": {
+        "description": "Ignores all policies defined in the `.snyk` file and on snyk.io for this scan.",
+        "type": "boolean"
+      },
+      "org": {
+        "description": "Specifies the Snyk Organization ID (or slug name) for associating results. Default is configured org.",
+        "type": "string"
+      },
+      "path": {
+        "description": "Positional argument for the *absolute path* to a file or directory to scan. The path MUST be absolute and have the correct path separator. You can retrieve the absolute path by invoking `pwd` on the command line in the working directory. Example: `/a/my-project` on linux/macOS or, on Windows `C:\\a\\my-project`",
+        "type": "string"
+      },
+      "policy_path": {
+        "description": "Manually specifies the path to a `.snyk` policy file. Default is `.snyk` in root.",
+        "type": "string"
+      },
+      "project_business_criticality": {
+        "description": "Sets project business criticality attribute(s) in Snyk UI (e.g. `critical,high`). Used with `report`.",
+        "type": "string"
+      },
+      "project_environment": {
+        "description": "Sets project environment attribute(s) in Snyk UI (e.g. `frontend,backend`). Used with `report`.",
+        "type": "string"
+      },
+      "project_lifecycle": {
+        "description": "Sets project lifecycle attribute(s) in Snyk UI (e.g. `production,sandbox`). Used with `report`.",
+        "type": "string"
+      },
+      "project_tags": {
+        "description": "Sets project tags in Snyk UI (e.g., `dept=finance`). Used with `report`.",
+        "type": "string"
+      },
+      "remote_repo_url": {
+        "description": "Sets or overrides the remote repository URL for the project in Snyk UI. Used with `report`.",
+        "type": "string"
+      },
+      "report": {
+        "description": "Shares test results with the Snyk Web UI, creating/updating a project for tracking IaC issues. Mutually exclusive with `rules`.",
+        "type": "boolean"
+      },
+      "rules": {
+        "description": "Specifies path to a custom rules bundle (`.tar.gz`) from snyk-iac-rules SDK for scans against custom policies. Mutually exclusive with `report`. Default is Snyk default rules.",
+        "type": "string"
+      },
+      "scan": {
+        "description": "For Terraform plan scanning only. Specifies analysis mode: `planned-values` (full planned state) or `resource-changes` (proposed changes/deltas). Default `resource-changes`.",
+        "type": "string"
+      },
+      "severity_threshold": {
+        "description": "Reports only misconfigurations at or above the specified severity level (`low`, `medium`, `high`, `critical`).",
+        "type": "string"
+      },
+      "target_name": {
+        "description": "Sets or overrides project name in Snyk Web UI when used with `report`. Precedence over `remote_repo_url` for naming if both used.",
+        "type": "string"
+      },
+      "target_reference": {
+        "description": "Specifies a reference (e.g., branch name, commit hash) to differentiate IaC project version in Snyk UI when used with `report`.",
+        "type": "string"
+      },
+      "var_file": {
+        "description": "For Terraform, loads a variable definitions file (`.tfvars`) from a path different from the scanned directory.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  }
+}

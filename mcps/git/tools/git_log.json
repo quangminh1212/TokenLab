@@ -1,0 +1,48 @@
+{
+  "name": "git_log",
+  "description": "Shows the commit logs",
+  "inputSchema": {
+    "properties": {
+      "repo_path": {
+        "title": "Repo Path",
+        "type": "string"
+      },
+      "max_count": {
+        "default": 10,
+        "title": "Max Count",
+        "type": "integer"
+      },
+      "start_timestamp": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Start timestamp for filtering commits. Accepts: ISO 8601 format (e.g., '2024-01-15T14:30:25'), relative dates (e.g., '2 weeks ago', 'yesterday'), or absolute dates (e.g., '2024-01-15', 'Jan 15 2024')",
+        "title": "Start Timestamp"
+      },
+      "end_timestamp": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "End timestamp for filtering commits. Accepts: ISO 8601 format (e.g., '2024-01-15T14:30:25'), relative dates (e.g., '2 weeks ago', 'yesterday'), or absolute dates (e.g., '2024-01-15', 'Jan 15 2024')",
+        "title": "End Timestamp"
+      }
+    },
+    "required": [
+      "repo_path"
+    ],
+    "title": "GitLog",
+    "type": "object"
+  }
+}

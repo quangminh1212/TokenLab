@@ -1,0 +1,9 @@
+{
+  "name": "self_defense_status",
+  "description": "Related services (hakinetsd/driver/aptsvr) + driverquery lines.",
+  "inputSchema": {
+    "properties": {},
+    "title": "self_defense_statusArguments",
+    "type": "object"
+  }
+}

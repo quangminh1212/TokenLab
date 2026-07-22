@@ -1,0 +1,9 @@
+{
+  "name": "get_screen_time",
+  "description": "Parse latest Used/Remaining/Limit from ui.log.",
+  "inputSchema": {
+    "properties": {},
+    "title": "get_screen_timeArguments",
+    "type": "object"
+  }
+}

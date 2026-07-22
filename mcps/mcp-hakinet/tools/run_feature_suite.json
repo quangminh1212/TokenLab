@@ -1,0 +1,27 @@
+{
+  "name": "run_feature_suite",
+  "description": "Run all cases of one feature. modes: comma list auto,semi,manual (default auto only).",
+  "inputSchema": {
+    "properties": {
+      "feature_id": {
+        "title": "Feature Id",
+        "type": "string"
+      },
+      "modes": {
+        "default": "auto",
+        "title": "Modes",
+        "type": "string"
+      },
+      "params_json": {
+        "default": "",
+        "title": "Params Json",
+        "type": "string"
+      }
+    },
+    "required": [
+      "feature_id"
+    ],
+    "title": "run_feature_suiteArguments",
+    "type": "object"
+  }
+}

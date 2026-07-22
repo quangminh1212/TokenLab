@@ -1,0 +1,15 @@
+{
+  "name": "service_control",
+  "description": "sc start|stop|restart agent-svc.",
+  "inputSchema": {
+    "properties": {
+      "action": {
+        "default": "start",
+        "title": "Action",
+        "type": "string"
+      }
+    },
+    "title": "service_controlArguments",
+    "type": "object"
+  }
+}

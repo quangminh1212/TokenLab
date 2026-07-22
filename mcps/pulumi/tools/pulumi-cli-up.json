@@ -1,0 +1,22 @@
+{
+  "name": "pulumi-cli-up",
+  "description": "Run pulumi up for a given project and stack",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "workDir": {
+        "type": "string",
+        "description": "The working directory of the program."
+      },
+      "stackName": {
+        "type": "string",
+        "description": "The associated stack name. Defaults to 'dev'."
+      }
+    },
+    "required": [
+      "workDir"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

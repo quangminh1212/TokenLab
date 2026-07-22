@@ -1,0 +1,26 @@
+{
+  "name": "snyk_breakability_check",
+  "description": "Runs a breaking change assessment for a package version upgrade.",
+  "inputSchema": {
+    "properties": {
+      "package_name": {
+        "description": "The name of the package to look up. For scoped npm packages, include the scope (e.g., '@angular/core'). For Maven packages, use 'groupId:artifactId' format.",
+        "type": "string"
+      },
+      "package_version_from": {
+        "description": "The specific version of the package to look up. This is the version before the upgrade.",
+        "type": "string"
+      },
+      "package_version_to": {
+        "description": "The specific version of the package to look up. This is the version after the upgrade.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "package_name",
+      "package_version_from",
+      "package_version_to"
+    ],
+    "type": "object"
+  }
+}

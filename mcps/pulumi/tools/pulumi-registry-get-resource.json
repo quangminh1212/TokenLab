@@ -1,0 +1,31 @@
+{
+  "name": "pulumi-registry-get-resource",
+  "description": "Returns information about a Pulumi Registry resource",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "provider": {
+        "type": "string",
+        "description": "The cloud provider (e.g., 'aws', 'azure', 'gcp', 'random') or github.com/org/repo for Git-hosted components"
+      },
+      "module": {
+        "type": "string",
+        "description": "The module to query (e.g., 's3', 'ec2', 'lambda'). If not specified it will match resources with the given name in any module."
+      },
+      "resource": {
+        "type": "string",
+        "description": "The resource type to query (e.g., 'Bucket', 'Function', 'Instance')"
+      },
+      "version": {
+        "type": "string",
+        "description": "The provider version to use (e.g., '6.0.0'). If not specified, uses the latest available version."
+      }
+    },
+    "required": [
+      "provider",
+      "resource"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

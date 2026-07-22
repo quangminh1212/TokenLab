@@ -1,0 +1,21 @@
+{
+  "name": "get_page",
+  "description": "Reads one page (diagram) from a local .drawio file and returns its raw mxGraphModel XML, decompressing it first if the file stores that page compressed. Use list_pages first to find the index, name, or id of the page you need.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the local file. Must end in .drawio or .xml."
+      },
+      "page": {
+        "type": "string",
+        "description": "Which page to read: a zero-based page index (e.g. \"0\"), the page's exact name, or the page's id as shown by list_pages."
+      }
+    },
+    "required": [
+      "path",
+      "page"
+    ]
+  }
+}

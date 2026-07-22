@@ -1,0 +1,30 @@
+{
+  "name": "assert_log_patterns",
+  "description": "PASS/FAIL log assertions. must_match_json/must_not_match_json are JSON string arrays of regexes.",
+  "inputSchema": {
+    "properties": {
+      "kind": {
+        "default": "svc",
+        "title": "Kind",
+        "type": "string"
+      },
+      "since": {
+        "default": "",
+        "title": "Since",
+        "type": "string"
+      },
+      "must_match_json": {
+        "default": "[]",
+        "title": "Must Match Json",
+        "type": "string"
+      },
+      "must_not_match_json": {
+        "default": "[]",
+        "title": "Must Not Match Json",
+        "type": "string"
+      }
+    },
+    "title": "assert_log_patternsArguments",
+    "type": "object"
+  }
+}

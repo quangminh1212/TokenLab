@@ -1,0 +1,20 @@
+{
+  "name": "snyk_aibom",
+  "description": "Generates an AI Bill of Materials (AIBOM) for Python software projects in CycloneDX v1.6 JSON format. This feature analyzes local Python projects to identify AI models, datasets, tools, and other AI-related components. Requires an active internet connection and access to the experimental feature (available to customers on request). The command must be run from within a Python project directory and requires the CLI from the preview release channel. \nWhen to use: When you need to create an inventory of AI components in a Python project for compliance, security analysis, or documentation purposes.",
+  "inputSchema": {
+    "properties": {
+      "json_file_output": {
+        "description": "Saves the AIBOM output as a JSON data structure to the specified file path. The target directory must exist and be writable.",
+        "type": "string"
+      },
+      "path": {
+        "description": "Positional argument for the *ABSOLUTE PATH* to the directory to be scanned. The path MUST be absolute and have the correct path separator. You can retrieve the absolute path by invoking `pwd` on the command line in the working directory. Example: `/a/my-project` on linux/macOS or, on Windows `C:\\a\\my-project`.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  }
+}

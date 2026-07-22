@@ -1,0 +1,25 @@
+{
+  "name": "run_full_suite",
+  "description": "Run suite across features. feature_ids empty=all; or comma-separated ids. Default modes=auto.",
+  "inputSchema": {
+    "properties": {
+      "modes": {
+        "default": "auto",
+        "title": "Modes",
+        "type": "string"
+      },
+      "feature_ids": {
+        "default": "",
+        "title": "Feature Ids",
+        "type": "string"
+      },
+      "params_json": {
+        "default": "",
+        "title": "Params Json",
+        "type": "string"
+      }
+    },
+    "title": "run_full_suiteArguments",
+    "type": "object"
+  }
+}

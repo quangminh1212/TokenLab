@@ -1,0 +1,22 @@
+{
+  "name": "git_commit",
+  "description": "Records changes to the repository",
+  "inputSchema": {
+    "properties": {
+      "repo_path": {
+        "title": "Repo Path",
+        "type": "string"
+      },
+      "message": {
+        "title": "Message",
+        "type": "string"
+      }
+    },
+    "required": [
+      "repo_path",
+      "message"
+    ],
+    "title": "GitCommit",
+    "type": "object"
+  }
+}

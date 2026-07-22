@@ -1,0 +1,15 @@
+{
+  "name": "lock_console_session",
+  "description": "Lock interactive console (Win+L via scheduled task). Semi-destructive.",
+  "inputSchema": {
+    "properties": {
+      "user": {
+        "default": "",
+        "title": "User",
+        "type": "string"
+      }
+    },
+    "title": "lock_console_sessionArguments",
+    "type": "object"
+  }
+}

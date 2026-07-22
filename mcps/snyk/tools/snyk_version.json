@@ -1,0 +1,8 @@
+{
+  "name": "snyk_version",
+  "description": "Displays the installed Snyk MCP version. \nWhen to use: To verify current CLI version for compatibility checks or when reporting issues.",
+  "inputSchema": {
+    "properties": {},
+    "type": "object"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "count_service_events",
+  "description": "Count matching lines in svc.log.",
+  "inputSchema": {
+    "properties": {
+      "pattern": {
+        "title": "Pattern",
+        "type": "string"
+      },
+      "tail": {
+        "default": 3000,
+        "title": "Tail",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "title": "count_service_eventsArguments",
+    "type": "object"
+  }
+}

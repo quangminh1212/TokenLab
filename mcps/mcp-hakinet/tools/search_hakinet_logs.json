@@ -1,0 +1,27 @@
+{
+  "name": "search_hakinet_logs",
+  "description": "Search recent logs by regex.",
+  "inputSchema": {
+    "properties": {
+      "pattern": {
+        "title": "Pattern",
+        "type": "string"
+      },
+      "kind": {
+        "default": "both",
+        "title": "Kind",
+        "type": "string"
+      },
+      "tail": {
+        "default": 2000,
+        "title": "Tail",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "title": "search_hakinet_logsArguments",
+    "type": "object"
+  }
+}

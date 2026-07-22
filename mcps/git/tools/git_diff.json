@@ -1,0 +1,27 @@
+{
+  "name": "git_diff",
+  "description": "Shows differences between branches or commits",
+  "inputSchema": {
+    "properties": {
+      "repo_path": {
+        "title": "Repo Path",
+        "type": "string"
+      },
+      "target": {
+        "title": "Target",
+        "type": "string"
+      },
+      "context_lines": {
+        "default": 3,
+        "title": "Context Lines",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "repo_path",
+      "target"
+    ],
+    "title": "GitDiff",
+    "type": "object"
+  }
+}

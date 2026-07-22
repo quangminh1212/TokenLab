@@ -1,0 +1,9 @@
+{
+  "name": "ipc_all_permissions",
+  "description": "Query all known parent permissions via IPC.",
+  "inputSchema": {
+    "properties": {},
+    "title": "ipc_all_permissionsArguments",
+    "type": "object"
+  }
+}

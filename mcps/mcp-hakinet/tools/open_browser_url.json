@@ -1,0 +1,22 @@
+{
+  "name": "open_browser_url",
+  "description": "Open URL in Edge/Chrome/Brave like a child user.",
+  "inputSchema": {
+    "properties": {
+      "url": {
+        "title": "Url",
+        "type": "string"
+      },
+      "browser": {
+        "default": "msedge",
+        "title": "Browser",
+        "type": "string"
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "title": "open_browser_urlArguments",
+    "type": "object"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "snyk_auth",
+  "description": "Authenticate the user with Snyk. When to use\n When a snyk tool reports that the user is not authenticated or when authentication is required.",
+  "inputSchema": {
+    "properties": {},
+    "type": "object"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "take_screenshot",
+  "description": "Capture PNG to artifacts/screenshots.",
+  "inputSchema": {
+    "properties": {
+      "target": {
+        "default": "desktop",
+        "title": "Target",
+        "type": "string"
+      },
+      "hwnd": {
+        "default": "",
+        "title": "Hwnd",
+        "type": "string"
+      }
+    },
+    "title": "take_screenshotArguments",
+    "type": "object"
+  }
+}

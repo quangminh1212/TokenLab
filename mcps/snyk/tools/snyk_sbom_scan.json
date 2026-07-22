@@ -1,0 +1,28 @@
+{
+  "name": "snyk_sbom_scan",
+  "description": "Analyzes an existing SBOM file for known vulnerabilities in its open-source components. Requires components in SBOM to be identified using PackageURLs (purls). \nWhen to use: After SBOM generation (by Snyk or other tools) to assess components. In CI/CD to test generated/received SBOMs. For vulnerability scanning of third-party software when only an SBOM is available. \nHow to use: <snyk_sbom_scan> `file`=`/absolute/path/to/my_app.cdx.json`. \nInput Requirements: SBOMs in CycloneDX (JSON 1.4-1.6) or SPDX (JSON 2.3). Packages must have purls (types: apk, cargo, cocoapods, composer, deb, gem, generic, golang, hex, maven, npm, nuget, pub, pypi, rpm, swift). \nSecure SDLC Integration: Testing/Validation Phase: Scans inventoried components post-SBOM generation. Third-Party Risk Management: Assesses vulnerabilities from SBOMs of external software.",
+  "inputSchema": {
+    "properties": {
+      "debug": {
+        "description": "Outputs debug logs for troubleshooting. Alias `debug`. Use as `-d`.",
+        "type": "boolean"
+      },
+      "file": {
+        "description": "Required. Specifies the path to the SBOM document to be tested (CycloneDX JSON 1.4-1.6, SPDX JSON 2.3).",
+        "type": "string"
+      },
+      "org": {
+        "description": "Specifies the Snyk Organization ID. Verify applicability with `snyk sbom test help`.",
+        "type": "string"
+      },
+      "severity_threshold": {
+        "description": "Filters results to report only vulnerabilities at or above specified severity (`low`, `medium`, `high`, `critical`). Verify applicability with `snyk sbom test help`. Default reports all.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file"
+    ],
+    "type": "object"
+  }
+}

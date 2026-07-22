@@ -1,0 +1,8 @@
+{
+  "name": "snyk_logout",
+  "description": "Logs the Snyk MCP out of the current Snyk account by clearing the locally stored authentication token. \nWhen to use: When needing to switch Snyk accounts, or to ensure a clean state by removing existing authentication from the local machine.",
+  "inputSchema": {
+    "properties": {},
+    "type": "object"
+  }
+}

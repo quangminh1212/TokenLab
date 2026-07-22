@@ -1,0 +1,15 @@
+{
+  "name": "measure_screen_time",
+  "description": "Wait and measure Used delta (ADVANCING vs FROZEN).",
+  "inputSchema": {
+    "properties": {
+      "wait_seconds": {
+        "default": 30,
+        "title": "Wait Seconds",
+        "type": "integer"
+      }
+    },
+    "title": "measure_screen_timeArguments",
+    "type": "object"
+  }
+}

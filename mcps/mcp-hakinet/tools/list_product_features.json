@@ -1,0 +1,9 @@
+{
+  "name": "list_product_features",
+  "description": "List feature modules with case counts and mode breakdown.",
+  "inputSchema": {
+    "properties": {},
+    "title": "list_product_featuresArguments",
+    "type": "object"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "snyk_trust",
+  "description": "Trust a given folder to allow Snyk to scan it. ONLY RUN THIS TOOL IF INSTRUCTED TO DO SO.",
+  "inputSchema": {
+    "properties": {
+      "path": {
+        "description": "Path to the project folder to trust (default is the absolute path of the current directory, formatted according to the operating system's conventions).",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  }
+}

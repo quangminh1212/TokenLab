@@ -1,0 +1,26 @@
+{
+  "name": "set_page",
+  "description": "Replaces the content of one page (diagram) in a local .drawio file with new mxGraphModel XML, leaving every other page in the file untouched. Compression of the replaced page matches whatever that page's original compression state was. Use list_pages/get_page first to find the target page.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the local file. Must end in .drawio or .xml."
+      },
+      "page": {
+        "type": "string",
+        "description": "Which page to replace: a zero-based page index (e.g. \"0\"), the page's exact name, or the page's id as shown by list_pages."
+      },
+      "content": {
+        "type": "string",
+        "description": "The new page content as plain mxGraphModel XML (uncompressed). Must be a single <mxGraphModel> element without any <diagram> tags."
+      }
+    },
+    "required": [
+      "path",
+      "page",
+      "content"
+    ]
+  }
+}

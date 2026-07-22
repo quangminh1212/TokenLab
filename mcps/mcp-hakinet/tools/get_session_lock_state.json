@@ -1,0 +1,9 @@
+{
+  "name": "get_session_lock_state",
+  "description": "LogonUI count / locked flag / query user.",
+  "inputSchema": {
+    "properties": {},
+    "title": "get_session_lock_stateArguments",
+    "type": "object"
+  }
+}

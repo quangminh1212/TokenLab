@@ -1,0 +1,25 @@
+{
+  "name": "test_web_allow",
+  "description": "Open allowed URL; expect no FORCE_BLOCK signals.",
+  "inputSchema": {
+    "properties": {
+      "url": {
+        "default": "https://example.com",
+        "title": "Url",
+        "type": "string"
+      },
+      "domain": {
+        "default": "example.com",
+        "title": "Domain",
+        "type": "string"
+      },
+      "wait_sec": {
+        "default": 10,
+        "title": "Wait Sec",
+        "type": "integer"
+      }
+    },
+    "title": "test_web_allowArguments",
+    "type": "object"
+  }
+}

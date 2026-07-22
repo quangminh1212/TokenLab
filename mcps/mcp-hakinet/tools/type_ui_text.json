@@ -1,0 +1,22 @@
+{
+  "name": "type_ui_text",
+  "description": "Focus agent-ui and SendKeys text (pair code, forms).",
+  "inputSchema": {
+    "properties": {
+      "text": {
+        "title": "Text",
+        "type": "string"
+      },
+      "process_name": {
+        "default": "agent-ui",
+        "title": "Process Name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "title": "type_ui_textArguments",
+    "type": "object"
+  }
+}

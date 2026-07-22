@@ -1,0 +1,22 @@
+{
+  "name": "git_diff_staged",
+  "description": "Shows changes that are staged for commit",
+  "inputSchema": {
+    "properties": {
+      "repo_path": {
+        "title": "Repo Path",
+        "type": "string"
+      },
+      "context_lines": {
+        "default": 3,
+        "title": "Context Lines",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "repo_path"
+    ],
+    "title": "GitDiffStaged",
+    "type": "object"
+  }
+}

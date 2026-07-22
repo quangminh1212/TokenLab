@@ -1,0 +1,17 @@
+{
+  "name": "git_reset",
+  "description": "Unstages all staged changes",
+  "inputSchema": {
+    "properties": {
+      "repo_path": {
+        "title": "Repo Path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "repo_path"
+    ],
+    "title": "GitReset",
+    "type": "object"
+  }
+}

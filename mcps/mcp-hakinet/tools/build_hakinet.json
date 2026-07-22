@@ -1,0 +1,15 @@
+{
+  "name": "build_hakinet",
+  "description": "dotnet build solution.",
+  "inputSchema": {
+    "properties": {
+      "configuration": {
+        "default": "Release",
+        "title": "Configuration",
+        "type": "string"
+      }
+    },
+    "title": "build_hakinetArguments",
+    "type": "object"
+  }
+}
