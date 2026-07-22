@@ -9,12 +9,20 @@ import {
   getAutostartStatus,
   writeStopSentinel,
 } from "./autostart.js";
-import { downloadBackupFromGist, uploadBackupToGist } from "./backup.js";
+import {
+  downloadBackupFromGist,
+  loadImportedEvents,
+  loadScanCache,
+  mergeEventsByIdPreferRicher,
+  mergeLocalPreferOverGistRollups,
+  migrateLegacyDataDir,
+  uploadBackupToGist,
+} from "./backup.js";
 import { installProcessGuard, startHeartbeat } from "./process-guard.js";
 import { startServer } from "./server/http.js";
 import { runSetup } from "./setup.js";
 import { startTray } from "./tray.js";
-import type { GroupBy } from "./types.js";
+import type { GroupBy, UsageEvent } from "./types.js";
 import { filterByPeriod, formatTokens, formatUsd, openBrowser } from "./util.js";
 import { VERSION } from "./version.js";
 
@@ -96,6 +104,24 @@ function has(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
+/**
+ * Build the full event set for CLI commands (stats / cost / scan / doctors).
+ * Mirrors the server's cache composition: scan-cache + imported-events (Gist
+ * restore / multi-machine) unioned with a fresh local re-scan, so CLI totals
+ * never drop below what the dashboard shows. Usage only grows.
+ */
+async function loadFullEvents(): Promise<UsageEvent[]> {
+  const [scanned, cached, imported] = await Promise.all([
+    scanAll(),
+    loadScanCache(),
+    loadImportedEvents(),
+  ]);
+  // Union scanned + cached (richer rows win on id collisions)
+  const local = mergeEventsByIdPreferRicher(scanned, cached);
+  // Then merge imported + drop same-machine Gist rollups when local covers key
+  return mergeLocalPreferOverGistRollups(local, imported);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const cmd = args[0];
@@ -107,6 +133,15 @@ async function main(): Promise<void> {
   if (cmd === "--version" || cmd === "-v" || cmd === "version") {
     console.log(VERSION);
     return;
+  }
+
+  // One-time migration from pre-rename %APPDATA%/xlab-token data dir so usage
+  // never silently drops after the XLab Token → TokenLab rename. Safe to run
+  // for every command — idempotent, only fills gaps (usage only grows).
+  try {
+    await migrateLegacyDataDir();
+  } catch (err) {
+    logError("migrateLegacyDataDir failed:", err instanceof Error ? err.message : err);
   }
 
   if (cmd === "serve") {
@@ -316,7 +351,7 @@ async function main(): Promise<void> {
     try {
       if (sub === "upload" || sub === "up") {
         log("Backup upload requested");
-        const events = await scanAll();
+        const events = await loadFullEvents();
         const result = await uploadBackupToGist({
           token,
           gistId,
@@ -389,7 +424,7 @@ async function main(): Promise<void> {
 
   if (cmd === "scan") {
     const t0 = Date.now();
-    const events = await scanAll();
+    const events = await loadFullEvents();
     const body = { ok: true, eventsIngested: events.length, durationMs: Date.now() - t0 };
     if (has(args, "--json")) console.log(JSON.stringify(body, null, 2));
     else console.log(`Scanned ${events.length} events in ${body.durationMs}ms`);
@@ -397,7 +432,7 @@ async function main(): Promise<void> {
   }
 
   if (cmd === "doctors" || cmd === "doctor") {
-    const events = await scanAll();
+    const events = await loadFullEvents();
     const agents = await detectAgents(events);
     const meta = { platform: process.platform, arch: process.arch, node: process.version };
     if (has(args, "--json")) {
@@ -421,7 +456,7 @@ async function main(): Promise<void> {
     const until = getFlag(args, "--until");
     const by = (getFlag(args, "--by") || "agent") as GroupBy;
     const sort = (getFlag(args, "--sort") || "cost") as "tokens" | "cost";
-    const events = filterByPeriod(await scanAll(), since, until);
+    const events = filterByPeriod(await loadFullEvents(), since, until);
     const stats = aggregate(events, by, sort, since, until);
     if (has(args, "--json")) {
       console.log(JSON.stringify(stats, null, 2));
@@ -445,7 +480,7 @@ async function main(): Promise<void> {
   if (cmd === "cost") {
     const since = getFlag(args, "--since") || "30d";
     const until = getFlag(args, "--until");
-    const events = filterByPeriod(await scanAll(), since, until);
+    const events = filterByPeriod(await loadFullEvents(), since, until);
     const report = costReport(events, since, until);
     if (has(args, "--json")) {
       console.log(JSON.stringify(report, null, 2));

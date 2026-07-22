@@ -26,6 +26,9 @@ export function nineRouterRoots(): string[] {
     // Local mirror of VPS data (synced manually or via scripts)
     p.join(xlabData, "mirrors", "9router"),
     p.join(homeDir(), ".tokenlab", "mirrors", "9router"),
+    // Pre-rename legacy mirror paths — usage never drops across the rename.
+    p.join(appDataDir(), "xlab-token", "mirrors", "9router"),
+    p.join(homeDir(), ".xlab-token", "mirrors", "9router"),
     // Dev machine convenience (C:\Dev\VPS\... on Windows)
     process.platform === "win32" ? "C:\\Dev\\VPS\\my.bnix.one\\9router\\data" : "",
     p.join(home, "Dev", "VPS", "my.bnix.one", "9router", "data"),

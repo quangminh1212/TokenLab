@@ -46,7 +46,7 @@ function evt(partial: Partial<UsageEvent> & { id: string }): UsageEvent {
   };
 }
 
-test("collapseRouterDailyEvents keeps richest estimated row per day+model", () => {
+test("collapseRouterDailyEvents keeps richest estimated row per day+model+workspace", () => {
   const low = evt({
     id: "old-daily-low",
     agent: "xlabrouter",
@@ -56,6 +56,7 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model", () =
     totalTokens: 1_100,
     estimatedCost: 1,
     timestamp: "2026-07-16T12:00:00.000Z",
+    workspace: "provider:test",
   });
   const high = evt({
     id: "old-daily-high",
@@ -66,6 +67,19 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model", () =
     totalTokens: 55_000,
     estimatedCost: 20,
     timestamp: "2026-07-16T15:00:00.000Z",
+    workspace: "provider:test",
+  });
+  // Same model, different provider → kept (not collapsed)
+  const otherProvider = evt({
+    id: "other-provider",
+    agent: "xlabrouter",
+    model: "mixed",
+    estimated: true,
+    inputTokens: 5_000,
+    totalTokens: 5_500,
+    estimatedCost: 2,
+    timestamp: "2026-07-16T12:00:00.000Z",
+    workspace: "provider:other",
   });
   // Requests smaller than daily → keep daily (not double)
   const requestSameDay = evt({
@@ -89,10 +103,14 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model", () =
     estimatedCost: 0.01,
     timestamp: "2026-07-10T10:00:00.000Z",
   });
-  const merged = collapseRouterDailyEvents([low, high, requestSameDay, requestOtherDay]);
-  assert.equal(merged.length, 2);
-  const daily = merged.find((e) => e.estimated);
-  assert.equal(daily?.totalTokens, 55_000);
+  const merged = collapseRouterDailyEvents([low, high, otherProvider, requestSameDay, requestOtherDay]);
+  // low+high collapse (same workspace) → 1 daily; otherProvider kept (diff ws); req-other kept
+  assert.equal(merged.length, 3);
+  const dailies = merged.filter((e) => e.estimated);
+  assert.equal(dailies.length, 2);
+  const mainDaily = dailies.find((e) => e.workspace === "provider:test");
+  assert.equal(mainDaily?.totalTokens, 55_000);
+  assert.ok(dailies.some((e) => e.id === "other-provider"));
   assert.equal(merged.some((e) => e.id === "req-same"), false);
   assert.ok(merged.some((e) => e.id === "req-other"));
 });

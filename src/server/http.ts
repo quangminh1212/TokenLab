@@ -12,6 +12,7 @@ import {
   mergeEventsById,
   mergeEventsByIdPreferRicher,
   mergeLocalPreferOverGistRollups,
+  migrateLegacyDataDir,
   restoreBackup,
   saveImportedEvents,
   saveScanCache,
@@ -47,6 +48,16 @@ export interface ServerOptions {
 
 export async function startServer(opts: ServerOptions = {}): Promise<{ close: () => Promise<void>; port: number; host: string }> {
   await loadConfig();
+  // Migrate pre-rename %APPDATA%/xlab-token data dir before loading caches so
+  // usage totals never silently drop after the XLab Token → TokenLab rename.
+  try {
+    await migrateLegacyDataDir();
+  } catch (err) {
+    console.warn(
+      "[tokenlab] migrateLegacyDataDir failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
   const host = opts.host || process.env.TOKENLAB_HOST || "127.0.0.1";
   const port = Number(opts.port || process.env.TOKENLAB_PORT || 3737);
   const noUi = opts.noUi || process.env.TOKENLAB_NO_UI === "1";

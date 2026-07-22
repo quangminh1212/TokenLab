@@ -36,6 +36,9 @@ export function xlabRouterRoots(): string[] {
     // Local mirrors of VPS DATA_DIR
     p.join(xlabData, "mirrors", "xlabrouter"),
     p.join(homeDir(), ".tokenlab", "mirrors", "xlabrouter"),
+    // Pre-rename legacy mirror paths — usage never drops across the rename.
+    p.join(appDataDir(), "xlab-token", "mirrors", "xlabrouter"),
+    p.join(homeDir(), ".xlab-token", "mirrors", "xlabrouter"),
     process.platform === "win32" ? "C:\\Dev\\VPS\\my.bnix.one\\xlabrouter\\data" : "",
     p.join(home, "Dev", "VPS", "my.bnix.one", "xlabrouter", "data"),
   ]);

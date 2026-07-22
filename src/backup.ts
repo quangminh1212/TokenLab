@@ -172,7 +172,23 @@ export function buildPortableConfig(): PortableBackupConfig {
 }
 
 export function dataRoot(): string {
-  return process.env.TOKENLAB_DATA_DIR || path.join(appDataDir(), "tokenlab");
+  // Backward compat: pre-rename env var still wins (so existing installs don't lose data).
+  return process.env.TOKENLAB_DATA_DIR || process.env.XLAB_TOKEN_DATA_DIR || path.join(appDataDir(), "tokenlab");
+}
+
+/**
+ * Legacy data root before the XLab Token → TokenLab rename (commit a9dfda1).
+ * Used by migrateLegacyDataDir() and as a fallback read path so usage never
+ * silently drops when a user upgrades without re-running setup.
+ *
+ * Returns "" when an env override (TOKENLAB_DATA_DIR / XLAB_TOKEN_DATA_DIR) is
+ * set — the user is explicitly opting into a custom data dir, so we must not
+ * pull in the default %APPDATA%/xlab-token legacy location (breaks tests and
+ * isolated dev runs).
+ */
+export function legacyDataRoot(): string {
+  if (process.env.TOKENLAB_DATA_DIR || process.env.XLAB_TOKEN_DATA_DIR) return "";
+  return path.join(appDataDir(), "xlab-token");
 }
 
 export function mirrorsRoot(): string {
@@ -182,6 +198,144 @@ export function mirrorsRoot(): string {
 /** Persisted events from other machines / restores — merged into scan cache by id. */
 export function importedEventsPath(): string {
   return path.join(dataRoot(), "imported-events.json");
+}
+
+/** Legacy imported-events path under the pre-rename data dir. */
+export function legacyImportedEventsPath(): string {
+  return path.join(legacyDataRoot(), "imported-events.json");
+}
+
+/** Legacy scan-cache path under the pre-rename data dir. */
+export function legacyScanCachePath(): string {
+  return path.join(legacyDataRoot(), "scan-cache.json");
+}
+
+/** Legacy mirrors root under the pre-rename data dir. */
+export function legacyMirrorsRoot(): string {
+  return path.join(legacyDataRoot(), "mirrors");
+}
+
+/**
+ * One-time migration from the pre-rename `%APPDATA%/xlab-token` data dir to
+ * `%APPDATA%/tokenlab`. Runs at startup. Idempotent — only copies files that
+ * are missing or smaller in the new dir, so usage totals can only grow.
+ *
+ * Why: the rename commit changed dataRoot() without migrating, which silently
+ * dropped scan-cache.json, imported-events.json, mirrors/, and config.json.
+ * That made all-time usage (especially 9router via VPS mirror + Gist restore)
+ * collapse on existing installs.
+ */
+export async function migrateLegacyDataDir(): Promise<void> {
+  const legacy = legacyDataRoot();
+  const target = dataRoot();
+  if (!legacy || !target) return;
+  if (path.resolve(legacy) === path.resolve(target)) return; // env override points at legacy
+  if (!(await pathExists(legacy))) return;
+
+  await mkdir(target, { recursive: true });
+
+  // Sentinel so we only run the heavy copy once per machine.
+  const sentinel = path.join(target, ".migrated-from-xlab-token");
+  if (await pathExists(sentinel)) {
+    // Still fall through to per-file fallbacks below for safety, but skip the
+    // bulk mirrors/ copy (already done).
+  } else {
+    // Copy mirrors/ (VPS data) — only files missing in target.
+    try {
+      if (await pathExists(legacyMirrorsRoot())) {
+        await copyDirMissing(legacyMirrorsRoot(), mirrorsRoot());
+      }
+    } catch (err) {
+      logError("migrateLegacyDataDir: mirrors copy failed:", err instanceof Error ? err.message : err);
+    }
+    try {
+      await writeFile(sentinel, new Date().toISOString(), "utf8");
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // Per-file fallbacks — always run so a partial/failed earlier migration
+  // still heals on next start. Only copy when target file is missing OR
+  // smaller than the legacy file (usage only grows, never shrinks).
+  const filePairs: Array<{ rel: string; legacy: string; target: string }> = [
+    { rel: "imported-events.json", legacy: legacyImportedEventsPath(), target: importedEventsPath() },
+    { rel: "scan-cache.json", legacy: legacyScanCachePath(), target: scanCachePath() },
+    { rel: "scan-cache.json.bak", legacy: `${legacyScanCachePath()}.bak`, target: `${scanCachePath()}.bak` },
+    { rel: "scan-cache.archive.json", legacy: path.join(legacyDataRoot(), "scan-cache.archive.json"), target: scanCacheArchivePath() },
+  ];
+  for (const { rel, legacy: lp, target: tp } of filePairs) {
+    try {
+      if (!(await pathExists(lp))) continue;
+      const legacyStat = await stat(lp);
+      let targetSize = 0;
+      if (await pathExists(tp)) {
+        targetSize = (await stat(tp)).size;
+      }
+      // Only copy when target is missing or smaller — never overwrite a richer
+      // current cache with an older smaller one.
+      if (targetSize > 0 && targetSize >= legacyStat.size) continue;
+      await mkdir(path.dirname(tp), { recursive: true });
+      await copyFile(lp, tp);
+      log(`migrateLegacyDataDir: copied ${rel} (${legacyStat.size} bytes) → ${tp}`);
+    } catch (err) {
+      logError(`migrateLegacyDataDir: copy ${rel} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Merge legacy config.json into the new one — never drop existing keys,
+  // only fill missing ones (customRates, gistId, githubToken, preferRouterCost).
+  try {
+    const legacyConfigPath = path.join(legacyDataRoot(), "config.json");
+    if (await pathExists(legacyConfigPath)) {
+      const legacyCfg = JSON.parse(await readFile(legacyConfigPath, "utf8")) as Record<string, unknown>;
+      const cur = getConfigSync();
+      const merged: Record<string, unknown> = { ...legacyCfg, ...cur };
+      // Deep-merge customRates (legacy rates fill gaps; current wins on conflict)
+      const legacyRates = (legacyCfg.pricing as { customRates?: Record<string, unknown> } | undefined)?.customRates;
+      const curRates = cur.pricing?.customRates || {};
+      if (legacyRates && typeof legacyRates === "object") {
+        merged.pricing = {
+          ...(cur.pricing || { currency: "USD" }),
+          customRates: { ...legacyRates, ...curRates },
+        };
+      }
+      // Never lose gist credentials from legacy
+      if (legacyCfg.backup && typeof legacyCfg.backup === "object") {
+        const lb = legacyCfg.backup as Record<string, unknown>;
+        const cb = cur.backup || {};
+        merged.backup = {
+          ...lb,
+          ...cb,
+          // Fill missing github token / gist id from legacy
+          ...(cb.githubToken ? {} : lb.githubToken ? { githubToken: lb.githubToken } : {}),
+          ...(cb.gistId ? {} : lb.gistId ? { gistId: lb.gistId } : {}),
+          ...(cb.gistUrl ? {} : lb.gistUrl ? { gistUrl: lb.gistUrl } : {}),
+        };
+      }
+      await saveConfig(merged as XlabTokenConfig);
+      log("migrateLegacyDataDir: merged legacy config.json into current");
+    }
+  } catch (err) {
+    logError("migrateLegacyDataDir: config merge failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+/** Recursively copy files from src → dest, skipping files that already exist in dest. */
+async function copyDirMissing(src: string, dest: string): Promise<void> {
+  if (!(await pathExists(src))) return;
+  await mkdir(dest, { recursive: true });
+  const entries = await readdir(src, { withFileTypes: true });
+  for (const ent of entries) {
+    const s = path.join(src, ent.name);
+    const d = path.join(dest, ent.name);
+    if (ent.isDirectory()) {
+      await copyDirMissing(s, d);
+    } else if (ent.isFile()) {
+      if (await pathExists(d)) continue; // never overwrite — usage only grows
+      await copyFile(s, d);
+    }
+  }
 }
 
 function eventTokenWeight(e: UsageEvent): number {
@@ -255,8 +409,12 @@ export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEven
       byId.set(e.id, preferRicherEvent(prev, e));
     }
   }
-  // Policy: thà tính thừa còn hơn bỏ sót.
-  // Only drop true clones / stale rollup versions — never the richer day total.
+  // Policy: thà tính thừa còn hơn bỏ sót — usage chỉ tăng, không bao giờ giảm.
+  // collapseRouterDailyEvents deduplicates same-provider daily rollups that
+  // have different ids (e.g. scanned vs imported/Gist). It collapses by
+  // day+model+workspace so different providers are kept separate. Events with
+  // null workspace use their id as key (never collapsed — could be different
+  // providers, keep all to avoid undercount).
   return collapseExactUsageDuplicates(
     collapseSourcePathRollups(collapseRouterDailyEvents([...byId.values()])),
   );
@@ -328,14 +486,25 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
 
   const out: UsageEvent[] = [...nonRouter];
   for (const bucket of byAgentDay.values()) {
-    // Same logical daily rollup rewritten many times → keep richest per model.
-    const dailyByModel = new Map<string, UsageEvent>();
+    // Same logical daily rollup rewritten many times → keep richest per
+    // day+model+workspace. CRITICAL: do NOT collapse by normalized model name
+    // alone — different providers can share a model name (e.g. "gpt-5.5" from
+    // 3 providers) and collapsing by name would drop the non-richest providers
+    // and lose tokens. Also do NOT collapse by id alone — imported (Gist) events
+    // have different ids than fresh scans even for the same data, so id-only
+    // collapse would double-count. The workspace field carries the provider,
+    // making day+model+workspace the correct dedup key. When workspace is
+    // null/empty (provider unknown), use id as key so different providers are
+    // never accidentally merged — usage only grows, never shrinks.
+    const dailyByKey = new Map<string, UsageEvent>();
     for (const e of bucket.dailies) {
       const model = (typeof e.model === "string" && e.model.trim()) || "mixed";
-      const prev = dailyByModel.get(model);
-      dailyByModel.set(model, prev ? preferRicherEvent(prev, e) : e);
+      const ws = (typeof e.workspace === "string" && e.workspace.trim()) || "";
+      const key = ws ? `${model}|${ws}` : `__id__|${e.id}`;
+      const prev = dailyByKey.get(key);
+      dailyByKey.set(key, prev ? preferRicherEvent(prev, e) : e);
     }
-    const dailies = [...dailyByModel.values()];
+    const dailies = [...dailyByKey.values()];
     const requests = bucket.requests;
 
     if (dailies.length === 0) {
@@ -394,14 +563,34 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
 
 export async function loadImportedEvents(): Promise<UsageEvent[]> {
   const p = importedEventsPath();
+  let events: UsageEvent[] = [];
   try {
-    if (!(await pathExists(p))) return [];
-    const raw = JSON.parse(await readFile(p, "utf8")) as unknown;
-    return sanitizeEvents(raw) || [];
+    if (await pathExists(p)) {
+      const raw = JSON.parse(await readFile(p, "utf8")) as unknown;
+      events = sanitizeEvents(raw) || [];
+    }
   } catch (err) {
     logError("loadImportedEvents failed:", err instanceof Error ? err.message : err);
-    return [];
   }
+  // Legacy fallback: merge pre-rename imported-events.json so usage never drops
+  // after the XLab Token → TokenLab rename. Union by id; usage only grows.
+  try {
+    const lp = legacyImportedEventsPath();
+    if (await pathExists(lp)) {
+      const legacyRaw = JSON.parse(await readFile(lp, "utf8")) as unknown;
+      const legacy = sanitizeEvents(legacyRaw) || [];
+      if (legacy.length > 0) {
+        events = mergeEventsByIdPreferRicher(events, legacy);
+        if (legacy.length > 0 && events.length < legacy.length) {
+          // Sanity: never return fewer than legacy
+          events = legacy;
+        }
+      }
+    }
+  } catch (err) {
+    logError("loadImportedEvents legacy fallback failed:", err instanceof Error ? err.message : err);
+  }
+  return events;
 }
 
 export async function saveImportedEvents(events: UsageEvent[]): Promise<void> {
@@ -514,6 +703,13 @@ function scanCacheScore(events: UsageEvent[]): { count: number; tokens: number }
 export async function loadScanCache(): Promise<UsageEvent[]> {
   const p = scanCachePath();
   const candidates = [p, scanCacheBackupPath(), scanCacheArchivePath()];
+  // Legacy fallback candidates — pre-rename xlab-token dir. Included so usage
+  // never silently drops after the rename; we union by id (richer wins).
+  const legacyCandidates = [
+    legacyScanCachePath(),
+    `${legacyScanCachePath()}.bak`,
+    path.join(legacyDataRoot(), "scan-cache.archive.json"),
+  ];
   let best: UsageEvent[] = [];
   let bestScore = { count: 0, tokens: 0 };
   let bestFrom = "";
@@ -531,6 +727,43 @@ export async function loadScanCache(): Promise<UsageEvent[]> {
       best = events;
       bestScore = score;
       bestFrom = candidate;
+    }
+  }
+  // Union with legacy cache so usage only grows across the rename.
+  let legacyBest: UsageEvent[] = [];
+  let legacyBestScore = { count: 0, tokens: 0 };
+  let legacyBestFrom = "";
+  for (const candidate of legacyCandidates) {
+    const events = await loadScanCacheCandidate(candidate);
+    if (!events || events.length === 0) continue;
+    const score = scanCacheScore(events);
+    const better =
+      score.count > legacyBestScore.count + 50 ||
+      (score.count >= legacyBestScore.count - 50 && score.tokens > legacyBestScore.tokens) ||
+      (score.count > legacyBestScore.count && score.tokens >= legacyBestScore.tokens * 0.9);
+    if (better || legacyBest.length === 0) {
+      legacyBest = events;
+      legacyBestScore = score;
+      legacyBestFrom = candidate;
+    }
+  }
+  if (legacyBest.length > 0) {
+    if (best.length === 0) {
+      best = legacyBest;
+      bestFrom = legacyBestFrom;
+      log("loadScanCache: using legacy cache only →", legacyBestFrom, `(${legacyBest.length} events)`);
+    } else {
+      // Union: richer rows win on id collisions; net count can only grow.
+      const union = mergeEventsByIdPreferRicher(best, legacyBest);
+      if (union.length >= best.length) {
+        log(
+          "loadScanCache: merged legacy cache →",
+          legacyBestFrom,
+          `(best=${best.length} + legacy=${legacyBest.length} → union=${union.length})`,
+        );
+        best = union;
+        bestFrom = bestFrom + " + " + legacyBestFrom;
+      }
     }
   }
   if (best.length > 0) {
