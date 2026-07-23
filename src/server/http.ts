@@ -1049,29 +1049,70 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       );
     });
 
-  // Refresh VPS router mirrors (best-effort) before first scan so remote usage is not stale.
-  void Promise.resolve()
-    .then(async () => {
-      const { spawn } = await import("node:child_process");
-      const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/sync-vps-mirrors.py");
-      if (!(await pathExists(script))) return;
-      await new Promise<void>((resolve) => {
-        const child = spawn("python", [script], { stdio: "ignore", windowsHide: true });
-        child.on("error", () => resolve());
-        child.on("exit", () => resolve());
-        setTimeout(() => {
-          try {
-            child.kill();
-          } catch {
-            /* ignore */
-          }
-          resolve();
-        }, 120_000).unref?.();
-      });
-    })
-    .catch(() => {
-      /* optional */
-    })
+  /**
+   * Pull remote 9router / xlabrouter usage (VPS :20128 /dashboard/usage source) into local mirrors.
+   * Coalesced — concurrent calls share one in-flight SSH/export.
+   * Used on boot and every ~1 min so aggregate/dashboard stays near-live.
+   */
+  let mirrorSyncPromise: Promise<boolean> | null = null;
+  async function resolveSyncScript(): Promise<string | null> {
+    // src/server → ../../scripts ; installer/dist/server → ../../../scripts ; cwd fallback
+    const candidates = [
+      path.join(__dirname, "../../scripts/sync-vps-mirrors.py"),
+      path.join(__dirname, "../../../scripts/sync-vps-mirrors.py"),
+      path.join(process.cwd(), "scripts/sync-vps-mirrors.py"),
+    ];
+    for (const p of candidates) {
+      if (await pathExists(p)) return p;
+    }
+    return null;
+  }
+  async function syncVpsMirrors(reason: string, timeoutMs = 90_000): Promise<boolean> {
+    if (mirrorSyncPromise) return mirrorSyncPromise;
+    mirrorSyncPromise = (async () => {
+      try {
+        const { spawn } = await import("node:child_process");
+        const script = await resolveSyncScript();
+        if (!script) return false;
+        const ok = await new Promise<boolean>((resolve) => {
+          const child = spawn("python", [script], {
+            stdio: "ignore",
+            windowsHide: true,
+            env: { ...process.env },
+          });
+          let settled = false;
+          const done = (value: boolean) => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+          };
+          child.on("error", () => done(false));
+          child.on("exit", (code) => done(code === 0));
+          setTimeout(() => {
+            try {
+              child.kill();
+            } catch {
+              /* ignore */
+            }
+            done(false);
+          }, timeoutMs).unref?.();
+        });
+        if (ok) {
+          console.log(`[tokenlab] VPS router mirrors synced (${reason})`);
+        }
+        return ok;
+      } catch {
+        return false;
+      } finally {
+        mirrorSyncPromise = null;
+      }
+    })();
+    return mirrorSyncPromise;
+  }
+
+  // Boot: sync remote 9router usage then full scan so first paint is not stale.
+  void syncVpsMirrors("boot", 120_000)
+    .catch(() => false)
     .finally(() => {
       void rescan({ full: true }).catch((err) => {
         console.error("[tokenlab] initial full scan failed:", err instanceof Error ? err.message : err);
@@ -1079,17 +1120,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
 
   let periodicTick = 0;
-  // Lighter cadence: every 60s light rescan; full thorough pass every 15 ticks (~15 min).
-  // Previous 30s×full/5min drove high CPU + multi‑GB peak RAM on large histories.
+  // Every 60s: pull remote 9router/xlabrouter mirrors, then light rescan (full every 15 min).
+  // Sync → scan so aggregate/dashboard always reflects the just-pulled usageDaily.
   const timer = setInterval(() => {
     periodicTick += 1;
-    // Skip tick if a scan is already running (coalesced by rescan itself, but avoid churn)
-    if (scanPromise) return;
-    // Full thorough pass every 15 ticks (≈15 min)
     const doFull = periodicTick % 15 === 0;
-    void rescan({ full: doFull }).catch((err) => {
+    void (async () => {
+      await syncVpsMirrors(doFull ? "periodic-full" : "periodic", 55_000);
+      // Skip starting another scan if one is already running (rescan coalesces too).
+      if (scanPromise) return;
+      await rescan({ full: doFull });
+    })().catch((err) => {
       console.error(
-        "[tokenlab] periodic scan failed:",
+        "[tokenlab] periodic sync/scan failed:",
         err instanceof Error ? err.message : err,
       );
     });

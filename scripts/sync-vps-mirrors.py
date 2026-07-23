@@ -57,6 +57,11 @@ def main() -> int:
         os.path.join(appdata, "tokenlab", "mirrors"),
         os.path.join(appdata, "xlab-token", "mirrors"),
     ]
+    # Dev convenience path used by 9router agent roots on this machine
+    vps_data = r"C:\Dev\VPS\my.bnix.one\9router\data"
+    if os.path.isdir(os.path.dirname(vps_data)) or os.path.isdir(vps_data):
+        os.makedirs(vps_data, exist_ok=True)
+
     for mirror_root in mirror_roots:
         os.makedirs(os.path.join(mirror_root, "9router"), exist_ok=True)
         os.makedirs(os.path.join(mirror_root, "xlabrouter"), exist_ok=True)
@@ -81,6 +86,14 @@ def main() -> int:
     for remote, agent, name in remote_files:
         for mirror_root in mirror_roots:
             local = os.path.join(mirror_root, agent, name)
+            try:
+                sftp.get(remote, local)
+                print("SYNCED", local, "bytes", os.path.getsize(local))
+            except Exception as ex:
+                print("SKIP", remote, "->", local, ex)
+        # Also drop 9router daily into VPS local data dir (agent root)
+        if agent == "9router" and os.path.isdir(vps_data):
+            local = os.path.join(vps_data, name)
             try:
                 sftp.get(remote, local)
                 print("SYNCED", local, "bytes", os.path.getsize(local))
