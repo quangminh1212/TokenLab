@@ -15,6 +15,9 @@ password = re.search(r"Password:\s*`([^`]+)`", text).group(1)
 
 dests = [
     Path(r"C:\Dev\VPS\my.bnix.one\xlabrouter\data"),
+    # TokenLab primary data dir (post-rename)
+    Path.home() / "AppData" / "Roaming" / "tokenlab" / "mirrors" / "xlabrouter",
+    # Legacy path kept so older installs still pick up mirrors
     Path.home() / "AppData" / "Roaming" / "xlab-token" / "mirrors" / "xlabrouter",
 ]
 for d in dests:
