@@ -52,9 +52,14 @@ def main() -> int:
     if not appdata:
         print("APPDATA missing", file=sys.stderr)
         return 1
-    mirror_root = os.path.join(appdata, "xlab-token", "mirrors")
-    os.makedirs(os.path.join(mirror_root, "9router"), exist_ok=True)
-    os.makedirs(os.path.join(mirror_root, "xlabrouter"), exist_ok=True)
+    # Write both TokenLab (primary) and legacy xlab-token mirrors
+    mirror_roots = [
+        os.path.join(appdata, "tokenlab", "mirrors"),
+        os.path.join(appdata, "xlab-token", "mirrors"),
+    ]
+    for mirror_root in mirror_roots:
+        os.makedirs(os.path.join(mirror_root, "9router"), exist_ok=True)
+        os.makedirs(os.path.join(mirror_root, "xlabrouter"), exist_ok=True)
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -68,17 +73,19 @@ def main() -> int:
     if err:
         print("STDERR:", err[:500], file=sys.stderr)
 
-    pulls = [
-        ("/tmp/xlab-mirror-9router-usage-daily.json", os.path.join(mirror_root, "9router", "usage-daily.json")),
-        ("/tmp/xlab-mirror-9router-db.json", os.path.join(mirror_root, "9router", "db.json")),
-        ("/tmp/xlab-mirror-xlabrouter-db.json", os.path.join(mirror_root, "xlabrouter", "db.json")),
+    remote_files = [
+        ("/tmp/xlab-mirror-9router-usage-daily.json", "9router", "usage-daily.json"),
+        ("/tmp/xlab-mirror-9router-db.json", "9router", "db.json"),
+        ("/tmp/xlab-mirror-xlabrouter-db.json", "xlabrouter", "db.json"),
     ]
-    for remote, local in pulls:
-        try:
-            sftp.get(remote, local)
-            print("SYNCED", local, "bytes", os.path.getsize(local))
-        except Exception as ex:
-            print("SKIP", remote, ex)
+    for remote, agent, name in remote_files:
+        for mirror_root in mirror_roots:
+            local = os.path.join(mirror_root, agent, name)
+            try:
+                sftp.get(remote, local)
+                print("SYNCED", local, "bytes", os.path.getsize(local))
+            except Exception as ex:
+                print("SKIP", remote, "->", local, ex)
     sftp.close()
     client.close()
     return 0

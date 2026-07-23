@@ -15,6 +15,7 @@ password = re.search(r"Password:\s*`([^`]+)`", text).group(1)
 
 dests = [
     Path(r"C:\Dev\VPS\my.bnix.one\9router\data"),
+    Path.home() / "AppData" / "Roaming" / "tokenlab" / "mirrors" / "9router",
     Path.home() / "AppData" / "Roaming" / "xlab-token" / "mirrors" / "9router",
 ]
 for d in dests:
