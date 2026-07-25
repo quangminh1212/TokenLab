@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Pull real xlabrouter DATA_DIR usage from VPS (/var/lib/xlabrouter)."""
+"""Pull RouterLab (xlabrouter) DATA_DIR usage from VPS (/var/lib/xlabrouter, :1212).
+
+Prefer scripts/sync-vps-mirrors.py for periodic dual 9router+RouterLab sync (used by TokenLab serve).
+This script remains a one-shot full export of history + dailySummary + request-details.
+"""
 from __future__ import annotations
 
 import json
