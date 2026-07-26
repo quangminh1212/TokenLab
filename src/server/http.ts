@@ -504,8 +504,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const agent = url.searchParams.get("agent");
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
+      // recent=1 (dashboard RECENT EVENTS): hide daily rollup blobs so each call shows
+      const recentMode =
+        url.searchParams.get("recent") === "1" ||
+        url.searchParams.get("preferRequest") === "1";
       let list = filterByPeriod(cache, since, until, configuredTimeZone());
       if (agent) list = list.filter((e) => e.agent === agent);
+      if (recentMode) {
+        const real = list.filter((e) => !e.estimated);
+        // Prefer real per-request rows; fall back to rollups only when nothing else
+        if (real.length > 0) list = real;
+      }
       // Newest first by timestamp (scan order is not chronological)
       list = list
         .slice()

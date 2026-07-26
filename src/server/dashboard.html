@@ -600,7 +600,8 @@
       try {
         // Pass since to /api/events so server filters with parseSince (7d/24h/\u2026),
         // not new Date("7d") which is Invalid Date and drops every event.
-        const qEvents = new URLSearchParams({ limit: '40' });
+        // recent=1 drops daily rollup blobs so RECENT EVENTS lists each real call
+        const qEvents = new URLSearchParams({ limit: '40', recent: '1' });
         if (since) qEvents.set('since', since);
 
         const [stats, seriesStats, health, eventsRes] = await Promise.all([
@@ -653,6 +654,9 @@
             return !Number.isNaN(t) && t >= t0;
           });
         }
+        // Never show daily byModel blobs (e.g. 24M tokens "Today") as one request
+        const realRecent = recent.filter((e) => !e.estimated);
+        if (realRecent.length) recent = realRecent;
         // Ensure newest-first even if response order varies
         recent = recent
           .slice()

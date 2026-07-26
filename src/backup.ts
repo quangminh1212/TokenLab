@@ -451,9 +451,9 @@ export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
 
 /**
  * Router days: collapse multi-version estimated rollups (unstable ids) to the
- * richest per model, then keep max(daily totals, request totals) for that day.
- * Never drop the higher side — stale daily must not hide fuller request history
- * and request samples must not hide a complete daily rollup.
+ * richest per model. When any real per-request rows exist for that day, keep
+ * ONLY those requests (never a multi‑million token "one request" daily blob).
+ * Daily synthetic rows remain only for days with no request history.
  */
 export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
   if (!Array.isArray(events) || events.length === 0) return events || [];
@@ -464,7 +464,12 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
 
   for (const e of events) {
     if (!e || typeof e.id !== "string") continue;
-    const isRouter = e.agent === "9router" || e.agent === "xlabrouter";
+    // routerlab is a legacy/display alias seen in some caches/imports
+    const agentId = String(e.agent || "");
+    const isRouter =
+      agentId === "9router" ||
+      agentId === "xlabrouter" ||
+      agentId === "routerlab";
     if (!isRouter) {
       nonRouter.push(e);
       continue;
@@ -516,22 +521,10 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       continue;
     }
 
-    const dailyTok = dailies.reduce((a, e) => a + eventTokenWeight(e), 0);
-    const reqTok = requests.reduce((a, e) => a + eventTokenWeight(e), 0);
-    const dailyCost = dailies.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
-    const reqCost = requests.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
-
-    // Prefer overcount: always keep the higher token side; never both (double).
-    // Tie → higher cost; still tie → more rows (more detail, slight overcount bias).
-    const preferRequests =
-      reqTok > dailyTok ||
-      (reqTok === dailyTok && reqCost > dailyCost) ||
-      (reqTok === dailyTok &&
-        reqCost === dailyCost &&
-        requests.length > dailies.length);
-
-    if (preferRequests) out.push(...requests);
-    else out.push(...dailies);
+    // Request-first: any real calls for the day replace the daily blob entirely.
+    // (Previously preferred whichever side had more tokens — a partial history tail
+    // lost to a 20M+ daily row and RECENT EVENTS showed one fake "request".)
+    out.push(...requests);
   }
   return out;
 }

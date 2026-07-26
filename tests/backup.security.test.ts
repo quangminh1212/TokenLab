@@ -104,15 +104,13 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model+worksp
     timestamp: "2026-07-10T10:00:00.000Z",
   });
   const merged = collapseRouterDailyEvents([low, high, otherProvider, requestSameDay, requestOtherDay]);
-  // low+high collapse (same workspace) → 1 daily; otherProvider kept (diff ws); req-other kept
-  assert.equal(merged.length, 3);
-  const dailies = merged.filter((e) => e.estimated);
-  assert.equal(dailies.length, 2);
-  const mainDaily = dailies.find((e) => e.workspace === "provider:test");
-  assert.equal(mainDaily?.totalTokens, 55_000);
-  assert.ok(dailies.some((e) => e.id === "other-provider"));
-  assert.equal(merged.some((e) => e.id === "req-same"), false);
-  assert.ok(merged.some((e) => e.id === "req-other"));
+  // Same-day real request replaces all dailies for that day; other-day request kept
+  assert.equal(merged.some((e) => e.id === "req-same"), true);
+  assert.equal(merged.some((e) => e.id === "req-other"), true);
+  assert.equal(merged.some((e) => e.id === "old-daily-low"), false);
+  assert.equal(merged.some((e) => e.id === "old-daily-high"), false);
+  assert.equal(merged.some((e) => e.id === "other-provider"), false);
+  assert.equal(merged.length, 2);
 });
 
 test("collapseRouterDailyEvents prefers requests when they exceed stale daily", () => {

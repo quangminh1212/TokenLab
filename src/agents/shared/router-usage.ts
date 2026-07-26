@@ -168,6 +168,17 @@ function reconcileEventsAndDaily(
   const out: UsageEvent[] = [...noDay];
   const allDays = new Set<string>([...eventsByDay.keys(), ...mergedDaily.keys()]);
 
+  // When we have live per-request history, skip daily gap-fill for today + yesterday
+  // (UTC). Router dateKey is often local calendar day while request timestamps are UTC,
+  // so "today" daily becomes a 20M+ fake row that sorts above real calls as "Today".
+  const hasRequestHistory = eventLevel.length > 0;
+  const nowMs = Date.now();
+  const todayUtc = new Date(nowMs).toISOString().slice(0, 10);
+  const ydayUtc = new Date(nowMs - 86_400_000).toISOString().slice(0, 10);
+  const skipDailyGapFill = new Set(
+    hasRequestHistory ? [todayUtc, ydayUtc] : [],
+  );
+
   for (const dateKey of [...allDays].sort()) {
     const dayEvents = eventsByDay.get(dateKey) || [];
     const daily = mergedDaily.get(dateKey);
@@ -179,6 +190,7 @@ function reconcileEventsAndDaily(
     }
 
     if (daily) {
+      if (skipDailyGapFill.has(dateKey)) continue;
       out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, []));
       continue;
     }
