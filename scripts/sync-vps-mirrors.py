@@ -11,7 +11,10 @@ USER = "root"
 PASSWORD = "a7xe$zZ#NM@2yP8X"
 
 EXPORT_PY = r"""
-import json, os, sqlite3, glob, shutil
+import json, os, sqlite3, shutil
+
+# Recent request rows for RECENT EVENTS (individual calls, not daily blobs)
+RECENT_LIMIT = 20000
 
 def export_daily(db_path, out_path):
     if not os.path.isfile(db_path):
@@ -35,8 +38,40 @@ def export_daily(db_path, out_path):
         json.dump(daily, f, separators=(',', ':'))
     return len(daily)
 
+def export_recent_history(db_path, out_path, limit=RECENT_LIMIT):
+    """Export newest usageHistory rows as jsonl (ASC so parse tail = newest)."""
+    if not os.path.isfile(db_path):
+        return 0
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    try:
+        tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'usageHistory' not in tables:
+            con.close()
+            return 0
+        rows = cur.execute(
+            '''SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint,
+                      promptTokens, completionTokens, cost, status, tokens, meta
+               FROM usageHistory ORDER BY id DESC LIMIT ?''',
+            (int(limit),),
+        ).fetchall()
+    except Exception:
+        con.close()
+        return 0
+    con.close()
+    # Write chronological ASC so file tail is still the newest window
+    rows = list(reversed(rows))
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, 'w', encoding='utf-8') as f:
+        for row in rows:
+            f.write(json.dumps(dict(row), ensure_ascii=False, separators=(',', ':')) + '\n')
+    return len(rows)
+
 n = export_daily('/root/.9router/db/data.sqlite', '/tmp/xlab-mirror-9router-usage-daily.json')
 print('EXPORTED_9ROUTER_DAYS', n)
+h = export_recent_history('/root/.9router/db/data.sqlite', '/tmp/xlab-mirror-9router-usage-history.jsonl')
+print('EXPORTED_9ROUTER_HISTORY', h)
 for src, dst_name in [
     ('/var/lib/xlabrouter/db.json', '/tmp/xlab-mirror-xlabrouter-db.json'),
     ('/root/.9router/db.json', '/tmp/xlab-mirror-9router-db.json'),
@@ -80,6 +115,8 @@ def main() -> int:
 
     remote_files = [
         ("/tmp/xlab-mirror-9router-usage-daily.json", "9router", "usage-daily.json"),
+        # Recent per-request rows so RECENT EVENTS lists each call (not one daily blob)
+        ("/tmp/xlab-mirror-9router-usage-history.jsonl", "9router", "usage-history.jsonl"),
         ("/tmp/xlab-mirror-9router-db.json", "9router", "db.json"),
         ("/tmp/xlab-mirror-xlabrouter-db.json", "xlabrouter", "db.json"),
     ]

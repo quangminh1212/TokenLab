@@ -80,7 +80,7 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("reconciles sparse history against dailySummary", async () => {
+  it("prefers per-request rows over daily when history exists", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-xlabrouter-"));
@@ -97,6 +97,14 @@ describe("router usage parsers", () => {
                 provider: "x",
                 tokens: { prompt_tokens: 10, completion_tokens: 2 },
                 cost: 0.01,
+              },
+              {
+                id: "h2",
+                timestamp: "2026-06-29T11:00:00.000Z",
+                model: "gpt-5.5",
+                provider: "x",
+                tokens: { prompt_tokens: 100, completion_tokens: 20 },
+                cost: 0.02,
               },
             ],
             totalRequestsLifetime: 1000,
@@ -139,16 +147,19 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "xlabrouter");
-      // 06-28 from daily; 06-29 sparse history (1 < 95% of 200) → use daily rollup
+      // 06-28: no request history → daily gap-fill
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-28")));
-      assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-29")));
       const d28 = events.find((e) => e.timestamp.startsWith("2026-06-28"));
       assert.equal(d28?.inputTokens, 50000);
       assert.equal(d28?.estimatedCost, 12.5);
-      const d29 = events.find((e) => e.timestamp.startsWith("2026-06-29"));
-      assert.equal(d29?.inputTokens, 90000);
-      assert.equal(d29?.estimatedCost, 20);
-      assert.equal(events.filter((e) => e.timestamp.startsWith("2026-06-29")).length, 1);
+      // 06-29: keep each request — do NOT collapse into one daily 90k row
+      const d29 = events
+        .filter((e) => e.timestamp.startsWith("2026-06-29"))
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      assert.equal(d29.length, 2, "must list each request separately");
+      assert.equal(d29[0]?.inputTokens, 10);
+      assert.equal(d29[1]?.inputTokens, 100);
+      assert.ok(!d29.some((e) => e.estimated), "request rows must not be daily rollups");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -199,12 +210,11 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("stamps daily rollups with real last-request time (not future noon UTC)", async () => {
+  it("keeps individual request when history exists alongside daily", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-daily-ts-"));
     try {
-      // Use "today" so noon UTC may still be in the future (the original bug)
       const today = new Date().toISOString().slice(0, 10);
       const lastSeen = `${today}T01:15:00.000Z`;
       await writeFile(
@@ -232,7 +242,6 @@ describe("router usage parsers", () => {
         ]),
         "utf8",
       );
-      // Tiny history tail with real last-seen time for big-pickle
       await writeFile(
         path.join(dir, "usage-history.jsonl"),
         JSON.stringify({
@@ -248,10 +257,11 @@ describe("router usage parsers", () => {
       );
       const events = await parseRouterUsage([dir], "9router");
       const pickle = events.find((e) => e.model === "big-pickle");
-      assert.ok(pickle, "expected big-pickle daily event");
-      assert.equal(pickle.inputTokens, 1_000_000);
-      // Must use real last request time, not future noon / wall-clock now
+      assert.ok(pickle, "expected big-pickle request event");
+      // Request-first: keep the real call, not the 1M daily blob
+      assert.equal(pickle.inputTokens, 1000);
       assert.equal(pickle.timestamp, new Date(lastSeen).toISOString());
+      assert.ok(!pickle.estimated, "must be a real request row");
       const mins = Math.floor((Date.now() - new Date(pickle.timestamp).getTime()) / 60000);
       assert.ok(mins >= 0, `timestamp must not be in the future (mins=${mins})`);
     } finally {

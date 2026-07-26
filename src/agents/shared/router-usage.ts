@@ -6,14 +6,13 @@ import { normalizeModelName, num, pathExists, readText, stableId } from "../../u
 /**
  * Shared parser for 9router / xlabrouter local data.
  *
- * International-style storage preference (aggregate, not per-request):
- *  1. usage-daily.json / usageDaily / dailySummary  ← primary
- *  2. byModel within each day when complete
- *  3. Per-request history (jsonl / usageHistory) only as fallback when no daily
+ * Request-first (accurate RECENT EVENTS + per-call rows):
+ *  1. Per-request history (sqlite usageHistory / jsonl / history arrays) ← primary
+ *  2. Daily rollups (usageDaily / dailySummary) only gap-fill days with NO request rows
  *
- * Why: request-level history (usage-history.jsonl) grows to tens of MB and is
- * redundant once daily rollups exist. Daily totals are the source of truth for
- * billing-style dashboards.
+ * Why: collapsing a whole day into one synthetic byModel row made RECENT EVENTS
+ * show a single 20M+ token blob (e.g. gpt-5.6-sol "Today") instead of each call.
+ * Daily still fills older days after history retention drops individual rows.
  */
 export async function parseRouterUsage(
   roots: string[],
@@ -34,16 +33,13 @@ export async function parseRouterUsage(
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
-    let hasDailyForRoot = false;
-
-    // --- A) Daily rollups first (canonical) ---
+    // --- A) Daily rollups (gap-fill only after reconcile) ---
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
       if (!(await pathExists(dbPath))) continue;
       const daily = await parseSqliteDaily(dbPath);
       if (daily) {
         dailyMaps.push({ source: dbPath + "#usageDaily", daily });
-        hasDailyForRoot = true;
       }
     }
 
@@ -52,7 +48,6 @@ export async function parseRouterUsage(
       const daily = await readDailySummaryFromJsonFile(usagePath);
       if (daily) {
         dailyMaps.push({ source: usagePath, daily });
-        hasDailyForRoot = true;
       }
     }
 
@@ -61,7 +56,6 @@ export async function parseRouterUsage(
       const daily = await readDailySummaryFromDbJson(dbJsonPath);
       if (daily) {
         dailyMaps.push({ source: dbJsonPath, daily });
-        hasDailyForRoot = true;
       }
     }
 
@@ -70,7 +64,6 @@ export async function parseRouterUsage(
       const daily = await readDailySummaryFromJsonFile(usageDataPath);
       if (daily) {
         dailyMaps.push({ source: usageDataPath, daily });
-        hasDailyForRoot = true;
       }
     }
 
@@ -79,27 +72,25 @@ export async function parseRouterUsage(
       const daily = await readDailySummaryStandalone(dailyPath);
       if (daily) {
         dailyMaps.push({ source: dailyPath, daily });
-        hasDailyForRoot = true;
       }
     }
 
-    // --- B) Per-request history ---
-    // Always try compact history so today is not missing while daily rollup is stale.
-    // Still skip huge jsonl when daily already covers that root (avoid multi‑MB reread).
+    // --- B) Per-request history (always load — needed for accurate recent rows) ---
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
       if (!(await pathExists(dbPath))) continue;
-      // Cap SQLite history — used to fill gaps vs daily
-      pushEvents(await parseSqliteUsage(dbPath, agent, hasDailyForRoot ? 2_000 : 20_000));
+      // Keep a large recent window so RECENT EVENTS lists individual calls
+      pushEvents(await parseSqliteUsage(dbPath, agent, 20_000));
     }
 
-    if (!hasDailyForRoot && (await pathExists(usagePath))) {
+    // Always ingest request arrays even when daily exists (do not skip)
+    if (await pathExists(usagePath)) {
       pushEvents(await parseUsageJsonFile(usagePath, agent));
     }
-    if (!hasDailyForRoot && (await pathExists(dbJsonPath))) {
+    if (await pathExists(dbJsonPath)) {
       pushEvents(await parseDbJsonUsage(dbJsonPath, agent));
     }
-    if (!hasDailyForRoot && (await pathExists(usageDataPath))) {
+    if (await pathExists(usageDataPath)) {
       pushEvents(await parseUsageJsonFile(usageDataPath, agent));
     }
 
@@ -118,14 +109,10 @@ export async function parseRouterUsage(
         try {
           const { stat } = await import("node:fs/promises");
           const st = await stat(p);
-          // With daily rollups: only small files (fresh tail). Without daily: allow larger.
-          const maxBytes = hasDailyForRoot ? 2 * 1024 * 1024 : 12 * 1024 * 1024;
+          // Large jsonl: read a multi‑MB tail of real requests (not just stamp daily)
+          const maxBytes = 12 * 1024 * 1024;
           if (st.size > maxBytes) {
-            // Still read a small tail so RECENT EVENTS can stamp daily rows with real last-seen times
-            // (full multi‑MB jsonl is skipped when daily already covers totals).
-            if (hasDailyForRoot) {
-              pushEvents(await parseHistoryExportTail(p, agent, 512 * 1024));
-            }
+            pushEvents(await parseHistoryExportTail(p, agent, 4 * 1024 * 1024));
             continue;
           }
         } catch {
@@ -140,9 +127,9 @@ export async function parseRouterUsage(
 }
 
 /**
- * Daily-first reconciliation:
- *  - If a day has a rollup → use daily synthetic events only (ignore per-request for that day)
- *  - Else keep per-request events for that day
+ * Request-first reconciliation:
+ *  - If a day has any per-request events → keep each request (never merge into one row)
+ *  - Else if a daily rollup exists → synthetic day/model events (history gap-fill)
  */
 function reconcileEventsAndDaily(
   eventLevel: UsageEvent[],
@@ -185,13 +172,16 @@ function reconcileEventsAndDaily(
     const dayEvents = eventsByDay.get(dateKey) || [];
     const daily = mergedDaily.get(dateKey);
 
-    // Canonical: daily rollup wins whenever present
-    if (daily) {
-      out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, dayEvents));
+    // Prefer exact per-request rows — never collapse them into one daily blob
+    if (dayEvents.length > 0) {
+      out.push(...dayEvents);
       continue;
     }
 
-    out.push(...dayEvents);
+    if (daily) {
+      out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, []));
+      continue;
+    }
   }
 
   return out;
