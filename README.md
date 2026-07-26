@@ -186,11 +186,11 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | Void | `void` | Void app data | Yes |
 | Amazon Q | `amazon-q` | `~/.aws/amazonq` / VS Code storage | Yes |
 | **9Router** | `9router` | `~/.9router` / `db/data.sqlite` / `usage-history.jsonl` (VPS mirror OK) | Yes |
-| **RouterLab** (ex XLab Router) | `xlabrouter` | VPS `DATA_DIR=/var/lib/xlabrouter` (:1212/dashboard/usage) via local mirror `%APPDATA%/tokenlab/mirrors/{xlabrouter,routerlab}` | Yes |
+| **RouterLab** (ex XLab Router) | `routerlab` | VPS `DATA_DIR=/var/lib/xlabrouter` (:1212/dashboard/usage) via local mirror `%APPDATA%/tokenlab/mirrors/{xlabrouter,routerlab}` | Yes |
 
 > TokenLab only **reads local files** already on disk. It does not inject into agent processes or call vendor billing APIs unless you explicitly enable an optional integration later.
 
-#### 9Router / XLab Router data paths
+#### 9Router / RouterLab data paths
 
 | Source | Typical location |
 |--------|------------------|

@@ -327,6 +327,32 @@
       return m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
     }
 
+    /** Agent id → display name (XLab Router → RouterLab, etc.) */
+    const AGENT_LABELS = {
+      routerlab: 'RouterLab',
+      xlabrouter: 'RouterLab',
+      xlrouter: 'RouterLab',
+      '9router': '9Router',
+      'claude-code': 'Claude Code',
+      codex: 'OpenAI Codex',
+      cursor: 'Cursor',
+      windsurf: 'Windsurf',
+      grok: 'Grok (xAI)',
+      hermes: 'Hermes Agent',
+      copilot: 'GitHub Copilot',
+      devin: 'Devin',
+      opencode: 'OpenCode',
+    };
+    function agentLabel(id) {
+      const k = String(id || '').trim();
+      if (!k) return '';
+      const low = k.toLowerCase();
+      if (low === 'xlabrouter' || low === 'xlrouter' || low === 'xlab-router' || low === 'xlab_router') {
+        return 'RouterLab';
+      }
+      return AGENT_LABELS[low] || AGENT_LABELS[k] || k;
+    }
+
     function formatGroupKey(key) {
       if (state.groupBy === 'hour' || /^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(String(key || ''))) {
         return formatHourLabel(key, true);
@@ -336,6 +362,9 @@
         // Keep "unknown (devin)" — do not strip agent suffix (looks like bare "unknown")
         if (/^unknown\s*\(/i.test(k)) return k;
         return normalizeModelName(k) || k;
+      }
+      if (state.groupBy === 'agent') {
+        return agentLabel(key);
       }
       return String(key ?? '');
     }
@@ -443,8 +472,8 @@
       $('recentBody').innerHTML = `
         <ul class="recent-list">
           ${events.map((e) => {
-            const model = normalizeModelName(e.model) || e.agent || '\u2014';
-            const agent = e.agent && e.model ? e.agent : '';
+            const model = normalizeModelName(e.model) || agentLabel(e.agent) || '\u2014';
+            const agent = e.agent && e.model ? agentLabel(e.agent) : '';
             return `<li class="recent-item">
               <div class="recent-item-main">
                 <span class="recent-model" title="${escapeHtml(model)}">${escapeHtml(model)}</span>

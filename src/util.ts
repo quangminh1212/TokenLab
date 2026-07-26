@@ -2,10 +2,43 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { UsageEvent } from "./types.js";
+import type { AgentId, UsageEvent } from "./types.js";
 
 export function stableId(...parts: string[]): string {
   return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 24);
+}
+
+/**
+ * Canonical agent ids for display + aggregation.
+ * XLab Router rebranded to RouterLab — keep reading legacy event/agent keys.
+ */
+export function normalizeAgentId(agent: string | null | undefined): AgentId {
+  const a = String(agent || "").trim().toLowerCase();
+  if (!a) return "custom";
+  if (a === "xlabrouter" || a === "xlrouter" || a === "xlab-router" || a === "xlab_router") {
+    return "routerlab";
+  }
+  return a as AgentId;
+}
+
+/** Human-facing agent name (dashboard / RECENT EVENTS). */
+export function agentDisplayName(agent: string | null | undefined): string {
+  const id = normalizeAgentId(agent);
+  const labels: Record<string, string> = {
+    routerlab: "RouterLab",
+    xlabrouter: "RouterLab",
+    "9router": "9Router",
+    "claude-code": "Claude Code",
+    codex: "OpenAI Codex",
+    cursor: "Cursor",
+    windsurf: "Windsurf",
+    grok: "Grok (xAI)",
+    hermes: "Hermes Agent",
+    copilot: "GitHub Copilot",
+    devin: "Devin",
+    opencode: "OpenCode",
+  };
+  return labels[id] || labels[String(agent || "")] || String(agent || "unknown");
 }
 
 /** User home — platform-aware (USERPROFILE on Windows, HOME on Unix). */

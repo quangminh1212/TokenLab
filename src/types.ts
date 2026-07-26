@@ -47,6 +47,8 @@ export type AgentId =
   | "void"
   | "amazon-q"
   | "9router"
+  | "routerlab"
+  /** @deprecated legacy id — normalized to routerlab on load */
   | "xlabrouter"
   | "custom";
 

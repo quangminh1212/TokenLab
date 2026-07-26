@@ -464,7 +464,8 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
 
   for (const e of events) {
     if (!e || typeof e.id !== "string") continue;
-    const isRouter = e.agent === "9router" || e.agent === "xlabrouter";
+    const isRouter =
+      e.agent === "9router" || e.agent === "xlabrouter" || e.agent === "routerlab";
     if (!isRouter) {
       nonRouter.push(e);
       continue;
@@ -552,7 +553,8 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
     if (!e || typeof e.id !== "string") continue;
     // Router twin exports / multi-root mirrors share content but differ by
     // sourcePath, cache fields, or 1ms timestamps — collapse on second+model+IO.
-    const isRouter = e.agent === "9router" || e.agent === "xlabrouter";
+    const isRouter =
+      e.agent === "9router" || e.agent === "xlabrouter" || e.agent === "routerlab";
     const key = isRouter
       ? [
           e.agent,
@@ -1140,9 +1142,18 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
     const outputTokens = Number(e.outputTokens) || 0;
     const cacheReadTokens = Number(e.cacheReadTokens) || 0;
     const cacheWriteTokens = Number(e.cacheWriteTokens) || 0;
+    // XLab Router → RouterLab (canonical agent id)
+    const agentRaw = String(e.agent);
+    const agent =
+      agentRaw === "xlabrouter" ||
+      agentRaw === "xlrouter" ||
+      agentRaw === "xlab-router" ||
+      agentRaw === "xlab_router"
+        ? ("routerlab" as UsageEvent["agent"])
+        : (agentRaw as UsageEvent["agent"]);
     out.push({
       id: e.id,
-      agent: e.agent as UsageEvent["agent"],
+      agent,
       model: e.model == null ? null : String(e.model),
       timestamp: typeof e.timestamp === "string" ? e.timestamp : new Date().toISOString(),
       inputTokens,

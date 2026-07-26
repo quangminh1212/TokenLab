@@ -4,7 +4,7 @@ import type { AgentId, UsageEvent } from "../../types.js";
 import { normalizeModelName, num, pathExists, readText, stableId } from "../../util.js";
 
 /**
- * Shared parser for 9router / xlabrouter local data.
+ * Shared parser for 9router / routerlab (ex xlabrouter) local data.
  *
  * Preference (request-first for RECENT EVENTS, daily as gap-fill):
  *  1. Per-request history (jsonl / usageHistory / request-details) when multi-RQ sample exists

@@ -57,8 +57,8 @@ export function xlabRouterRoots(): string[] {
 }
 
 export const agent: AgentModule = {
-  id: "xlabrouter",
+  id: "routerlab",
   label: "RouterLab",
   roots: xlabRouterRoots,
-  parse: (roots) => parseRouterUsage(roots, "xlabrouter"),
+  parse: (roots) => parseRouterUsage(roots, "routerlab"),
 };

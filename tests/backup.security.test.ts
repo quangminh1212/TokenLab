@@ -49,7 +49,7 @@ function evt(partial: Partial<UsageEvent> & { id: string }): UsageEvent {
 test("collapseRouterDailyEvents keeps richest estimated row per day+model+workspace", () => {
   const low = evt({
     id: "old-daily-low",
-    agent: "xlabrouter",
+    agent: "routerlab",
     model: "mixed",
     estimated: true,
     inputTokens: 1_000,
@@ -60,7 +60,7 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model+worksp
   });
   const high = evt({
     id: "old-daily-high",
-    agent: "xlabrouter",
+    agent: "routerlab",
     model: "mixed",
     estimated: true,
     inputTokens: 50_000,
@@ -72,7 +72,7 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model+worksp
   // Same model, different provider → kept (not collapsed)
   const otherProvider = evt({
     id: "other-provider",
-    agent: "xlabrouter",
+    agent: "routerlab",
     model: "mixed",
     estimated: true,
     inputTokens: 5_000,
@@ -84,7 +84,7 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model+worksp
   // Requests smaller than daily → keep daily (not double)
   const requestSameDay = evt({
     id: "req-same",
-    agent: "xlabrouter",
+    agent: "routerlab",
     model: "gpt-5",
     estimated: false,
     inputTokens: 10,
@@ -95,7 +95,7 @@ test("collapseRouterDailyEvents keeps richest estimated row per day+model+worksp
   // Day without daily rollup → kept
   const requestOtherDay = evt({
     id: "req-other",
-    agent: "xlabrouter",
+    agent: "routerlab",
     model: "gpt-5",
     estimated: false,
     inputTokens: 10,
@@ -158,7 +158,7 @@ test("collapseRouterDailyEvents prefers requests when they exceed stale daily", 
 test("collapseRouterDailyEvents prefers multi-RQ sample over richer daily blob", () => {
   const daily = evt({
     id: "daily-fat",
-    agent: "xlabrouter",
+    agent: "routerlab",
     model: "grok-4.5",
     estimated: true,
     inputTokens: 5_000_000,
@@ -169,7 +169,7 @@ test("collapseRouterDailyEvents prefers multi-RQ sample over richer daily blob",
   const requests = Array.from({ length: 25 }, (_, i) =>
     evt({
       id: `rq-${i}`,
-      agent: "xlabrouter",
+      agent: "routerlab",
       model: "grok-4.5",
       estimated: false,
       inputTokens: 100_000,

@@ -31,19 +31,30 @@ describe("router usage parsers", () => {
   it("xlabrouter roots resolve without throw", async () => {
     const roots = xlabRouterRoots().filter(Boolean);
     assert.ok(roots.length >= 3);
-    assert.ok(roots.some((r) => r.includes("xlabrouter") || r.includes("var")));
+    assert.ok(
+      roots.some((r) => r.includes("routerlab") || r.includes("xlabrouter") || r.includes("var")),
+    );
     const existing: string[] = [];
     for (const r of roots) {
       if (await pathExists(r)) existing.push(r);
     }
-    const events = await parseRouterUsage(existing, "xlabrouter");
+    const events = await parseRouterUsage(existing, "routerlab");
     assert.ok(Array.isArray(events));
     for (const e of events) {
-      assert.equal(e.agent, "xlabrouter");
+      assert.equal(e.agent, "routerlab");
     }
     // When VPS mirror is present, dailySummary gap-fill should yield many events
-    if (existing.some((r) => r.includes("mirrors") || r.includes(`${"xlabrouter"}\\data`) || r.includes("xlabrouter/data"))) {
-      assert.ok(events.length > 0, `expected xlabrouter events from ${existing.join(", ")}`);
+    if (
+      existing.some(
+        (r) =>
+          r.includes("mirrors") ||
+          r.includes("routerlab\\data") ||
+          r.includes("xlabrouter\\data") ||
+          r.includes("xlabrouter/data") ||
+          r.includes("routerlab/data"),
+      )
+    ) {
+      assert.ok(events.length > 0, `expected routerlab events from ${existing.join(", ")}`);
     }
   });
 
@@ -67,11 +78,11 @@ describe("router usage parsers", () => {
         );
       };
       await writeDaily(1_000, 1);
-      const first = await parseRouterUsage([dir], "xlabrouter");
+      const first = await parseRouterUsage([dir], "routerlab");
       assert.equal(first.length, 1);
       const id1 = first[0]!.id;
       await writeDaily(50_000, 20);
-      const second = await parseRouterUsage([dir], "xlabrouter");
+      const second = await parseRouterUsage([dir], "routerlab");
       assert.equal(second.length, 1);
       assert.equal(second[0]!.id, id1, "same day rollup must keep stable id");
       assert.equal(second[0]!.inputTokens, 50_000);
@@ -138,7 +149,7 @@ describe("router usage parsers", () => {
         }),
         "utf8",
       );
-      const events = await parseRouterUsage([dir], "xlabrouter");
+      const events = await parseRouterUsage([dir], "routerlab");
       // 06-28 from daily; 06-29 sparse history (1 RQ) → still daily rollup
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-28")));
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-29")));
@@ -196,7 +207,7 @@ describe("router usage parsers", () => {
         }),
         "utf8",
       );
-      const events = await parseRouterUsage([dir], "xlabrouter");
+      const events = await parseRouterUsage([dir], "routerlab");
       // Must keep 25 individual RQs — not one 5.2M daily blob
       assert.equal(events.length, 25);
       assert.ok(events.every((e) => e.model === "grok-4.5"));
@@ -247,7 +258,7 @@ describe("router usage parsers", () => {
         }),
         "utf8",
       );
-      const events = await parseRouterUsage([dir], "xlabrouter");
+      const events = await parseRouterUsage([dir], "routerlab");
       assert.equal(events.length, 1);
       assert.equal(events[0]!.inputTokens, 1000);
       // Prefer richer twin with cache read
