@@ -139,7 +139,7 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "xlabrouter");
-      // 06-28 from daily; 06-29 sparse history (1 < 95% of 200) → use daily rollup
+      // 06-28 from daily; 06-29 sparse history (1 RQ) → still daily rollup
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-28")));
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-29")));
       const d28 = events.find((e) => e.timestamp.startsWith("2026-06-28"));
@@ -149,6 +149,109 @@ describe("router usage parsers", () => {
       assert.equal(d29?.inputTokens, 90000);
       assert.equal(d29?.estimatedCost, 20);
       assert.equal(events.filter((e) => e.timestamp.startsWith("2026-06-29")).length, 1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers multi-request history over giant daily byModel blobs", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-split-"));
+    try {
+      const history = Array.from({ length: 25 }, (_, i) => ({
+        id: `rq-${i}`,
+        timestamp: `2026-07-26T10:${String(i).padStart(2, "0")}:00.000Z`,
+        provider: "qwencoder",
+        model: "grok-4.5",
+        promptTokens: 100_000 + i,
+        completionTokens: 50 + i,
+        cost: 0.05,
+        tokens: { prompt_tokens: 100_000 + i, completion_tokens: 50 + i },
+      }));
+      await writeFile(
+        path.join(dir, "request-details.jsonl"),
+        history.map((r) => JSON.stringify(r)).join("\n") + "\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          "2026-07-26": {
+            requests: 99,
+            promptTokens: 5_216_191,
+            completionTokens: 23_766,
+            cost: 10,
+            byModel: {
+              "grok-4.5|qwencoder": {
+                requests: 99,
+                promptTokens: 5_216_191,
+                completionTokens: 23_766,
+                cost: 10,
+                rawModel: "grok-4.5",
+                provider: "qwencoder",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "xlabrouter");
+      // Must keep 25 individual RQs — not one 5.2M daily blob
+      assert.equal(events.length, 25);
+      assert.ok(events.every((e) => e.model === "grok-4.5"));
+      assert.ok(events.every((e) => !e.estimated));
+      const maxIn = Math.max(...events.map((e) => e.inputTokens || 0));
+      assert.ok(maxIn < 200_000, `single RQ should not be multi-million, got ${maxIn}`);
+      assert.ok(!events.some((e) => (e.inputTokens || 0) >= 1_000_000));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not double-count twin history exports", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-twin-"));
+    try {
+      const row = {
+        timestamp: "2026-07-26T10:00:00.000Z",
+        provider: "xai",
+        model: "grok-4.5",
+        promptTokens: 1000,
+        completionTokens: 20,
+        cost: 0.01,
+        tokens: { prompt_tokens: 1000, completion_tokens: 20 },
+      };
+      await writeFile(
+        path.join(dir, "request-details.jsonl"),
+        JSON.stringify({
+          id: "native-1",
+          ...row,
+          tokens: { prompt_tokens: 1000, completion_tokens: 20, cached_tokens: 800 },
+        }) + "\n",
+        "utf8",
+      );
+      // Twin without id / cache — same logical RQ (also 1ms drift)
+      await writeFile(
+        path.join(dir, "db.json"),
+        JSON.stringify({
+          usageData: {
+            history: [
+              {
+                ...row,
+                timestamp: "2026-07-26T10:00:00.001Z",
+              },
+            ],
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "xlabrouter");
+      assert.equal(events.length, 1);
+      assert.equal(events[0]!.inputTokens, 1000);
+      // Prefer richer twin with cache read
+      assert.equal(events[0]!.cacheReadTokens, 800);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

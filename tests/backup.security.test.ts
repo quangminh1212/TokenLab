@@ -155,6 +155,35 @@ test("collapseRouterDailyEvents prefers requests when they exceed stale daily", 
   assert.equal(tok, 73_000);
 });
 
+test("collapseRouterDailyEvents prefers multi-RQ sample over richer daily blob", () => {
+  const daily = evt({
+    id: "daily-fat",
+    agent: "xlabrouter",
+    model: "grok-4.5",
+    estimated: true,
+    inputTokens: 5_000_000,
+    totalTokens: 5_020_000,
+    estimatedCost: 50,
+    timestamp: "2026-07-26T12:00:00.000Z",
+  });
+  const requests = Array.from({ length: 25 }, (_, i) =>
+    evt({
+      id: `rq-${i}`,
+      agent: "xlabrouter",
+      model: "grok-4.5",
+      estimated: false,
+      inputTokens: 100_000,
+      totalTokens: 100_050,
+      estimatedCost: 1,
+      timestamp: `2026-07-26T10:${String(i).padStart(2, "0")}:00.000Z`,
+    }),
+  );
+  const merged = collapseRouterDailyEvents([daily, ...requests]);
+  assert.equal(merged.some((e) => e.id === "daily-fat"), false);
+  assert.equal(merged.length, 25);
+  assert.ok(merged.every((e) => (e.inputTokens || 0) === 100_000));
+});
+
 test("preferRicherEvent fills null model even when default cost is higher", () => {
   const stale = evt({
     id: "same",

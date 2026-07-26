@@ -521,14 +521,19 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
     const dailyCost = dailies.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
     const reqCost = requests.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
 
-    // Prefer overcount: always keep the higher token side; never both (double).
-    // Tie → higher cost; still tie → more rows (more detail, slight overcount bias).
+    // Prefer overcount when tokens clearly favor one side.
+    // Also prefer multi-request detail when a rolling history window covers a
+    // meaningful slice of the day — avoid collapsing 99 RQs into one 5M+ model event
+    // even if daily totals are slightly higher than the partial request sample.
     const preferRequests =
       reqTok > dailyTok ||
       (reqTok === dailyTok && reqCost > dailyCost) ||
       (reqTok === dailyTok &&
         reqCost === dailyCost &&
-        requests.length > dailies.length);
+        requests.length > dailies.length) ||
+      (requests.length >= 20 &&
+        requests.length > dailies.length &&
+        reqTok >= dailyTok * 0.15);
 
     if (preferRequests) out.push(...requests);
     else out.push(...dailies);
@@ -545,16 +550,28 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
   const best = new Map<string, UsageEvent>();
   for (const e of events) {
     if (!e || typeof e.id !== "string") continue;
-    const key = [
-      e.agent,
-      e.timestamp || "",
-      e.model || "",
-      e.inputTokens || 0,
-      e.outputTokens || 0,
-      e.cacheReadTokens || 0,
-      e.cacheWriteTokens || 0,
-      e.sourcePath || "",
-    ].join("|");
+    // Router twin exports / multi-root mirrors share content but differ by
+    // sourcePath, cache fields, or 1ms timestamps — collapse on second+model+IO.
+    const isRouter = e.agent === "9router" || e.agent === "xlabrouter";
+    const key = isRouter
+      ? [
+          e.agent,
+          (e.timestamp || "").slice(0, 19),
+          e.model || "",
+          e.inputTokens || 0,
+          e.outputTokens || 0,
+          e.workspace || "",
+        ].join("|")
+      : [
+          e.agent,
+          e.timestamp || "",
+          e.model || "",
+          e.inputTokens || 0,
+          e.outputTokens || 0,
+          e.cacheReadTokens || 0,
+          e.cacheWriteTokens || 0,
+          e.sourcePath || "",
+        ].join("|");
     const prev = best.get(key);
     best.set(key, prev ? preferRicherEvent(prev, e) : e);
   }

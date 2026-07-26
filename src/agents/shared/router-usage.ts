@@ -6,27 +6,64 @@ import { normalizeModelName, num, pathExists, readText, stableId } from "../../u
 /**
  * Shared parser for 9router / xlabrouter local data.
  *
- * International-style storage preference (aggregate, not per-request):
- *  1. usage-daily.json / usageDaily / dailySummary  ← primary
- *  2. byModel within each day when complete
- *  3. Per-request history (jsonl / usageHistory) only as fallback when no daily
+ * Preference (request-first for RECENT EVENTS, daily as gap-fill):
+ *  1. Per-request history (jsonl / usageHistory / request-details) when multi-RQ sample exists
+ *  2. usage-daily / usageDaily / dailySummary byModel when history is missing or too sparse
  *
- * Why: request-level history (usage-history.jsonl) grows to tens of MB and is
- * redundant once daily rollups exist. Daily totals are the source of truth for
- * billing-style dashboards.
+ * Why: daily byModel collapses an entire day into one row per model (e.g. 99× grok-4.5
+ * → a single 5.2M-token "event"). RECENT EVENTS must show real individual requests.
+ * Daily rollups remain the fallback so days without history still contribute totals.
  */
 export async function parseRouterUsage(
   roots: string[],
   agent: AgentId,
 ): Promise<UsageEvent[]> {
   const eventLevel: UsageEvent[] = [];
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  // Content fingerprint (ignore source path / native id / cache details) so twin
+  // exports (db.json history + request-details.jsonl, multi-root mirrors) merge.
+  // Second-precision timestamp absorbs 1ms drift between mirror copies.
+  const contentIndex = new Map<string, number>();
   const dailyMaps: Array<{ source: string; daily: Record<string, unknown> }> = [];
+
+  const contentFingerprint = (e: UsageEvent): string => {
+    const ts = (e.timestamp || "").slice(0, 19); // YYYY-MM-DDTHH:mm:ss
+    return [
+      e.agent,
+      ts,
+      e.model || "",
+      e.inputTokens || 0,
+      e.outputTokens || 0,
+      e.workspace || "",
+    ].join("|");
+  };
+
+  const tokenWeight = (e: UsageEvent): number =>
+    (Number(e.inputTokens) || 0) +
+    (Number(e.outputTokens) || 0) +
+    (Number(e.cacheReadTokens) || 0) +
+    (Number(e.cacheWriteTokens) || 0);
 
   const pushEvents = (batch: UsageEvent[]) => {
     for (const e of batch) {
-      if (seen.has(e.id)) continue;
-      seen.add(e.id);
+      if (seenIds.has(e.id)) continue;
+      const fp = contentFingerprint(e);
+      const prevIdx = contentIndex.get(fp);
+      if (prevIdx != null) {
+        const prev = eventLevel[prevIdx];
+        if (prev) {
+          // Keep richer twin (e.g. row with cache_read filled in)
+          const preferNext =
+            tokenWeight(e) > tokenWeight(prev) ||
+            ((Number(e.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0) &&
+              tokenWeight(e) >= tokenWeight(prev));
+          if (preferNext) eventLevel[prevIdx] = e;
+        }
+        seenIds.add(e.id);
+        continue;
+      }
+      seenIds.add(e.id);
+      contentIndex.set(fp, eventLevel.length);
       eventLevel.push(e);
     }
   };
@@ -36,7 +73,7 @@ export async function parseRouterUsage(
 
     let hasDailyForRoot = false;
 
-    // --- A) Daily rollups first (canonical) ---
+    // --- A) Daily rollups (fallback when history is sparse/missing) ---
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
       if (!(await pathExists(dbPath))) continue;
@@ -83,66 +120,69 @@ export async function parseRouterUsage(
       }
     }
 
-    // --- B) Per-request history ---
-    // Always try compact history so today is not missing while daily rollup is stale.
-    // Still skip huge jsonl when daily already covers that root (avoid multi‑MB reread).
+    // --- B) Per-request history (preferred for RECENT EVENTS) ---
+    // Always load request-level rows so multi-RQ days are not collapsed into one model event.
     for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
       const dbPath = path.join(root, dbRel);
       if (!(await pathExists(dbPath))) continue;
-      // Cap SQLite history — used to fill gaps vs daily
-      pushEvents(await parseSqliteUsage(dbPath, agent, hasDailyForRoot ? 2_000 : 20_000));
+      // Prefer a larger recent window so RECENT EVENTS can list individual RQs
+      pushEvents(await parseSqliteUsage(dbPath, agent, hasDailyForRoot ? 5_000 : 20_000));
     }
 
-    if (!hasDailyForRoot && (await pathExists(usagePath))) {
+    // Embedded history inside usage/db wrappers (always try — content-deduped)
+    if (await pathExists(usagePath)) {
       pushEvents(await parseUsageJsonFile(usagePath, agent));
     }
-    if (!hasDailyForRoot && (await pathExists(dbJsonPath))) {
+    if (await pathExists(dbJsonPath)) {
       pushEvents(await parseDbJsonUsage(dbJsonPath, agent));
     }
-    if (!hasDailyForRoot && (await pathExists(usageDataPath))) {
+    if (await pathExists(usageDataPath)) {
       pushEvents(await parseUsageJsonFile(usageDataPath, agent));
     }
 
-    // Prefer compact JSON history over multi‑MB jsonl when both exist
-    let loadedCompactHistory = false;
-    for (const name of ["usage-history.json", "usageHistory.json", "request-details.json"]) {
+    // One preferred history stream per root: request-details (stable ids) first,
+    // then usage-history. Avoid loading twin json+jsonl mirrors of the same window.
+    const historyPreference = [
+      "request-details.json",
+      "request-details.jsonl",
+      "usage-history.json",
+      "usageHistory.json",
+      "usage-history.jsonl",
+    ];
+    let loadedHistoryFile = false;
+    for (const name of historyPreference) {
       const p = path.join(root, name);
       if (!(await pathExists(p))) continue;
-      pushEvents(await parseHistoryExport(p, agent));
-      loadedCompactHistory = true;
-    }
-    if (!loadedCompactHistory) {
-      for (const name of ["usage-history.jsonl", "request-details.jsonl"]) {
-        const p = path.join(root, name);
-        if (!(await pathExists(p))) continue;
+      if (name.endsWith(".jsonl")) {
         try {
           const { stat } = await import("node:fs/promises");
           const st = await stat(p);
-          // With daily rollups: only small files (fresh tail). Without daily: allow larger.
-          const maxBytes = hasDailyForRoot ? 2 * 1024 * 1024 : 12 * 1024 * 1024;
+          // Cap multi-MB jsonl; still read a large tail so recent RQs stay visible.
+          const maxBytes = 12 * 1024 * 1024;
           if (st.size > maxBytes) {
-            // Still read a small tail so RECENT EVENTS can stamp daily rows with real last-seen times
-            // (full multi‑MB jsonl is skipped when daily already covers totals).
-            if (hasDailyForRoot) {
-              pushEvents(await parseHistoryExportTail(p, agent, 512 * 1024));
-            }
-            continue;
+            pushEvents(await parseHistoryExportTail(p, agent, 2 * 1024 * 1024));
+          } else {
+            pushEvents(await parseHistoryExport(p, agent));
           }
         } catch {
-          // ignore stat errors
+          pushEvents(await parseHistoryExport(p, agent));
         }
+      } else {
         pushEvents(await parseHistoryExport(p, agent));
       }
+      loadedHistoryFile = true;
+      break;
     }
+    void loadedHistoryFile;
   }
 
   return reconcileEventsAndDaily(eventLevel, dailyMaps, agent);
 }
 
 /**
- * Daily-first reconciliation:
- *  - If a day has a rollup → use daily synthetic events only (ignore per-request for that day)
- *  - Else keep per-request events for that day
+ * Request-first reconciliation:
+ *  - Multi-request history for a day → keep individual RQs (never one 5M+ model blob)
+ *  - Sparse/missing history → daily rollup (byModel or whole-day) for totals
  */
 function reconcileEventsAndDaily(
   eventLevel: UsageEvent[],
@@ -185,16 +225,51 @@ function reconcileEventsAndDaily(
     const dayEvents = eventsByDay.get(dateKey) || [];
     const daily = mergedDaily.get(dateKey);
 
-    // Canonical: daily rollup wins whenever present
-    if (daily) {
-      out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, dayEvents));
+    if (!daily) {
+      out.push(...dayEvents);
       continue;
     }
 
-    out.push(...dayEvents);
+    if (shouldPreferRequestEvents(dayEvents, daily.day)) {
+      out.push(...dayEvents);
+      continue;
+    }
+
+    // Sparse or empty history → authoritative daily rollup
+    out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, dayEvents));
   }
 
   return out;
+}
+
+/**
+ * Prefer real request rows when we have a multi-RQ sample that covers a meaningful
+ * slice of the day (count or tokens). A single stray history row must not replace
+ * a full daily rollup.
+ */
+function shouldPreferRequestEvents(
+  dayEvents: UsageEvent[],
+  day: Record<string, unknown>,
+): boolean {
+  const reqCount = dayEvents.length;
+  if (reqCount < 2) return false;
+
+  const dayReqTarget = num(day.requests);
+  const dayTok =
+    num(day.promptTokens ?? day.prompt_tokens) +
+    num(day.completionTokens ?? day.completion_tokens);
+  const reqTok = dayEvents.reduce(
+    (a, e) => a + (Number(e.inputTokens) || 0) + (Number(e.outputTokens) || 0),
+    0,
+  );
+
+  // Enough individual RQs for RECENT EVENTS even when the export is a rolling window
+  if (reqCount >= 20) return true;
+
+  const coverageByCount = dayReqTarget > 0 ? reqCount / dayReqTarget : 1;
+  const coverageByTok = dayTok > 0 ? reqTok / dayTok : 1;
+  // ≥15% of the day observed as real RQs → prefer split events over one model blob
+  return coverageByCount >= 0.15 || coverageByTok >= 0.15;
 }
 
 /**
