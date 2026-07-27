@@ -182,8 +182,10 @@
       chartByHour: false,
       groups: [],
       totals: null,
-      /** Live RPM window from /api/stats.live (last 3 minutes) */
+      /** Live 3m window (optional secondary) from /api/stats.live */
       live: null,
+      /** Server local-day start for "today" RPM (ISO) */
+      todayStartsAt: null,
       scanning: false,
       awaitingData: true, // until first non-empty scan or confirmed idle empty
       scanRevision: 0,
@@ -430,59 +432,94 @@
       </div>`;
     }
 
+    /**
+     * Elapsed ms for the active period (used for period-mean RPM).
+     * Today = since local midnight (server tz); 24h/7d/30d = full window; All = 24h floor.
+     */
+    function periodElapsedMs() {
+      const now = Date.now();
+      const p = state.period || 'today';
+      if (p === 'today') {
+        let start = state.todayStartsAt ? Date.parse(state.todayStartsAt) : NaN;
+        if (!Number.isFinite(start)) {
+          const d = new Date();
+          d.setHours(0, 0, 0, 0);
+          start = d.getTime();
+        }
+        return Math.max(60_000, now - start);
+      }
+      if (p === '24h') return 24 * 3_600_000;
+      if (p === '7d') return 7 * 24 * 3_600_000;
+      if (p === '30d') return 30 * 24 * 3_600_000;
+      // All-time: unknown span — use 24h as minimum so RPM stays defined
+      return 24 * 3_600_000;
+    }
+
+    function periodLabel() {
+      const p = state.period || 'today';
+      if (p === 'today') return 'today';
+      if (p === '24h') return '24h';
+      if (p === '7d') return '7d';
+      if (p === '30d') return '30d';
+      return 'all';
+    }
+
+    /**
+     * Period-mean rate from TOTAL REQUESTS (dashboard period filter):
+     *   RPM = N × 60 / T_seconds
+     *   RPS = N / T_seconds
+     * Matches international mean-rate definition over the selected period.
+     */
+    function periodRequestRate(totalRequests) {
+      const N = Math.max(0, Number(totalRequests) || 0);
+      const Tms = periodElapsedMs();
+      const Tsec = Tms / 1000;
+      const rps = Tsec > 0 ? N / Tsec : 0;
+      const rpm = rps * 60;
+      return {
+        requests: N,
+        windowSeconds: Tsec,
+        windowMinutes: Tsec / 60,
+        rpm,
+        rps,
+        method: 'period_mean',
+        unit: 'req/min',
+        period: periodLabel(),
+      };
+    }
+
     function renderOverview(t, live) {
       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
-      const liveInfo = live || state.live || null;
-      const rpm = liveInfo && typeof liveInfo.rpm === 'number' ? liveInfo.rpm : null;
-      const rps = liveInfo && typeof liveInfo.rps === 'number' ? liveInfo.rps : null;
-      const rpmReq = liveInfo && typeof liveInfo.requests === 'number' ? liveInfo.requests : null;
-      const winSec = liveInfo && typeof liveInfo.windowSeconds === 'number' ? liveInfo.windowSeconds : 180;
-      const perMin = Array.isArray(liveInfo?.perMinute) ? liveInfo.perMinute : [];
-      // Per-minute histogram oldest→newest (sparkline of completed calls)
-      const spark = perMin.length
-        ? perMin.map((m) => (m && typeof m.requests === 'number' ? m.requests : 0)).join(' · ')
-        : '';
-      // International APM: RPM = N×60/T , RPS = N/T (sliding window mean)
-      const rpmVal =
-        rpm != null
-          ? (Math.round(rpm * 10) / 10).toLocaleString(undefined, {
-              minimumFractionDigits: 0,
-              maximumFractionDigits: 1,
-            })
-          : null;
+      // RPM from period TOTAL REQUESTS (not 3m idle window)
+      const rate = periodRequestRate(t.eventCount || 0);
+      const rpmVal = (Math.round(rate.rpm * 10) / 10).toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1,
+      });
       const rpsHint =
-        rps != null
-          ? (rps < 0.1 && rps > 0
-              ? rps.toFixed(3)
-              : (Math.round(rps * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })) + ' RPS'
-          : '';
-      const lastAge =
-        liveInfo && typeof liveInfo.lastRequestAgeSec === 'number'
-          ? liveInfo.lastRequestAgeSec
+        rate.rps < 0.1 && rate.rps > 0
+          ? rate.rps.toFixed(3) + ' RPS'
+          : (Math.round(rate.rps * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' RPS';
+      const mins = Math.max(1, Math.round(rate.windowMinutes));
+      const hours = rate.windowMinutes >= 120 ? Math.round(rate.windowMinutes / 60) : null;
+      const spanHint = hours != null ? hours + 'h' : mins + 'm';
+      // Optional live 3m pulse in hint when traffic is hot
+      const liveInfo = live || state.live || null;
+      const liveRpm =
+        liveInfo && typeof liveInfo.rpm === 'number' && liveInfo.rpm > 0
+          ? 'live ' + (Math.round(liveInfo.rpm * 10) / 10) + '/min'
           : null;
-      const idleHint =
-        rpmVal != null && Number(rpm) === 0 && lastAge != null
-          ? lastAge < 60
-            ? 'idle · last <1m ago'
-            : lastAge < 3600
-              ? 'idle · last ' + Math.round(lastAge / 60) + 'm ago'
-              : 'idle · last ' + Math.round(lastAge / 3600) + 'h ago'
-          : null;
-      const rpmCard = rpmVal != null
-        ? overviewCard(
-            'RPM',
-            rpmVal,
-            'tone-primary',
-            [
-              spark && Number(rpm) > 0 ? spark : null,
-              idleHint
-                ? idleHint
-                : (rpmReq || 0) + ' req / ' + Math.round(winSec) + 's',
-              !idleHint ? rpsHint : null,
-              !idleHint ? 'sliding mean' : null,
-            ].filter(Boolean).join(' · '),
-          )
-        : overviewCard('RPM', '—', 'tone-primary', 'N×60/T · sliding ' + Math.round(winSec) + 's');
+      const rpmCard = overviewCard(
+        'RPM',
+        rpmVal,
+        'tone-primary',
+        [
+          fmtFull(rate.requests) + ' req / ' + spanHint,
+          rpsHint,
+          rate.period + ' mean',
+          liveRpm,
+        ].filter(Boolean).join(' · '),
+      );
       // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout on common widths)
       $('overview').innerHTML = [
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
@@ -721,23 +758,19 @@
         if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
         if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
         if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
+        if (typeof health.todayStartsAt === 'string' && health.todayStartsAt) {
+          state.todayStartsAt = health.todayStartsAt;
+        }
         // First boot / empty cache: keep polling until first scan finishes
         state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
         state.lastEventCount = eventCount;
 
         const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
+        // Meta RPM = same period-mean as overview card (from period totals)
+        const periodRpm = periodRequestRate((state.totals && state.totals.eventCount) || 0);
         const rpmHint =
-          state.live && typeof state.live.rpm === 'number'
-            ? ' \u00B7 ' +
-              (Math.round(state.live.rpm * 10) / 10) +
-              ' RPM' +
-              (typeof state.live.rps === 'number'
-                ? ' (' +
-                  (state.live.rps < 0.1 && state.live.rps > 0
-                    ? state.live.rps.toFixed(3)
-                    : Math.round(state.live.rps * 100) / 100) +
-                  ' RPS)'
-                : '')
+          periodRpm.requests > 0
+            ? ' \u00B7 ' + (Math.round(periodRpm.rpm * 10) / 10) + ' RPM (' + periodRpm.period + ')'
             : '';
         $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} rows${rpmHint}${scanHint}`;
 
