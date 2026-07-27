@@ -155,7 +155,7 @@ test("collapseRouterDailyEvents prefers requests when they exceed stale daily", 
   assert.equal(tok, 73_000);
 });
 
-test("collapseRouterDailyEvents prefers multi-RQ sample over richer daily blob", () => {
+test("collapseRouterDailyEvents keeps multi-RQ detail AND daily floor (no total drop)", () => {
   const daily = evt({
     id: "daily-fat",
     agent: "routerlab",
@@ -164,6 +164,7 @@ test("collapseRouterDailyEvents prefers multi-RQ sample over richer daily blob",
     inputTokens: 5_000_000,
     totalTokens: 5_020_000,
     estimatedCost: 50,
+    requestCount: 99,
     timestamp: "2026-07-26T12:00:00.000Z",
   });
   const requests = Array.from({ length: 25 }, (_, i) =>
@@ -175,13 +176,57 @@ test("collapseRouterDailyEvents prefers multi-RQ sample over richer daily blob",
       inputTokens: 100_000,
       totalTokens: 100_050,
       estimatedCost: 1,
-      timestamp: `2026-07-26T10:${String(i).padStart(2, "0")}:00.000Z`,
+      timestamp: "2026-07-26T10:" + String(i).padStart(2, "0") + ":00.000Z",
     }),
   );
   const merged = collapseRouterDailyEvents([daily, ...requests]);
+  // Original giant daily blob replaced by gap-fill remainder (not dropped without compensation)
   assert.equal(merged.some((e) => e.id === "daily-fat"), false);
-  assert.equal(merged.length, 25);
-  assert.ok(merged.every((e) => (e.inputTokens || 0) === 100_000));
+  const live = merged.filter((e) => !e.estimated);
+  const gap = merged.filter((e) => e.estimated);
+  assert.equal(live.length, 25, "keep individual RQs for RECENT EVENTS");
+  assert.ok(gap.length >= 1, "gap-fill remainder from daily floor");
+  assert.ok(live.every((e) => (e.inputTokens || 0) === 100_000));
+  // Day total must not fall below daily rollup (the old bug: 2.5M instead of 5M)
+  const tok = merged.reduce((a, e) => a + (e.totalTokens || 0), 0);
+  assert.ok(tok >= 5_020_000, "day total must stay at/above daily floor 5.02M");
+});
+
+test("collapseRouterDailyEvents never shrinks when partial history reappears", () => {
+  const daily = evt({
+    id: "daily-9r",
+    agent: "9router",
+    model: "Kimi-k3",
+    estimated: true,
+    inputTokens: 1_000_000,
+    totalTokens: 1_010_000,
+    estimatedCost: 20,
+    requestCount: 50,
+    timestamp: "2026-07-27T12:00:00.000Z",
+    workspace: "provider:vip",
+  });
+  // First scan: daily only
+  const full = collapseRouterDailyEvents([daily]);
+  const fullTok = full.reduce((a, e) => a + (e.totalTokens || 0), 0);
+  assert.equal(fullTok, 1_010_000);
+
+  // Later scan: 20 thin RQs (~2% of day) must not replace daily with 20k tokens
+  const thin = Array.from({ length: 20 }, (_, i) =>
+    evt({
+      id: "thin-" + i,
+      agent: "9router",
+      model: "Kimi-k3",
+      estimated: false,
+      inputTokens: 1_000,
+      totalTokens: 1_010,
+      estimatedCost: 0.01,
+      timestamp: "2026-07-27T08:" + String(i).padStart(2, "0") + ":00.000Z",
+      workspace: "provider:vip",
+    }),
+  );
+  const mixed = collapseRouterDailyEvents([daily, ...thin]);
+  const mixedTok = mixed.reduce((a, e) => a + (e.totalTokens || 0), 0);
+  assert.ok(mixedTok >= fullTok, "rescan must not drop totals below prior daily floor");
 });
 
 test("preferRicherEvent fills null model even when default cost is higher", () => {

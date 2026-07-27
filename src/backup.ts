@@ -450,10 +450,130 @@ export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
 }
 
 /**
+ * When keeping individual request rows for RECENT EVENTS but the history window
+ * is incomplete vs daily rollups, emit estimated remainder rows so day totals
+ * never fall below the daily floor (usage only grows / never oscillates down).
+ */
+function gapFillRouterDayFromDailies(
+  dailies: UsageEvent[],
+  requests: UsageEvent[],
+): UsageEvent[] {
+  if (!dailies.length) return [];
+
+  type Acc = { n: number; tok: number; cost: number };
+  const hist = new Map<string, Acc>();
+  for (const e of requests) {
+    const model = (typeof e.model === "string" && e.model.trim()) || "mixed";
+    const ws = (typeof e.workspace === "string" && e.workspace.trim()) || "";
+    const key = `${model}|${ws}`;
+    const prev = hist.get(key) || { n: 0, tok: 0, cost: 0 };
+    const reqs =
+      typeof e.requestCount === "number" && e.requestCount > 0
+        ? Math.floor(e.requestCount)
+        : 1;
+    prev.n += reqs;
+    prev.tok += eventTokenWeight(e);
+    prev.cost += Number(e.estimatedCost) || 0;
+    hist.set(key, prev);
+  }
+
+  // Also aggregate history without workspace so "mixed"/empty-ws dailies match
+  const histByModel = new Map<string, Acc>();
+  for (const e of requests) {
+    const model = (typeof e.model === "string" && e.model.trim()) || "mixed";
+    const prev = histByModel.get(model) || { n: 0, tok: 0, cost: 0 };
+    const reqs =
+      typeof e.requestCount === "number" && e.requestCount > 0
+        ? Math.floor(e.requestCount)
+        : 1;
+    prev.n += reqs;
+    prev.tok += eventTokenWeight(e);
+    prev.cost += Number(e.estimatedCost) || 0;
+    histByModel.set(model, prev);
+  }
+
+  const out: UsageEvent[] = [];
+  for (const d of dailies) {
+    const model = (typeof d.model === "string" && d.model.trim()) || "mixed";
+    const ws = (typeof d.workspace === "string" && d.workspace.trim()) || "";
+    const key = `${model}|${ws}`;
+    const h =
+      hist.get(key) ||
+      (ws ? undefined : histByModel.get(model)) ||
+      histByModel.get(model) ||
+      { n: 0, tok: 0, cost: 0 };
+
+    const dailyTok = eventTokenWeight(d);
+    const dailyCost = Number(d.estimatedCost) || 0;
+    const dailyReq =
+      typeof d.requestCount === "number" && d.requestCount > 0
+        ? Math.floor(d.requestCount)
+        : 1;
+
+    const remTok = Math.max(0, dailyTok - h.tok);
+    const remCost = Math.max(0, dailyCost - h.cost);
+    const remReq = Math.max(0, dailyReq - h.n);
+
+    // History already covers this daily row
+    if (remTok <= 0 && remCost <= 0 && remReq <= 0) continue;
+    if (h.tok >= dailyTok && h.n >= dailyReq && dailyTok > 0) continue;
+
+    // Split remainder roughly like the daily row proportions, but force
+    // totalTokens === remTok so day floor is exact (no rounding undercount).
+    const ratio = dailyTok > 0 ? remTok / dailyTok : 0;
+    let remIn = Math.max(0, Math.floor((Number(d.inputTokens) || 0) * ratio));
+    let remOut = Math.max(0, Math.floor((Number(d.outputTokens) || 0) * ratio));
+    let remCacheR = Math.max(0, Math.floor((Number(d.cacheReadTokens) || 0) * ratio));
+    let remCacheW = Math.max(0, Math.floor((Number(d.cacheWriteTokens) || 0) * ratio));
+    let parts = remIn + remOut + remCacheR + remCacheW;
+    if (remTok > 0 && parts === 0) {
+      remIn = remTok;
+      parts = remTok;
+    } else if (remTok > parts) {
+      // Put leftover into input so remTok is exact
+      remIn += remTok - parts;
+      parts = remTok;
+    } else if (parts > remTok && remTok > 0) {
+      // Scale down if we overshot (shouldn't with floor, but be safe)
+      remIn = remTok;
+      remOut = 0;
+      remCacheR = 0;
+      remCacheW = 0;
+      parts = remTok;
+    }
+
+    if (parts <= 0 && remCost <= 0 && remReq <= 0) continue;
+
+    const day = (d.timestamp || "").slice(0, 10);
+    const agent = d.agent;
+    const gapId = `gapfill:${agent}:${day}:${model}:${ws || "nows"}`;
+    out.push({
+      ...d,
+      id: gapId,
+      estimated: true,
+      inputTokens: remIn,
+      outputTokens: remOut,
+      cacheReadTokens: remCacheR,
+      cacheWriteTokens: remCacheW,
+      totalTokens: parts > 0 ? parts : remTok,
+      estimatedCost: remCost,
+      requestCount: remReq > 0 ? remReq : parts > 0 ? 1 : 0,
+      timestamp: d.timestamp,
+      sourcePath: d.sourcePath || "gapfill-daily",
+    });
+  }
+  return out;
+}
+
+/**
  * Router days: collapse multi-version estimated rollups (unstable ids) to the
  * richest per model, then keep max(daily totals, request totals) for that day.
  * Never drop the higher side — stale daily must not hide fuller request history
  * and request samples must not hide a complete daily rollup.
+ *
+ * When multi-RQ history is preferred for RECENT EVENTS but is only a partial
+ * window, keep those RQs AND gap-fill the daily remainder so all-time totals
+ * never oscillate down on rescan.
  */
 export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
   if (!Array.isArray(events) || events.length === 0) return events || [];
@@ -522,22 +642,31 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
     const dailyCost = dailies.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
     const reqCost = requests.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
 
-    // Prefer overcount when tokens clearly favor one side.
-    // Also prefer multi-request detail when a rolling history window covers a
-    // meaningful slice of the day — avoid collapsing 99 RQs into one 5M+ model event
-    // even if daily totals are slightly higher than the partial request sample.
-    const preferRequests =
-      reqTok > dailyTok ||
-      (reqTok === dailyTok && reqCost > dailyCost) ||
-      (reqTok === dailyTok &&
-        reqCost === dailyCost &&
-        requests.length > dailies.length) ||
-      (requests.length >= 20 &&
-        requests.length > dailies.length &&
-        reqTok >= dailyTok * 0.15);
+    // Full request coverage (or higher than daily) → requests alone are enough.
+    const requestsCoverDaily =
+      reqTok >= dailyTok * 0.98 ||
+      (reqTok > dailyTok) ||
+      (reqTok === dailyTok && reqCost >= dailyCost);
 
-    if (preferRequests) out.push(...requests);
-    else out.push(...dailies);
+    // Multi-RQ sample useful for RECENT EVENTS but incomplete vs daily.
+    const wantRequestDetail =
+      requests.length >= 2 &&
+      (requests.length >= 20 || reqTok >= dailyTok * 0.15 || requests.length > dailies.length);
+
+    if (requestsCoverDaily) {
+      out.push(...requests);
+      continue;
+    }
+
+    if (wantRequestDetail) {
+      // Keep individual RQs + daily remainder so totals never drop below daily.
+      out.push(...requests);
+      out.push(...gapFillRouterDayFromDailies(dailies, requests));
+      continue;
+    }
+
+    // Sparse history — authoritative daily floor only.
+    out.push(...dailies);
   }
   return out;
 }

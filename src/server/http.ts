@@ -12,7 +12,6 @@ import {
   collapseSourcePathRollups,
   loadImportedEvents,
   loadScanCache,
-  mergeEventsById,
   mergeEventsByIdPreferRicher,
   mergeLocalPreferOverGistRollups,
   migrateLegacyDataDir,
@@ -179,16 +178,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   };
 
   /**
-   * Mid-scan merge: O(n) by-id only. Full collapse (router daily / windsurf / exact)
-   * runs once at the end — doing it per-agent on 10k+ 9router rows froze the UI.
+   * Mid-scan merge: by-id prefer-richer. Never replace a richer previous agent
+   * snapshot just because the fresh parse has more (often thinner) rows —
+   * that made 9router all-time totals oscillate up/down on every rescan.
+   * Full collapse (router daily / windsurf / exact) still runs once at the end.
    */
   function mergeAgentScanLight(fresh: UsageEvent[], prev: UsageEvent[]): UsageEvent[] {
     if (fresh.length === 0) return prev;
     if (prev.length === 0) return fresh;
-    // Fresh covers as much or more → trust parser (common full-scan path).
-    if (fresh.length >= prev.length) return fresh;
-    // Partial re-scan: keep fresh ids + any prev-only rows (never shrink totals).
-    return mergeEventsById(fresh, prev);
+    // Union by id; keep higher token/cost row when same id reappears.
+    // Also keeps prev-only rows (already-scanned history) so we only *add*
+    // newly seen ids from this pass rather than re-baselining the agent.
+    return mergeEventsByIdPreferRicher(fresh, prev);
   }
 
   /**
