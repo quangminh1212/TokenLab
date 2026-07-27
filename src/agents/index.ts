@@ -154,6 +154,24 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 /** Default per-agent budget — large enough for multi‑100MB Grok updates.jsonl. */
 const DEFAULT_PARSER_TIMEOUT_MS = 600_000;
 
+/** Heavy parsers run last so light agents fill the UI first (less empty-state lag). */
+const HEAVY_AGENTS = new Set<string>([
+  "grok",
+  "9router",
+  "routerlab",
+  "xlabrouter",
+  "devin",
+  "windsurf",
+  "cursor",
+  "claude-code",
+  "hermes",
+  "copilot",
+]);
+
+function yieldEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 /**
  * Scan all enabled agents. Runs parsers in parallel (bounded concurrency) so a
  * single heavy agent (9router/devin) does not block the rest for tens of seconds.
@@ -191,6 +209,14 @@ export async function scanAll(
     )
   ).filter((j): j is Job => j != null);
 
+  // Light agents first → progressive UI fills sooner; heavy (Grok/9router) last.
+  jobs.sort((a, b) => {
+    const ha = HEAVY_AGENTS.has(a.id) ? 1 : 0;
+    const hb = HEAVY_AGENTS.has(b.id) ? 1 : 0;
+    if (ha !== hb) return ha - hb;
+    return a.id.localeCompare(b.id);
+  });
+
   // When caller streams via onAgentDone (server rescan), skip giant combined array
   // to avoid holding ~2× events in RAM (batch lists + `all`).
   const collectAll = !onAgentDone;
@@ -213,6 +239,8 @@ export async function scanAll(
         console.error("[tokenlab] parser " + job.id + " failed:", msg);
         onAgentDone?.({ agent: job.id, events: [], durationMs: Date.now() - t0, error: msg });
       }
+      // Let HTTP/SSE/heartbeat run between heavy parsers (reduces UI freeze).
+      await yieldEventLoop();
     }
   }
 

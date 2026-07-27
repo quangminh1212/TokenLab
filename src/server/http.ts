@@ -3,10 +3,13 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
-import { detectAgents, scanAll } from "../agents/index.js";
+import { AGENTS, detectAgents, scanAll } from "../agents/index.js";
 import {
   buildFullBackup,
   buildSettingsBackup,
+  collapseExactUsageDuplicates,
+  collapseRouterDailyEvents,
+  collapseSourcePathRollups,
   loadImportedEvents,
   loadScanCache,
   mergeEventsById,
@@ -28,7 +31,7 @@ import {
 } from "../openrouter-models.js";
 import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
 import { writeHeartbeat } from "../process-guard.js";
-import type { AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
+import type { AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
 import { filterByPeriod, normalizeModelName, pathExists, startOfDayInTimeZone } from "../util.js";
 import { VERSION } from "../version.js";
 
@@ -151,10 +154,47 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   }
 
   /**
+   * Agents re-parsed on the 60s light tick (hot usage sources).
+   * Full pass still covers every agent — keeps periodic work small & UI snappy.
+   */
+  const PERIODIC_LIGHT_AGENTS = new Set<string>([
+    "9router",
+    "routerlab",
+    "xlabrouter",
+    "hermes",
+    "cursor",
+    "claude-code",
+    "codex",
+    "opencode",
+    "grok",
+  ]);
+
+  /** Safe log — never throw EPIPE into uncaughtException mid-scan. */
+  const slog = (...args: unknown[]): void => {
+    try {
+      console.log(...args);
+    } catch {
+      /* EPIPE etc. */
+    }
+  };
+
+  /**
+   * Mid-scan merge: O(n) by-id only. Full collapse (router daily / windsurf / exact)
+   * runs once at the end — doing it per-agent on 10k+ 9router rows froze the UI.
+   */
+  function mergeAgentScanLight(fresh: UsageEvent[], prev: UsageEvent[]): UsageEvent[] {
+    if (fresh.length === 0) return prev;
+    if (prev.length === 0) return fresh;
+    // Fresh covers as much or more → trust parser (common full-scan path).
+    if (fresh.length >= prev.length) return fresh;
+    // Partial re-scan: keep fresh ids + any prev-only rows (never shrink totals).
+    return mergeEventsById(fresh, prev);
+  }
+
+  /**
    * Rescan local agent usage into memory.
-   * - full: true  → historical full pass (long per-agent cap, default 5 min). Used on boot +
-   *                 manual /api/scan so heavy agents are not cut off mid-history, but cannot hang forever.
-   * - full: false → periodic refresh with soft timeout (keeps UI snappy).
+   * - full: true  → historical full pass (all agents). Boot + manual Refresh.
+   * - full: false → light periodic (hot agents only, soft timeout).
    */
   async function rescan(opts: { full?: boolean } = {}): Promise<number> {
     // Coalesce concurrent rescans — never return mid-scan empty cache to callers.
@@ -172,7 +212,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       pricingRevision,
     });
     if (full) {
-      console.log("[tokenlab] full historical scan started (all agent usage on disk)…");
+      slog("[tokenlab] full historical scan started (all agent usage on disk)…");
     }
     scanPromise = (async () => {
       const prev = cache;
@@ -188,11 +228,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // Throttle full-cache rebuild: every agent was O(n) and blew RAM/CPU on 20k+ events.
       let rebuildDirty = false;
       let lastRebuildAt = 0;
-      const REBUILD_MIN_MS = 3_000;
+      const REBUILD_MIN_MS = full ? 4_000 : 2_500;
       let progressBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
       let lastProgressPayload: Record<string, unknown> | null = null;
+      let agentsDone = 0;
 
-      const rebuild = (force = false): void => {
+      const rebuild = (force = false, finalize = false): void => {
         const now = Date.now();
         if (!force && now - lastRebuildAt < REBUILD_MIN_MS) {
           rebuildDirty = true;
@@ -202,10 +243,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         lastRebuildAt = now;
         let total = 0;
         for (const list of byAgent.values()) total += list.length;
-        const scanned: UsageEvent[] = new Array(total);
+        let scanned: UsageEvent[] = new Array(total);
         let i = 0;
         for (const list of byAgent.values()) {
           for (const e of list) scanned[i++] = e;
+        }
+        // Collapse only once on final rebuild — mid-scan skips O(n) router/daily passes.
+        if (finalize) {
+          scanned = collapseExactUsageDuplicates(
+            collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
+          );
         }
         // Keep imported + local. Drop same-machine Gist rollups when local covers key.
         cache = mergeLocalPreferOverGistRollups(scanned, importedEvents);
@@ -222,32 +269,39 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             broadcastStream(lastProgressPayload);
             lastProgressPayload = null;
           }
-        }, 750);
+        }, 1_200);
         progressBroadcastTimer.unref?.();
       };
 
       try {
-        // Parallel parsers + progressive cache so Dashboard is not stuck at 0 for 20s+.
-        // Lower concurrency reduces peak RAM when heavy agents (Grok/Devin) parse together.
+        // Light periodic: only hot agents (mirrors + common IDEs). Full: everyone.
+        let enabled: Partial<Record<AgentId, boolean>> | undefined;
+        if (!full) {
+          enabled = {};
+          for (const mod of AGENTS) {
+            enabled[mod.id] = PERIODIC_LIGHT_AGENTS.has(mod.id);
+          }
+        }
+
         await scanAll({
-          concurrency: full ? 2 : 2,
-          // Full: no timeout (0) — wait for every agent so large Grok logs are never cut.
-          // Periodic: soft timeout; results always unioned with previous.
-          timeoutMs: full ? 0 : 180_000,
+          enabled,
+          // Slightly higher concurrency; light agents first inside scanAll.
+          concurrency: full ? 3 : 4,
+          // Full: no timeout. Periodic: 90s soft cap (prev data kept on miss).
+          timeoutMs: full ? 0 : 90_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
             // Long agent parsers can block the event loop; refresh hang watchdog.
             writeHeartbeat();
+            agentsDone += 1;
             const prevForAgent = byAgent.get(agent) ?? [];
             if (error && events.length === 0) {
               // Timeout/crash with nothing parsed — keep previous (never wipe)
             } else if (events.length === 0 && prevForAgent.length > 0) {
               // Parser returned empty but we already had data — keep previous
             } else {
-              // Union scan + previous for this agent; prefer richer rows on same id.
-              byAgent.set(agent, mergeEventsByIdPreferRicher(events, prevForAgent));
-              rebuild(false);
-              // Progressive disk write (debounced, quick mode) — not every agent.
-              scheduleSaveScanCache("quick");
+              // Light by-id merge mid-scan (no router collapse) — big lag win.
+              byAgent.set(agent, mergeAgentScanLight(events, prevForAgent));
+              rebuild(false, false);
             }
             agentStats.push({
               agent,
@@ -267,13 +321,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               eventCount: cache.length,
               scanning: true,
               pricingRevision,
+              agentsDone,
             });
-            if (full) {
+            if (full && (error || durationMs >= 2_000)) {
               const kept = (byAgent.get(agent) ?? []).length;
               const status = error
                 ? `error: ${error} (kept ${kept})`
                 : `${events.length} new → ${kept} total`;
-              console.log(`[tokenlab]   ${agent}: ${status} (${durationMs}ms)`);
+              slog(`[tokenlab]   ${agent}: ${status} (${durationMs}ms)`);
             }
           },
         });
@@ -281,14 +336,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           clearTimeout(progressBroadcastTimer);
           progressBroadcastTimer = null;
         }
-        if (rebuildDirty) rebuild(true);
-        else rebuild(true);
+        // Final rebuild with full collapse + one disk write (not every agent).
+        rebuild(true, true);
         bumpScan(full ? "complete-full" : "complete");
-        // Final durable write: collapse + .bak + archive
         scheduleSaveScanCache("full");
         if (full) {
           const failed = agentStats.filter((s) => s.error);
-          console.log(
+          slog(
             `[tokenlab] full historical scan done: ${cache.length} events` +
               ` from ${agentStats.length} agents` +
               (failed.length ? ` (${failed.length} failed: ${failed.map((f) => f.agent).join(", ")})` : ""),
@@ -302,7 +356,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
                 return;
               }
               if (!r.skipped) {
-                console.log("[tokenlab] auto daily Gist backup OK (post-full):", r.gist.htmlUrl);
+                slog("[tokenlab] auto daily Gist backup OK (post-full):", r.gist.htmlUrl);
               }
             });
           }, 5_000).unref?.();
@@ -310,7 +364,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         return cache.length;
       } catch (err) {
         // Keep last progressive cache rather than wiping
-        if (rebuildDirty) rebuild(true);
+        if (rebuildDirty) rebuild(true, true);
         bumpScan("error");
         throw err;
       } finally {
@@ -1122,21 +1176,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
 
   let periodicTick = 0;
-  // Every 60s: pull remote 9router/xlabrouter mirrors, then light rescan (full every 15 min).
-  // Sync → scan so aggregate/dashboard always reflects the just-pulled usageDaily.
+  // Every 60s: pull remote mirrors + light rescan. Full all-agent scan every 30 min.
+  // Sync → scan so aggregate/dashboard reflects just-pulled usageDaily.
   const timer = setInterval(() => {
     periodicTick += 1;
-    const doFull = periodicTick % 15 === 0;
+    const doFull = periodicTick % 30 === 0;
     void (async () => {
       await syncVpsMirrors(doFull ? "periodic-full" : "periodic", 55_000);
       // Skip starting another scan if one is already running (rescan coalesces too).
       if (scanPromise) return;
       await rescan({ full: doFull });
     })().catch((err) => {
-      console.error(
-        "[tokenlab] periodic sync/scan failed:",
-        err instanceof Error ? err.message : err,
-      );
+      try {
+        console.error(
+          "[tokenlab] periodic sync/scan failed:",
+          err instanceof Error ? err.message : err,
+        );
+      } catch {
+        /* EPIPE */
+      }
     });
   }, 60_000);
   timer.unref?.();

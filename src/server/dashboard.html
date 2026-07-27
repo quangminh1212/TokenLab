@@ -708,8 +708,8 @@
     function scheduleScanPoll() {
       if (scanPollTimer) clearTimeout(scanPollTimer);
       if (!state.scanning && !state.awaitingData) return;
-      // Faster poll while scanning so progressive events show up quickly
-      const delay = state.scanning ? 600 : 1200;
+      // Slow poll while scanning — SSE progress is primary; avoid hammering /api/stats
+      const delay = state.scanning ? 2500 : 2000;
       scanPollTimer = setTimeout(() => {
         scanPollTimer = 0;
         requestLoad({ quiet: true });
@@ -765,8 +765,11 @@
     };
 
     requestLoad();
-    // Faster auto-refresh so new usage shows without waiting for manual Refresh
-    setInterval(() => void requestLoad({ quiet: true }), 10_000);
+    // Background refresh — skip while scanning (SSE + scan poll handle that)
+    setInterval(() => {
+      if (state.scanning) return;
+      void requestLoad({ quiet: true });
+    }, 15_000);
 
     // Realtime: pricing rate changes + scan completion (fills empty bootstrap UI)
     function watchLiveStream() {
@@ -799,11 +802,21 @@
                 scheduleScanPoll();
                 return;
               }
-              // Progressive agent batches: refresh totals as soon as data arrives
+              // Progressive batches: throttle full reload (was every agent = UI lag)
               if (msg.reason === 'progress') {
                 if (typeof msg.eventCount === 'number') state.lastEventCount = msg.eventCount;
                 if ((msg.eventCount || 0) > 0) state.awaitingData = false;
-                requestLoad({ quiet: true });
+                const now = Date.now();
+                if (!state._lastProgressLoadAt || now - state._lastProgressLoadAt > 2500) {
+                  state._lastProgressLoadAt = now;
+                  requestLoad({ quiet: true });
+                } else {
+                  // Cheap meta update without re-fetching all charts
+                  const m = $('meta');
+                  if (m && typeof msg.eventCount === 'number') {
+                    m.textContent = m.textContent.replace(/scanning\u2026|waiting\u2026/, 'scanning\u2026');
+                  }
+                }
                 return;
               }
               // Scan finished (or error idle) \u2014 always reload so empty UI fills

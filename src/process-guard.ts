@@ -97,7 +97,27 @@ export function installProcessGuard(opts?: { log?: LogFn; logError?: LogFn }): v
     appendCrashLog(`unhandledRejection: ${msg}`);
   });
 
+  // Broken stdout/stderr (tray detach, pipe close) must not kill serve mid-scan.
+  for (const stream of [process.stdout, process.stderr]) {
+    try {
+      stream?.on?.("error", (err: NodeJS.ErrnoException) => {
+        if (err && (err.code === "EPIPE" || err.code === "EOF")) return;
+        logError("stdio error:", err?.code || err?.message || err);
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
   process.on("uncaughtException", (err) => {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    // EPIPE during console.log is common when supervisor/tray closes the pipe —
+    // restarting here caused multi-minute scan lag loops (see crash.txt / supervisor.txt).
+    if (code === "EPIPE" || code === "EOF") {
+      logError("uncaughtException EPIPE/EOF ignored:", err?.message || err);
+      appendCrashLog(`uncaughtException ignored ${code}: ${formatReason(err)}`);
+      return;
+    }
     const msg = formatReason(err);
     logError("uncaughtException:", msg);
     appendCrashLog(`uncaughtException: ${msg}`);
