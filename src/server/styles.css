@@ -630,6 +630,8 @@ html.dark {
 }
 .ov-card {
   display: flex; flex-direction: column; gap: 0.25rem;
+  align-items: center;
+  text-align: center;
   min-width: 0;
   padding: 0.85rem 1rem;
   background: var(--panel);
@@ -645,6 +647,13 @@ html.dark {
   font-size: 1.45rem; font-weight: 800; letter-spacing: -0.03em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--text);
+  width: 100%;
+  text-align: center;
+}
+.ov-label,
+.ov-hint {
+  width: 100%;
+  text-align: center;
 }
 .ov-value.tone-primary { color: var(--xlab); }
 .ov-value.tone-info { color: var(--info); }
