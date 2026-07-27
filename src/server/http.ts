@@ -2,7 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregate, computeLiveRequestRate, costReport } from "../aggregate.js";
+import { aggregate, costReport } from "../aggregate.js";
+import { computeDashboardLiveRate } from "../live-rate.js";
 import { AGENTS, detectAgents, scanAll } from "../agents/index.js";
 import {
   buildFullBackup,
@@ -570,14 +571,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       }
       const events = filterByPeriod(cache, since, until, configuredTimeZone());
       const stats = aggregate(events, groupBy, sort, since, until);
-      // Live RPM always from full cache (not period filter) — last 3 wall-clock minutes
-      const live = computeLiveRequestRate(cache, 3);
+      // Live RPM: cache live rows + hot 9router/RouterLab history tails (not period filter)
+      const live = await computeDashboardLiveRate(cache, 3);
       return json(res, 200, { ...stats, live });
     }
 
     if (req.method === "GET" && pathname === "/api/rpm") {
       const mins = Math.min(30, Math.max(1, Number(url.searchParams.get("minutes") || 3)));
-      return json(res, 200, computeLiveRequestRate(cache, mins));
+      return json(res, 200, await computeDashboardLiveRate(cache, mins));
     }
 
     if (req.method === "GET" && pathname === "/api/cost") {

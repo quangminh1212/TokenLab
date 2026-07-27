@@ -456,16 +456,30 @@
               ? rps.toFixed(3)
               : (Math.round(rps * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })) + ' RPS'
           : '';
+      const lastAge =
+        liveInfo && typeof liveInfo.lastRequestAgeSec === 'number'
+          ? liveInfo.lastRequestAgeSec
+          : null;
+      const idleHint =
+        rpmVal != null && Number(rpm) === 0 && lastAge != null
+          ? lastAge < 60
+            ? 'idle · last <1m ago'
+            : lastAge < 3600
+              ? 'idle · last ' + Math.round(lastAge / 60) + 'm ago'
+              : 'idle · last ' + Math.round(lastAge / 3600) + 'h ago'
+          : null;
       const rpmCard = rpmVal != null
         ? overviewCard(
             'RPM',
             rpmVal,
             'tone-primary',
             [
-              spark ? spark : null,
-              (rpmReq || 0) + ' req / ' + Math.round(winSec) + 's',
-              rpsHint,
-              'sliding mean',
+              spark && Number(rpm) > 0 ? spark : null,
+              idleHint
+                ? idleHint
+                : (rpmReq || 0) + ' req / ' + Math.round(winSec) + 's',
+              !idleHint ? rpsHint : null,
+              !idleHint ? 'sliding mean' : null,
             ].filter(Boolean).join(' · '),
           )
         : overviewCard('RPM', '—', 'tone-primary', 'N×60/T · sliding ' + Math.round(winSec) + 's');
