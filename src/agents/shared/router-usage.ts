@@ -310,6 +310,7 @@ function shouldPreferRequestEvents(
   const dayTok =
     num(day.promptTokens ?? day.prompt_tokens) +
     num(day.completionTokens ?? day.completion_tokens);
+  const dayCost = num(day.cost);
   const reqTok = dayEvents.reduce(
     (a, e) => a + (Number(e.inputTokens) || 0) + (Number(e.outputTokens) || 0),
     0,
@@ -324,6 +325,21 @@ function shouldPreferRequestEvents(
 
   // History/RD twin copies often overshoot tiny dailies too.
   if (dayTok > 0 && reqTok > dayTok * 1.05) return false;
+
+  // Zero-token stream probes (success / "say test") inflate RQ count while
+  // tokens stay inside the daily envelope — keep dailySummary (e.g. 1 not 35).
+  if (
+    dayReqTarget > 0 &&
+    reqCount > Math.max(dayReqTarget * 1.5, dayReqTarget + 5) &&
+    (dayTok <= 0 || reqTok <= dayTok * 1.05)
+  ) {
+    return false;
+  }
+
+  // Any billed/non-empty daily is SoT for that calendar day on remote dashboards.
+  if (dayReqTarget >= 1 && (dayCost > 0 || dayTok > 0) && reqCount > dayReqTarget * 1.25) {
+    return false;
+  }
 
   const coverageByCount = dayReqTarget > 0 ? reqCount / dayReqTarget : 1;
   const coverageByTok = dayTok > 0 ? reqTok / dayTok : 1;
@@ -946,6 +962,17 @@ function rowToEvent(
   );
 
   const requestHint = num(r.requests ?? r.requestCount ?? r.request_count);
+  const routerCostHint = num(
+    r.cost ?? r.estimatedCost ?? r.usd,
+  );
+  // Empty stream probes (0 tokens, 0 cost) must never become usage events —
+  // even when a caller stamps requests:1. VPS dailySummary already ignores them.
+  if (
+    inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 &&
+    routerCostHint <= 0
+  ) {
+    return null;
+  }
   if (
     inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 &&
     requestHint <= 0

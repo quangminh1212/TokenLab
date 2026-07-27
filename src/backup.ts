@@ -656,6 +656,7 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
     // Request rows overshoot a *complete* daily (twin history/RD, reprice, multi-root).
     // Remote dashboards use dailySummary as authority — prefer daily in that case.
     // If daily is tiny/stale (few reqs) and requests are much richer, keep requests.
+    // Large/complete VPS dailySummary is token/cost authority (overshoot → keep daily).
     const dailyLooksAuthoritative =
       dailyReq >= 10 ||
       dailyTok >= 100_000 ||
@@ -664,6 +665,19 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       dailyLooksAuthoritative &&
       ((dailyTok > 0 && reqTok > dailyTok * 1.05) ||
         (dailyCost > 0 && reqCost > dailyCost * 1.15 && reqTok >= dailyTok * 0.9));
+    // Zero-token stream probes inflate RQ count while token volume stays inside the
+    // daily envelope (RouterLab Today: daily=1, RD≈35 empty successes → still 1 RQ).
+    const requestCountInflated =
+      dailyReq > 0 &&
+      dailyTok > 0 &&
+      reqReq > Math.max(dailyReq * 1.5, dailyReq + 5) &&
+      reqTok <= dailyTok * 1.05 &&
+      reqTok >= dailyTok * 0.5;
+
+    if (requestCountInflated || requestsOvershootDaily) {
+      out.push(...dailiesClean);
+      continue;
+    }
 
     // Stale/tiny daily but rich request history → keep requests (legacy incomplete rollup).
     if (!dailyLooksAuthoritative && reqTok > dailyTok) {
@@ -674,13 +688,16 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
     // Full request coverage within daily envelope → keep individual RQs for RECENT.
     const requestsMatchDaily =
       !requestsOvershootDaily &&
+      !requestCountInflated &&
       dailyTok > 0 &&
       reqTok >= dailyTok * 0.95 &&
-      reqTok <= dailyTok * 1.05;
+      reqTok <= dailyTok * 1.05 &&
+      (dailyReq <= 0 || reqReq <= Math.max(dailyReq * 1.25, dailyReq + 3));
 
     // Multi-RQ sample incomplete vs daily → RQs + gap-fill remainder.
     const wantRequestDetail =
       !requestsOvershootDaily &&
+      !requestCountInflated &&
       requests.length >= 2 &&
       (requests.length >= 20 ||
         reqTok >= dailyTok * 0.15 ||
@@ -790,7 +807,11 @@ export function enforceMonotonicAgentDays(
     if (b.tok > a.tok * 1.001) return b;
     if (a.cost > b.cost * 1.001) return a;
     if (b.cost > a.cost * 1.001) return b;
-    // Same tokens/cost — prefer more real requests (e.g. RD rebuild 35 vs stale daily 1)
+    // Same tokens/cost: pure estimated daily (VPS dailySummary) beats a swarm of
+    // live zero-token probes that only inflate request count (e.g. 1 vs 35).
+    if (aEst > 0 && aLive === 0 && bLive > 0 && a.req > 0 && b.req > a.req * 1.5) return a;
+    if (bEst > 0 && bLive === 0 && aLive > 0 && b.req > 0 && a.req > b.req * 1.5) return b;
+    // Same tokens/cost — prefer higher request coverage when both sides same kind
     if (a.req > b.req) return a;
     if (b.req > a.req) return b;
     return a.events.length >= b.events.length ? a : b;

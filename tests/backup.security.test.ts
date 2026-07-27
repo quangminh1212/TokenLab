@@ -189,6 +189,54 @@ test("collapseRouterDailyEvents uses daily when request rows overshoot remote da
   assert.equal(tok, 131_000_000);
 });
 
+test("collapseRouterDailyEvents uses daily when RQ count inflated by zero-token probes", () => {
+  // RouterLab remote Today: 1 billed RQ; RD has ~35 empty stream successes.
+  const daily = evt({
+    id: "daily-tiny",
+    agent: "routerlab",
+    model: "qwen3.7-max",
+    estimated: true,
+    inputTokens: 3155,
+    outputTokens: 69,
+    totalTokens: 3224,
+    estimatedCost: 0.0017155,
+    requestCount: 1,
+    timestamp: "2026-07-27T12:00:00.000Z",
+  });
+  const real = evt({
+    id: "rq-real",
+    agent: "routerlab",
+    model: "qwen3.7-max",
+    estimated: false,
+    inputTokens: 3155,
+    outputTokens: 69,
+    totalTokens: 3224,
+    estimatedCost: 0.0017155,
+    timestamp: "2026-07-27T04:28:07.000Z",
+  });
+  const probes = Array.from({ length: 34 }, (_, i) =>
+    evt({
+      id: "probe-" + i,
+      agent: "routerlab",
+      model: "grok-4.5",
+      estimated: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      estimatedCost: 0,
+      timestamp: "2026-07-27T04:30:" + String(i).padStart(2, "0") + ".000Z",
+    }),
+  );
+  const merged = collapseRouterDailyEvents([daily, real, ...probes]);
+  assert.ok(merged.some((e) => e.id === "daily-tiny"));
+  assert.equal(merged.some((e) => String(e.id).startsWith("probe-")), false);
+  const reqs = merged.reduce((a, e) => {
+    const rc = e.requestCount;
+    return a + (typeof rc === "number" && rc > 0 ? Math.floor(rc) : 1);
+  }, 0);
+  assert.equal(reqs, 1);
+});
+
 test("collapseRouterDailyEvents keeps multi-RQ detail AND daily floor (no total drop)", () => {
   const daily = evt({
     id: "daily-fat",
