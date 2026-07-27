@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { aggregate, costReport } from "../aggregate.js";
-import { computeDashboardLiveRate } from "../live-rate.js";
+import { buildRecentLiveEvents, computeDashboardLiveRate } from "../live-rate.js";
 import { AGENTS, detectAgents, scanAll } from "../agents/index.js";
 import {
   buildFullBackup,
@@ -593,14 +593,30 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const agent = url.searchParams.get("agent");
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
+      // live=0 → raw cache (incl. daily rollups). Default live=1 for RECENT EVENTS:
+      // only real per-call rows (no 298M-token estimated day blobs).
+      const liveOnly = url.searchParams.get("live") !== "0";
+      if (liveOnly) {
+        const liveList = await buildRecentLiveEvents(cache, {
+          limit: Math.min(2000, Math.max(limit * 4, 100)),
+          agent: agent || null,
+          nowMs: Date.now(),
+        });
+        let list = filterByPeriod(liveList, since, until, configuredTimeZone());
+        if (agent) list = list.filter((e) => e.agent === agent);
+        list = list
+          .slice()
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, limit);
+        return json(res, 200, { events: list, count: list.length, liveOnly: true });
+      }
       let list = filterByPeriod(cache, since, until, configuredTimeZone());
       if (agent) list = list.filter((e) => e.agent === agent);
-      // Newest first by timestamp (scan order is not chronological)
       list = list
         .slice()
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
         .slice(0, limit);
-      return json(res, 200, { events: list, count: list.length });
+      return json(res, 200, { events: list, count: list.length, liveOnly: false });
     }
 
     if (req.method === "GET" && pathname === "/api/agents") {

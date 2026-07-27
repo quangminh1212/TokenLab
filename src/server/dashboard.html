@@ -684,7 +684,8 @@
       try {
         // Pass since to /api/events so server filters with parseSince (7d/24h/\u2026),
         // not new Date("7d") which is Invalid Date and drops every event.
-        const qEvents = new URLSearchParams({ limit: '40' });
+        // live=1 (default server-side): real per-call rows only — not daily 300M-token blobs
+        const qEvents = new URLSearchParams({ limit: '40', live: '1' });
         if (since) qEvents.set('since', since);
 
         const [stats, seriesStats, health, eventsRes] = await Promise.all([
@@ -753,6 +754,14 @@
             return !Number.isNaN(t) && t >= t0;
           });
         }
+        // Never show estimated daily/model rollups in RECENT (e.g. 298M input · 3k RQ)
+        recent = recent.filter((e) => {
+          if (!e) return false;
+          if (e.estimated) return false;
+          const rc = e.requestCount;
+          if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
+          return true;
+        });
         // Ensure newest-first even if response order varies
         recent = recent
           .slice()

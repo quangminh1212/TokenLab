@@ -110,20 +110,34 @@ function rowToLiveEvent(row: Record<string, unknown>, agent: string, source: str
 }
 
 /**
+ * True for real per-call rows suitable for RECENT EVENTS / live RPM.
+ * False for estimated daily/model rollups (e.g. 298M tokens · 3946 requests).
+ */
+export function isLiveRequestEvent(e: UsageEvent | null | undefined): boolean {
+  if (!e || typeof e.timestamp !== "string") return false;
+  if (e.estimated) return false;
+  const rc = e.requestCount;
+  // Fat multi-request packs are rollups, not a single API call
+  if (typeof rc === "number" && Number.isFinite(rc) && rc > 5) return false;
+  return true;
+}
+
+/**
  * Live per-call events from router mirrors (always fresh after VPS sync).
- * Used so RPM does not stay 0 when scan-cache only holds daily rollups.
+ * Used so RPM / RECENT EVENTS do not show only daily rollup blobs.
  */
 export async function loadHotMirrorLiveEvents(
   nowMs: number = Date.now(),
   /** How far back to keep (slightly larger than RPM window for lastRequestAt) */
   lookbackMinutes = 30,
+  tailBytes = 512 * 1024,
 ): Promise<UsageEvent[]> {
   const start = nowMs - Math.max(1, lookbackMinutes) * 60_000;
   const out: UsageEvent[] = [];
   const seen = new Set<string>();
 
   for (const { agent, file } of hotHistoryFiles()) {
-    const lines = await readJsonlTail(file);
+    const lines = await readJsonlTail(file, tailBytes);
     for (const line of lines) {
       let row: unknown;
       try {
@@ -133,7 +147,7 @@ export async function loadHotMirrorLiveEvents(
       }
       if (!row || typeof row !== "object") continue;
       const e = rowToLiveEvent(row as Record<string, unknown>, agent, file);
-      if (!e) continue;
+      if (!e || !isLiveRequestEvent(e)) continue;
       const t = Date.parse(e.timestamp);
       if (!Number.isFinite(t) || t < start || t > nowMs + 5_000) continue;
       if (seen.has(e.id)) continue;
@@ -142,6 +156,69 @@ export async function loadHotMirrorLiveEvents(
     }
   }
   return out;
+}
+
+/**
+ * Build a newest-first RECENT EVENTS list: live cache rows + hot router history.
+ * Daily estimated rollups (multi-million-token "events") are never included.
+ */
+export async function buildRecentLiveEvents(
+  cache: UsageEvent[],
+  opts: {
+    limit?: number;
+    sinceMs?: number | null;
+    untilMs?: number | null;
+    agent?: string | null;
+    nowMs?: number;
+  } = {},
+): Promise<UsageEvent[]> {
+  const limit = Math.min(1000, Math.max(1, opts.limit ?? 50));
+  const nowMs = opts.nowMs ?? Date.now();
+  const sinceMs = opts.sinceMs ?? null;
+  const untilMs = opts.untilMs ?? null;
+  // Pull enough history for "today"/24h feeds (1.5MB tail ≈ many hundreds of RQs)
+  const lookbackMin =
+    sinceMs != null && Number.isFinite(sinceMs)
+      ? Math.min(7 * 24 * 60, Math.max(60, Math.ceil((nowMs - sinceMs) / 60_000) + 30))
+      : 24 * 60;
+  const hot = await loadHotMirrorLiveEvents(nowMs, lookbackMin, 1.5 * 1024 * 1024);
+
+  const inPeriod = (e: UsageEvent): boolean => {
+    const t = Date.parse(e.timestamp);
+    if (!Number.isFinite(t)) return false;
+    if (sinceMs != null && t < sinceMs) return false;
+    if (untilMs != null && t > untilMs) return false;
+    if (opts.agent && e.agent !== opts.agent) return false;
+    return true;
+  };
+
+  const byKey = new Map<string, UsageEvent>();
+  const keyOf = (e: UsageEvent): string => {
+    // Collapse twin cache vs mirror copies of the same call
+    const ts = (e.timestamp || "").slice(0, 19);
+    return [
+      e.agent,
+      ts,
+      e.model || "",
+      e.inputTokens || 0,
+      e.outputTokens || 0,
+    ].join("|");
+  };
+
+  for (const e of cache) {
+    if (!isLiveRequestEvent(e) || !inPeriod(e)) continue;
+    byKey.set(keyOf(e), e);
+  }
+  for (const e of hot) {
+    if (!inPeriod(e)) continue;
+    const k = keyOf(e);
+    const prev = byKey.get(k);
+    if (!prev) byKey.set(k, e);
+  }
+
+  return [...byKey.values()]
+    .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+    .slice(0, limit);
 }
 
 /**
