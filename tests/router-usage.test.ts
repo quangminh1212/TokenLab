@@ -272,20 +272,29 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "9router");
+      // Substantial daily (≥20 req, ≥10k tok) is VPS dashboard authority —
+      // emit byModel rollups, not partial history tails.
       const models = new Set(events.map((e) => e.model));
-      assert.ok(models.has("gpt-5.6-sol"), "history model kept");
-      assert.ok(models.has("qwen3.7-max"), "missing model gap-filled from daily");
-      assert.ok(models.has("minimax-m3"), "second missing model gap-filled");
-      // Individual sol RQs still present (not collapsed)
-      assert.ok(events.filter((e) => e.model === "gpt-5.6-sol" && !e.estimated).length >= 20);
-      // Gap-fill rows are estimated daily rollups
-      assert.ok(events.some((e) => e.model === "qwen3.7-max" && e.estimated));
+      assert.ok(models.has("gpt-5.6-sol"));
+      assert.ok(models.has("qwen3.7-max"));
+      assert.ok(models.has("minimax-m3"));
+      assert.ok(events.every((e) => e.estimated), "daily rollups are estimated");
+      const reqSum = events.reduce(
+        (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
+        0,
+      );
+      assert.equal(reqSum, 35);
+      const tok = events.reduce(
+        (a, e) => a + (e.inputTokens || 0) + (e.outputTokens || 0),
+        0,
+      );
+      assert.equal(tok, 353_500);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it("prefers multi-request history over giant daily byModel blobs", async () => {
+  it("uses dailySummary as day authority when history would under/over count", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-split-"));
@@ -328,21 +337,18 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "routerlab");
-      // Keep 25 individual RQs + optional daily deficit gap-fill (not one giant blob only)
-      const live = events.filter((e) => !e.estimated);
-      const gap = events.filter((e) => e.estimated);
-      assert.equal(live.length, 25);
+      // Daily authority: one rollup with full 99 requests / 5.2M tokens (matches VPS)
+      assert.ok(events.every((e) => e.estimated));
       assert.ok(events.every((e) => e.model === "grok-4.5"));
-      const maxLiveIn = Math.max(...live.map((e) => e.inputTokens || 0));
-      assert.ok(maxLiveIn < 200_000, `single RQ should not be multi-million, got ${maxLiveIn}`);
-      assert.ok(!live.some((e) => (e.inputTokens || 0) >= 1_000_000));
-      // Request total should cover full daily.requests (25 hist + remainder)
       const reqSum = events.reduce(
         (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
         0,
       );
       assert.equal(reqSum, 99);
-      assert.ok(gap.length >= 1, "deficit gap-fill for remaining daily requests");
+      const inTok = events.reduce((a, e) => a + (e.inputTokens || 0), 0);
+      assert.equal(inTok, 5_216_191);
+      const cost = events.reduce((a, e) => a + (e.estimatedCost || 0), 0);
+      assert.equal(cost, 10);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
