@@ -87,54 +87,165 @@ n9h = export_sqlite_history_tail(
 print("EXPORTED_9ROUTER_HIST_TAIL", n9h)
 
 # --- RouterLab / xlabrouter (systemd DATA_DIR) ---
+# Live db.json often only keeps a short recent window after wipes/resyncs.
+# Merge dailySummary from live + all db.json.bak* + deploy backups so TokenLab
+# all-time usage is complete (richer day wins: requests / tokens / cost).
 root = Path("/var/lib/xlabrouter")
 dbj = root / "db.json"
 if not dbj.is_file():
-    # legacy path
     dbj = Path("/root/.xlabrouter/db.json")
-if dbj.is_file():
-    j = json.loads(dbj.read_text(encoding="utf-8", errors="ignore"))
+
+def day_score(d):
+    if not isinstance(d, dict):
+        return (0, 0, 0.0, 0)
+    req = int(d.get("requests") or 0)
+    pt = float(d.get("promptTokens") or d.get("prompt_tokens") or 0)
+    ct = float(d.get("completionTokens") or d.get("completion_tokens") or 0)
+    cost = float(d.get("cost") or 0)
+    models = len(d.get("byModel") or {}) if isinstance(d.get("byModel"), dict) else 0
+    return (req, int(pt + ct), cost, models)
+
+def load_daily_from_dbjson(p: Path):
+    try:
+        j = json.loads(p.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return {}, {}
     u = j.get("usageData") or {}
-    hist = u.get("history") or []
     daily = u.get("dailySummary") or {}
-    if not isinstance(hist, list):
-        hist = []
     if not isinstance(daily, dict):
         daily = {}
+    return daily, j
+
+merged_daily = {}
+merge_sources = []
+candidates = []
+if root.is_dir():
+    if (root / "db.json").is_file():
+        candidates.append(root / "db.json")
+    candidates.extend(sorted(root.glob("db.json.bak*")))
+    bak_root = root / "backups"
+    if bak_root.is_dir():
+        candidates.extend(sorted(bak_root.rglob("db.json")))
+if dbj.is_file() and dbj not in candidates:
+    candidates.insert(0, dbj)
+
+live_j = {}
+live_hist = []
+for p in candidates:
+    daily, full_j = load_daily_from_dbjson(p)
+    if p.name == "db.json" and full_j:
+        live_j = full_j
+        hu = (full_j.get("usageData") or {}).get("history") or []
+        if isinstance(hu, list):
+            live_hist = hu
+    if not daily:
+        continue
+    n_new = n_up = 0
+    for dk, day in daily.items():
+        if not isinstance(dk, str) or len(dk) != 10 or not isinstance(day, dict):
+            continue
+        prev = merged_daily.get(dk)
+        if prev is None:
+            merged_daily[dk] = day
+            n_new += 1
+        elif day_score(day) > day_score(prev):
+            merged_daily[dk] = day
+            n_up += 1
+    if n_new or n_up:
+        merge_sources.append(f"{p}: +{n_new}/^{n_up}")
+
+# Optional: 9router→RouterLab import snapshots
+ss = root / "9router-usage-sync-state.json"
+if ss.is_file():
+    try:
+        st = json.loads(ss.read_text(encoding="utf-8", errors="ignore"))
+        snaps = st.get("dailySnapshots") or {}
+        if isinstance(snaps, dict):
+            n_new = n_up = 0
+            for dk, day in snaps.items():
+                if isinstance(day, str):
+                    try:
+                        day = json.loads(day)
+                    except Exception:
+                        continue
+                if not isinstance(day, dict):
+                    continue
+                if isinstance(day.get("data"), dict) and "requests" not in day:
+                    day = day["data"]
+                if not isinstance(dk, str) or len(dk) != 10:
+                    continue
+                if "requests" not in day and "promptTokens" not in day:
+                    continue
+                prev = merged_daily.get(dk)
+                if prev is None:
+                    merged_daily[dk] = day
+                    n_new += 1
+                elif day_score(day) > day_score(prev):
+                    merged_daily[dk] = day
+                    n_up += 1
+            if n_new or n_up:
+                merge_sources.append(f"sync-state: +{n_new}/^{n_up}")
+    except Exception as e:
+        print("SYNC_STATE_ERR", e)
+
+if merged_daily or live_j:
+    total_req = sum(int((d or {}).get("requests") or 0) for d in merged_daily.values())
+    total_pt = sum(int((d or {}).get("promptTokens") or 0) for d in merged_daily.values())
+    total_ct = sum(int((d or {}).get("completionTokens") or 0) for d in merged_daily.values())
+    total_cost = sum(float((d or {}).get("cost") or 0) for d in merged_daily.values())
 
     Path("/tmp/xlab-mirror-xlabrouter-usage-daily.json").write_text(
-        json.dumps(daily, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        json.dumps(merged_daily, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
-    print("EXPORTED_ROUTERLAB_DAYS", len(daily), "lifetime", u.get("totalRequestsLifetime"))
-    if daily:
-        print("ROUTERLAB_RANGE", min(daily), max(daily))
+    print(
+        "EXPORTED_ROUTERLAB_DAYS",
+        len(merged_daily),
+        "lifetime_req",
+        total_req,
+        "pt",
+        total_pt,
+        "ct",
+        total_ct,
+        "cost",
+        round(total_cost, 4),
+    )
+    if merged_daily:
+        print("ROUTERLAB_RANGE", min(merged_daily), max(merged_daily))
+    print("ROUTERLAB_MERGE_SOURCES", len(merge_sources))
+    for s in merge_sources[:20]:
+        print(" ", s)
 
     with open("/tmp/xlab-mirror-xlabrouter-usage-history.jsonl", "w", encoding="utf-8") as f:
-        for row in hist:
+        for row in live_hist:
             if isinstance(row, dict):
                 f.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
-    print("EXPORTED_ROUTERLAB_HIST", len(hist))
+    print("EXPORTED_ROUTERLAB_HIST", len(live_hist))
 
+    u_out = {
+        "dailySummary": merged_daily,
+        "history": live_hist if isinstance(live_hist, list) else [],
+        "totalRequestsLifetime": total_req,
+        "cockpitImports": ((live_j.get("usageData") or {}).get("cockpitImports") if live_j else None) or [],
+    }
     Path("/tmp/xlab-mirror-xlabrouter-usageData.json").write_text(
-        json.dumps(u, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        json.dumps(u_out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
 
-    # slim db.json: keep usage + combos + connections meta (no secrets expansion needed for parse)
     slim = {
-        "usageData": u,
-        "combos": j.get("combos") or [],
+        "usageData": u_out,
+        "combos": (live_j.get("combos") or []) if live_j else [],
         "settings": {
-            k: (j.get("settings") or {}).get(k)
+            k: (live_j.get("settings") or {}).get(k)
             for k in ("comboStrategies", "comboStrategy", "stickyRoundRobinLimit")
-            if isinstance(j.get("settings"), dict)
-        },
+            if isinstance(live_j.get("settings"), dict)
+        } if live_j else {},
     }
     Path("/tmp/xlab-mirror-xlabrouter-db.json").write_text(
         json.dumps(slim, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
-    print("COPIED routerlab slim db.json")
+    print("COPIED routerlab slim db.json (merged daily)")
 
-    # request-details (recent, compact)
+    # request-details (full records when small; else last 8000)
     rd = root / "request-details.json"
     nrd = 0
     if rd.is_file():
@@ -143,8 +254,10 @@ if dbj.is_file():
             rec = data.get("records") if isinstance(data, dict) else data
             if not isinstance(rec, list):
                 rec = []
+            # Keep all if modest; otherwise last 8000 for RECENT EVENTS
+            take = rec if len(rec) <= 8000 else rec[-8000:]
             with open("/tmp/xlab-mirror-xlabrouter-request-details.jsonl", "w", encoding="utf-8") as f:
-                for row in rec[-3000:]:
+                for row in take:
                     if not isinstance(row, dict):
                         continue
                     tokens = row.get("tokens") or {}
