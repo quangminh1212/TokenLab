@@ -382,6 +382,7 @@ export function repriceEvents(
       workspace: e.workspace,
       sourcePath: e.sourcePath,
       estimated: e.estimated,
+      requestCount: e.requestCount,
       routerCost: useTable ? null : e.estimatedCost,
     });
   });

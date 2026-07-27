@@ -68,6 +68,12 @@ export interface UsageEvent {
   workspace: string | null;
   sourcePath: string;
   estimated?: boolean;
+  /**
+   * Real API request count represented by this row.
+   * Per-call history rows = 1; daily byModel rollups = that model's `requests`.
+   * Aggregate `eventCount` sums this (defaults to 1 when omitted).
+   */
+  requestCount?: number;
 }
 
 export interface TokenTotals {

@@ -43,6 +43,18 @@ test("aggregate by agent sorts by cost", () => {
   assert.equal(r.groups[0].key, "grok");
   assert.equal(r.totals.totalTokens, 3600);
   assert.ok(Math.abs(r.totals.estimatedCost - 1.7) < 1e-9);
+  assert.equal(r.totals.eventCount, 2, "default 1 request per event");
+});
+
+test("aggregate eventCount sums requestCount (daily rollup style)", () => {
+  const events: UsageEvent[] = [
+    { ...sample[0]!, id: "d1", requestCount: 90, estimatedCost: 4.5 },
+    { ...sample[1]!, id: "d2", requestCount: 10, estimatedCost: 0.5 },
+  ];
+  const r = aggregate(events, "model", "cost");
+  assert.equal(r.totals.eventCount, 100);
+  assert.equal(r.groups.find((g) => g.key === "gpt-4.1")?.eventCount, 90);
+  assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
 });
 
 test("aggregate by model merges names with provider parentheses", () => {

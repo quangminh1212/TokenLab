@@ -21,7 +21,9 @@ function add(t: TokenTotals, e: UsageEvent): void {
   t.cacheWriteTokens += e.cacheWriteTokens;
   t.totalTokens += e.totalTokens;
   t.estimatedCost += e.estimatedCost ?? 0;
-  t.eventCount += 1;
+  // Sum real API requests (daily rollups carry model.requests; per-call rows = 1)
+  const reqs = e.requestCount;
+  t.eventCount += typeof reqs === "number" && Number.isFinite(reqs) && reqs > 0 ? Math.floor(reqs) : 1;
 }
 
 function groupKey(e: UsageEvent, by: GroupBy): string {

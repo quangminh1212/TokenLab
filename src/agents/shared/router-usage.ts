@@ -231,10 +231,10 @@ function reconcileEventsAndDaily(
     }
 
     if (shouldPreferRequestEvents(dayEvents, daily.day)) {
-      // Keep individual RQs for RECENT EVENTS, but still surface models that only
-      // appear in daily byModel (rolling history windows often drop minority models).
+      // Keep individual RQs for RECENT EVENTS; gap-fill missing models + request/token deficit
+      // so TOTAL REQUESTS matches router daily.requests (history tails are often incomplete).
       out.push(...dayEvents);
-      out.push(...gapFillMissingModels(dateKey, daily.day, agent, daily.source, dayEvents));
+      out.push(...gapFillDailyDeficits(dateKey, daily.day, agent, daily.source, dayEvents));
       continue;
     }
 
@@ -275,21 +275,13 @@ function shouldPreferRequestEvents(
   return coverageByCount >= 0.15 || coverageByTok >= 0.15;
 }
 
-/** Model keys present in request-level events (normalized). */
-function modelsPresentInEvents(events: UsageEvent[]): Set<string> {
-  const s = new Set<string>();
-  for (const e of events) {
-    const m = normalizeModelName(e.model) || e.model || "";
-    if (m) s.add(m);
-  }
-  return s;
-}
-
 /**
- * When history is preferred but incomplete vs daily.byModel, emit estimated rollups
- * only for models that never appear in the request sample (no double-count).
+ * When history is preferred but incomplete vs daily.byModel:
+ *  - models absent from history → full daily model rollup
+ *  - models present but fewer requests/tokens than daily → remainder rollup only
+ * Request counts use daily `requests` so TOTAL REQUESTS is not stuck on history-row count.
  */
-function gapFillMissingModels(
+function gapFillDailyDeficits(
   dateKey: string,
   day: Record<string, unknown>,
   agent: AgentId,
@@ -299,11 +291,27 @@ function gapFillMissingModels(
   const byModel = day.byModel;
   if (!byModel || typeof byModel !== "object" || Array.isArray(byModel)) return [];
 
-  const present = modelsPresentInEvents(dayEvents);
-  const missing: Record<string, unknown> = {};
-  let missIn = 0;
-  let missOut = 0;
-  let missCost = 0;
+  type Acc = { n: number; in: number; out: number; cache: number; cost: number };
+  const histByModel = new Map<string, Acc>();
+  for (const e of dayEvents) {
+    const model = normalizeModelName(e.model) || e.model || "";
+    if (!model) continue;
+    const prev = histByModel.get(model) || { n: 0, in: 0, out: 0, cache: 0, cost: 0 };
+    const reqs =
+      typeof e.requestCount === "number" && e.requestCount > 0 ? Math.floor(e.requestCount) : 1;
+    prev.n += reqs;
+    prev.in += Number(e.inputTokens) || 0;
+    prev.out += Number(e.outputTokens) || 0;
+    prev.cache += Number(e.cacheReadTokens) || 0;
+    prev.cost += Number(e.estimatedCost) || 0;
+    histByModel.set(model, prev);
+  }
+
+  const deficitByModel: Record<string, unknown> = {};
+  let sumReq = 0;
+  let sumIn = 0;
+  let sumOut = 0;
+  let sumCost = 0;
 
   for (const [modelKey, mraw] of Object.entries(byModel as Record<string, unknown>)) {
     if (!mraw || typeof mraw !== "object") continue;
@@ -314,31 +322,49 @@ function gapFillMissingModels(
           modelKey.split("|")[0] ||
           modelKey,
       ) || "mixed";
-    if (present.has(model)) continue;
-    const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
-    const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
-    const cost = num(m.cost);
-    if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
-    missing[modelKey] = mraw;
-    missIn += inputTokens;
-    missOut += outputTokens;
-    missCost += cost;
+    const dailyReq = num(m.requests);
+    const dailyIn = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
+    const dailyOut = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
+    const dailyCache = num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens);
+    const dailyCost = num(m.cost);
+    const hist = histByModel.get(model) || { n: 0, in: 0, out: 0, cache: 0, cost: 0 };
+
+    const remReq = Math.max(0, dailyReq - hist.n);
+    const remIn = Math.max(0, dailyIn - hist.in);
+    const remOut = Math.max(0, dailyOut - hist.out);
+    const remCache = Math.max(0, dailyCache - hist.cache);
+    const remCost = Math.max(0, dailyCost - hist.cost);
+
+    // Nothing left to attribute
+    if (remReq <= 0 && remIn + remOut + remCache <= 0 && remCost <= 0) continue;
+    // History already at/over daily totals for this model
+    if (hist.n >= dailyReq && hist.in + hist.out >= dailyIn + dailyOut && dailyReq > 0) continue;
+
+    deficitByModel[modelKey] = {
+      requests: remReq > 0 ? remReq : hist.n === 0 ? Math.max(1, dailyReq) : 0,
+      promptTokens: remIn,
+      completionTokens: remOut,
+      cachedTokens: remCache,
+      cost: remCost,
+      rawModel: typeof m.rawModel === "string" ? m.rawModel : model,
+      provider: typeof m.provider === "string" ? m.provider : undefined,
+    };
+    sumReq += remReq > 0 ? remReq : 0;
+    sumIn += remIn;
+    sumOut += remOut;
+    sumCost += remCost;
   }
 
-  if (Object.keys(missing).length === 0) return [];
+  if (Object.keys(deficitByModel).length === 0) return [];
 
-  // Expand only the missing slice — day totals match byModel so completeness check passes.
   return expandOneDay(
     dateKey,
     {
-      requests: Object.values(missing).reduce(
-        (a: number, m) => a + num((m as Record<string, unknown>).requests),
-        0,
-      ),
-      promptTokens: missIn,
-      completionTokens: missOut,
-      cost: missCost,
-      byModel: missing,
+      requests: sumReq,
+      promptTokens: sumIn,
+      completionTokens: sumOut,
+      cost: sumCost,
+      byModel: deficitByModel,
     },
     agent,
     source,
@@ -653,7 +679,10 @@ function expandOneDay(
       const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
       const cacheReadTokens = num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens);
       const cost = num(m.cost);
-      if (inputTokens + outputTokens + cacheReadTokens <= 0 && cost <= 0) continue;
+      const modelRequests = num(m.requests);
+      if (inputTokens + outputTokens + cacheReadTokens <= 0 && cost <= 0 && modelRequests <= 0) {
+        continue;
+      }
       modelCost += cost;
       modelTokens += inputTokens + outputTokens;
       const ts = syntheticDailyTimestamp(
@@ -669,6 +698,7 @@ function expandOneDay(
           promptTokens: inputTokens,
           completionTokens: outputTokens,
           cost,
+          requests: modelRequests > 0 ? modelRequests : 1,
           tokens: {
             prompt_tokens: inputTokens,
             completion_tokens: outputTokens,
@@ -684,6 +714,7 @@ function expandOneDay(
         // or each mid-day update creates a new row and all-time totals explode.
         e.id = stableId(agent, "daily-rollup", dateKey, modelKey);
         e.estimated = true;
+        e.requestCount = modelRequests > 0 ? modelRequests : 1;
         out.push(e);
       }
     }
@@ -696,6 +727,7 @@ function expandOneDay(
 
   // Authoritative day rollup (full prompt/completion/cost for the calendar day)
   if (dayInput + dayOutput <= 0 && dayCost <= 0) return [];
+  const dayRequests = num(day.requests);
   const e = rowToEvent(
     {
       id: `daily:${dateKey}:all`,
@@ -704,6 +736,7 @@ function expandOneDay(
       promptTokens: dayInput,
       completionTokens: dayOutput,
       cost: dayCost,
+      requests: dayRequests > 0 ? dayRequests : 1,
       tokens: { prompt_tokens: dayInput, completion_tokens: dayOutput },
     },
     agent,
@@ -713,6 +746,7 @@ function expandOneDay(
   if (!e) return [];
   e.id = stableId(agent, "daily-rollup", dateKey, "all");
   e.estimated = true;
+  e.requestCount = dayRequests > 0 ? dayRequests : 1;
   return [e];
 }
 
@@ -855,7 +889,13 @@ function rowToEvent(
     tokensObj.cache_write_tokens ?? tokensObj.cacheWriteTokens ?? r.cacheWriteTokens,
   );
 
-  if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) return null;
+  const requestHint = num(r.requests ?? r.requestCount ?? r.request_count);
+  if (
+    inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 &&
+    requestHint <= 0
+  ) {
+    return null;
+  }
 
   const model = normalizeModelName(
     (typeof r.model === "string" && r.model) ||
@@ -905,6 +945,10 @@ function rowToEvent(
   const endpoint = typeof r.endpoint === "string" ? r.endpoint : "";
   const nativeId = r.id != null ? String(r.id) : tag;
 
+  // Per-call history = 1 request; daily/export may carry explicit requests count
+  const requestCountRaw = num(r.requests ?? r.requestCount ?? r.request_count);
+  const requestCount = requestCountRaw > 0 ? Math.floor(requestCountRaw) : 1;
+
   // id omits source path so the same VPS row mirrored into two folders is not double-counted
   const event = applyPricing({
     id: stableId(
@@ -925,6 +969,7 @@ function rowToEvent(
     cacheWriteTokens,
     workspace: provider ? `provider:${provider}` : null,
     sourcePath: source,
+    requestCount,
     routerCost: hasRouterCostField && routerCostRaw > 0 ? routerCostRaw : null,
   });
 
@@ -932,6 +977,7 @@ function rowToEvent(
   if (endpoint && !event.workspace) {
     event.workspace = endpoint;
   }
+  event.requestCount = requestCount;
 
   return event;
 }

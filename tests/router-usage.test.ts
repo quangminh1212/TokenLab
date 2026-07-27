@@ -165,6 +165,54 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("requestCount on daily rollups sums to daily.requests (not 1 per model row)", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { aggregate } = await import("../src/aggregate.js");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-reqcount-"));
+    try {
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          "2026-07-27": {
+            requests: 100,
+            promptTokens: 1_000_000,
+            completionTokens: 10_000,
+            cost: 5,
+            byModel: {
+              "gpt-5.6-sol|p": {
+                requests: 90,
+                promptTokens: 900_000,
+                completionTokens: 9_000,
+                cost: 4.5,
+                rawModel: "gpt-5.6-sol",
+                provider: "p",
+              },
+              "qwen3.7-max|p": {
+                requests: 10,
+                promptTokens: 100_000,
+                completionTokens: 1_000,
+                cost: 0.5,
+                rawModel: "qwen3.7-max",
+                provider: "p",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "9router");
+      assert.equal(events.length, 2);
+      assert.equal(events.find((e) => e.model === "gpt-5.6-sol")?.requestCount, 90);
+      assert.equal(events.find((e) => e.model === "qwen3.7-max")?.requestCount, 10);
+      const stats = aggregate(events, "model", "cost");
+      assert.equal(stats.totals.eventCount, 100, "TOTAL REQUESTS must be sum of model.requests");
+      assert.equal(stats.groups.find((g) => g.key === "gpt-5.6-sol")?.eventCount, 90);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("gap-fills models missing from partial history via daily byModel", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
@@ -280,13 +328,21 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "routerlab");
-      // Must keep 25 individual RQs — not one 5.2M daily blob
-      assert.equal(events.length, 25);
+      // Keep 25 individual RQs + optional daily deficit gap-fill (not one giant blob only)
+      const live = events.filter((e) => !e.estimated);
+      const gap = events.filter((e) => e.estimated);
+      assert.equal(live.length, 25);
       assert.ok(events.every((e) => e.model === "grok-4.5"));
-      assert.ok(events.every((e) => !e.estimated));
-      const maxIn = Math.max(...events.map((e) => e.inputTokens || 0));
-      assert.ok(maxIn < 200_000, `single RQ should not be multi-million, got ${maxIn}`);
-      assert.ok(!events.some((e) => (e.inputTokens || 0) >= 1_000_000));
+      const maxLiveIn = Math.max(...live.map((e) => e.inputTokens || 0));
+      assert.ok(maxLiveIn < 200_000, `single RQ should not be multi-million, got ${maxLiveIn}`);
+      assert.ok(!live.some((e) => (e.inputTokens || 0) >= 1_000_000));
+      // Request total should cover full daily.requests (25 hist + remainder)
+      const reqSum = events.reduce(
+        (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
+        0,
+      );
+      assert.equal(reqSum, 99);
+      assert.ok(gap.length >= 1, "deficit gap-fill for remaining daily requests");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

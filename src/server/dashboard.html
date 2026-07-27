@@ -431,7 +431,7 @@
     function renderOverview(t) {
       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
       $('overview').innerHTML = [
-        overviewCard('Total events', fmtFull(t.eventCount || 0)),
+        overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
         overviewCard('Cached tokens', fmtFull(cache), 'tone-info'),
         overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
@@ -559,8 +559,8 @@
     function renderTable() {
       const costs = state.viewMode === 'costs';
       const head = costs
-        ? ['Key', 'Events', 'Input $', 'Cache $', 'Output $', 'Total $']
-        : ['Key', 'Events', 'Input', 'Cached', 'Output', 'Total'];
+        ? ['Key', 'Requests', 'Input $', 'Cache $', 'Output $', 'Total $']
+        : ['Key', 'Requests', 'Input', 'Cached', 'Output', 'Total'];
       $('tableHead').innerHTML = `<tr>${head.map((h, i) =>
         `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr>`;
 
@@ -667,7 +667,7 @@
         state.lastEventCount = eventCount;
 
         const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
-        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} events${scanHint}`;
+        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} rows${scanHint}`;
 
         renderOverview(state.totals);
         renderChart();
