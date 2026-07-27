@@ -75,7 +75,15 @@ export function aggregate(
 
 /**
  * Live request rate over a sliding wall-clock window (default 3 minutes).
- * Uses real per-call rows; skips fat estimated daily rollups so RPM stays live.
+ *
+ * International / APM standard (Prometheus rate, Datadog, New Relic):
+ *   RPS = N / T_seconds
+ *   RPM = RPS × 60 = N × 60 / T_seconds
+ * where N = completed live API calls in the open-closed interval (now−T, now]
+ * and T is the exact window length in seconds (not discrete calendar minutes).
+ *
+ * Only real per-call rows count — estimated daily rollups and zero-token probes
+ * are excluded so the rate reflects live traffic, not historical floors.
  */
 export function computeLiveRequestRate(
   events: UsageEvent[],
@@ -83,14 +91,25 @@ export function computeLiveRequestRate(
   nowMs: number = Date.now(),
 ): {
   windowMinutes: number;
+  /** Exact observation window in seconds (T in rate formula) */
+  windowSeconds: number;
   requests: number;
-  /** Average requests per minute over the window */
+  /**
+   * Mean requests per minute over the sliding window:
+   * RPM = N × 60 / T_seconds
+   */
   rpm: number;
-  /** Newest minute last: index 0 = oldest minute in window */
+  /** Mean requests per second: RPS = N / T_seconds */
+  rps: number;
+  /** Algorithm id for clients/docs */
+  method: "sliding_window_mean";
+  unit: "req/min";
+  /** Oldest minute first (offset = age in whole minutes); last slot = current partial minute */
   perMinute: Array<{ offset: number; requests: number }>;
 } {
   const mins = Math.max(1, Math.min(60, Math.floor(windowMinutes) || 3));
   const windowMs = mins * 60_000;
+  const windowSeconds = windowMs / 1000;
   const start = nowMs - windowMs;
   const perMinute = Array.from({ length: mins }, (_, i) => ({
     offset: mins - 1 - i, // mins-1 … 0 (0 = current partial minute)
@@ -100,13 +119,23 @@ export function computeLiveRequestRate(
   let total = 0;
   for (const e of events) {
     if (!e) continue;
-    // Daily rollups (estimated, multi-request) are not live traffic
-    if (e.estimated && typeof e.requestCount === "number" && e.requestCount > 5) continue;
+    // Estimated daily / model rollups are not live API calls
+    if (e.estimated) continue;
     const t = new Date(e.timestamp).getTime();
-    if (!Number.isFinite(t) || t < start || t > nowMs + 5_000) continue;
+    // Open-closed window (start, now] with small clock-skew tolerance
+    if (!Number.isFinite(t) || t <= start || t > nowMs + 5_000) continue;
+    // Empty stream probes (0 tokens, no cost) are not billable API usage
+    const tok =
+      (Number(e.inputTokens) || 0) +
+      (Number(e.outputTokens) || 0) +
+      (Number(e.cacheReadTokens) || 0) +
+      (Number(e.cacheWriteTokens) || 0);
+    if (tok <= 0 && !(Number(e.estimatedCost) > 0)) continue;
+    // Live row = one completed request; requestCount only when a true multi-call batch
+    const rc = e.requestCount;
     const reqs =
-      typeof e.requestCount === "number" && Number.isFinite(e.requestCount) && e.requestCount > 0
-        ? Math.floor(e.requestCount)
+      typeof rc === "number" && Number.isFinite(rc) && rc > 0 && rc <= 100
+        ? Math.floor(rc)
         : 1;
     total += reqs;
     const ageMs = nowMs - t;
@@ -116,10 +145,18 @@ export function computeLiveRequestRate(
     if (idx >= 0 && idx < mins) perMinute[idx]!.requests += reqs;
   }
 
+  // Standard continuous mean rate (not integer minute buckets)
+  const rps = windowSeconds > 0 ? total / windowSeconds : 0;
+  const rpm = rps * 60;
+
   return {
     windowMinutes: mins,
+    windowSeconds,
     requests: total,
-    rpm: mins > 0 ? total / mins : 0,
+    rpm,
+    rps,
+    method: "sliding_window_mean",
+    unit: "req/min",
     perMinute,
   };
 }

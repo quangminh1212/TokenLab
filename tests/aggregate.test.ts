@@ -57,7 +57,7 @@ test("aggregate eventCount sums requestCount (daily rollup style)", () => {
   assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
 });
 
-test("computeLiveRequestRate sums last 3 minutes and skips fat daily rollups", () => {
+test("computeLiveRequestRate uses sliding-window mean (RPM = N×60/T)", () => {
   const now = Date.parse("2026-07-27T12:00:00.000Z");
   const events: UsageEvent[] = [
     {
@@ -65,37 +65,57 @@ test("computeLiveRequestRate sums last 3 minutes and skips fat daily rollups", (
       id: "live-1",
       timestamp: new Date(now - 30_000).toISOString(), // 0.5 min ago
       requestCount: 2,
+      estimated: false,
     },
     {
       ...sample[0]!,
       id: "live-2",
       timestamp: new Date(now - 90_000).toISOString(), // 1.5 min ago
       requestCount: 3,
+      estimated: false,
     },
     {
       ...sample[0]!,
       id: "live-3",
       timestamp: new Date(now - 150_000).toISOString(), // 2.5 min ago
       requestCount: 1,
+      estimated: false,
     },
     {
       ...sample[0]!,
       id: "old",
       timestamp: new Date(now - 400_000).toISOString(), // >3 min — excluded
       requestCount: 100,
+      estimated: false,
     },
     {
       ...sample[0]!,
       id: "daily-fat",
       timestamp: new Date(now - 20_000).toISOString(),
       estimated: true,
-      requestCount: 500, // fat daily — skipped
+      requestCount: 500, // estimated rollup — skipped
+    },
+    {
+      ...sample[0]!,
+      id: "probe",
+      timestamp: new Date(now - 10_000).toISOString(),
+      estimated: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      estimatedCost: 0,
+      requestCount: 1, // zero-token probe — skipped
     },
   ];
   const live = computeLiveRequestRate(events, 3, now);
   assert.equal(live.windowMinutes, 3);
+  assert.equal(live.windowSeconds, 180);
+  assert.equal(live.method, "sliding_window_mean");
+  assert.equal(live.unit, "req/min");
   assert.equal(live.requests, 6); // 2+3+1
-  assert.ok(Math.abs(live.rpm - 2) < 1e-9);
+  // International: RPM = N×60/T , RPS = N/T
+  assert.ok(Math.abs(live.rpm - (6 * 60) / 180) < 1e-9); // 2.0
+  assert.ok(Math.abs(live.rps - 6 / 180) < 1e-9); // 1/30
   assert.equal(live.perMinute.length, 3);
   // offsets: oldest minute first (offset 2), then 1, then current 0
   assert.equal(live.perMinute[0]!.offset, 2);

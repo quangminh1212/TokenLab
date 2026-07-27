@@ -434,22 +434,41 @@
       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
       const liveInfo = live || state.live || null;
       const rpm = liveInfo && typeof liveInfo.rpm === 'number' ? liveInfo.rpm : null;
+      const rps = liveInfo && typeof liveInfo.rps === 'number' ? liveInfo.rps : null;
       const rpmReq = liveInfo && typeof liveInfo.requests === 'number' ? liveInfo.requests : null;
+      const winSec = liveInfo && typeof liveInfo.windowSeconds === 'number' ? liveInfo.windowSeconds : 180;
       const perMin = Array.isArray(liveInfo?.perMinute) ? liveInfo.perMinute : [];
-      // Show last-3-min breakdown oldest→newest e.g. 12 · 8 · 15
+      // Per-minute histogram oldest→newest (sparkline of completed calls)
       const spark = perMin.length
         ? perMin.map((m) => (m && typeof m.requests === 'number' ? m.requests : 0)).join(' · ')
         : '';
-      const rpmCard = rpm != null
+      // International APM: RPM = N×60/T , RPS = N/T (sliding window mean)
+      const rpmVal =
+        rpm != null
+          ? (Math.round(rpm * 10) / 10).toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 1,
+            })
+          : null;
+      const rpsHint =
+        rps != null
+          ? (rps < 0.1 && rps > 0
+              ? rps.toFixed(3)
+              : (Math.round(rps * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })) + ' RPS'
+          : '';
+      const rpmCard = rpmVal != null
         ? overviewCard(
-            'Req/min (3m)',
-            (Math.round(rpm * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }),
+            'RPM',
+            rpmVal,
             'tone-primary',
-            spark
-              ? spark + ' /min · ' + (rpmReq || 0) + ' req · live'
-              : (rpmReq || 0) + ' req in last 3 min · live',
+            [
+              spark ? spark : null,
+              (rpmReq || 0) + ' req / ' + Math.round(winSec) + 's',
+              rpsHint,
+              'sliding mean',
+            ].filter(Boolean).join(' · '),
           )
-        : overviewCard('Req/min (3m)', '—', 'tone-primary', 'Live rate · last 3 minutes');
+        : overviewCard('RPM', '—', 'tone-primary', 'N×60/T · sliding ' + Math.round(winSec) + 's');
       $('overview').innerHTML = [
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         rpmCard,
@@ -693,7 +712,16 @@
         const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
         const rpmHint =
           state.live && typeof state.live.rpm === 'number'
-            ? ' \u00B7 ' + (Math.round(state.live.rpm * 10) / 10) + ' req/min'
+            ? ' \u00B7 ' +
+              (Math.round(state.live.rpm * 10) / 10) +
+              ' RPM' +
+              (typeof state.live.rps === 'number'
+                ? ' (' +
+                  (state.live.rps < 0.1 && state.live.rps > 0
+                    ? state.live.rps.toFixed(3)
+                    : Math.round(state.live.rps * 100) / 100) +
+                  ' RPS)'
+                : '')
             : '';
         $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} rows${rpmHint}${scanHint}`;
 
