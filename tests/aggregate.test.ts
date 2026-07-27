@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aggregate } from "../src/aggregate.js";
+import { aggregate, computeLiveRequestRate } from "../src/aggregate.js";
 import type { UsageEvent } from "../src/types.js";
 
 const sample: UsageEvent[] = [
@@ -55,6 +55,53 @@ test("aggregate eventCount sums requestCount (daily rollup style)", () => {
   assert.equal(r.totals.eventCount, 100);
   assert.equal(r.groups.find((g) => g.key === "gpt-4.1")?.eventCount, 90);
   assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
+});
+
+test("computeLiveRequestRate sums last 3 minutes and skips fat daily rollups", () => {
+  const now = Date.parse("2026-07-27T12:00:00.000Z");
+  const events: UsageEvent[] = [
+    {
+      ...sample[0]!,
+      id: "live-1",
+      timestamp: new Date(now - 30_000).toISOString(), // 0.5 min ago
+      requestCount: 2,
+    },
+    {
+      ...sample[0]!,
+      id: "live-2",
+      timestamp: new Date(now - 90_000).toISOString(), // 1.5 min ago
+      requestCount: 3,
+    },
+    {
+      ...sample[0]!,
+      id: "live-3",
+      timestamp: new Date(now - 150_000).toISOString(), // 2.5 min ago
+      requestCount: 1,
+    },
+    {
+      ...sample[0]!,
+      id: "old",
+      timestamp: new Date(now - 400_000).toISOString(), // >3 min — excluded
+      requestCount: 100,
+    },
+    {
+      ...sample[0]!,
+      id: "daily-fat",
+      timestamp: new Date(now - 20_000).toISOString(),
+      estimated: true,
+      requestCount: 500, // fat daily — skipped
+    },
+  ];
+  const live = computeLiveRequestRate(events, 3, now);
+  assert.equal(live.windowMinutes, 3);
+  assert.equal(live.requests, 6); // 2+3+1
+  assert.ok(Math.abs(live.rpm - 2) < 1e-9);
+  assert.equal(live.perMinute.length, 3);
+  // offsets: oldest minute first (offset 2), then 1, then current 0
+  assert.equal(live.perMinute[0]!.offset, 2);
+  assert.equal(live.perMinute[0]!.requests, 1); // 2.5 min ago
+  assert.equal(live.perMinute[1]!.requests, 3); // 1.5 min ago
+  assert.equal(live.perMinute[2]!.requests, 2); // 0.5 min ago
 });
 
 test("aggregate by model merges names with provider parentheses", () => {

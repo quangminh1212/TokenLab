@@ -73,6 +73,57 @@ export function aggregate(
   };
 }
 
+/**
+ * Live request rate over a sliding wall-clock window (default 3 minutes).
+ * Uses real per-call rows; skips fat estimated daily rollups so RPM stays live.
+ */
+export function computeLiveRequestRate(
+  events: UsageEvent[],
+  windowMinutes = 3,
+  nowMs: number = Date.now(),
+): {
+  windowMinutes: number;
+  requests: number;
+  /** Average requests per minute over the window */
+  rpm: number;
+  /** Newest minute last: index 0 = oldest minute in window */
+  perMinute: Array<{ offset: number; requests: number }>;
+} {
+  const mins = Math.max(1, Math.min(60, Math.floor(windowMinutes) || 3));
+  const windowMs = mins * 60_000;
+  const start = nowMs - windowMs;
+  const perMinute = Array.from({ length: mins }, (_, i) => ({
+    offset: mins - 1 - i, // mins-1 … 0 (0 = current partial minute)
+    requests: 0,
+  }));
+
+  let total = 0;
+  for (const e of events) {
+    if (!e) continue;
+    // Daily rollups (estimated, multi-request) are not live traffic
+    if (e.estimated && typeof e.requestCount === "number" && e.requestCount > 5) continue;
+    const t = new Date(e.timestamp).getTime();
+    if (!Number.isFinite(t) || t < start || t > nowMs + 5_000) continue;
+    const reqs =
+      typeof e.requestCount === "number" && Number.isFinite(e.requestCount) && e.requestCount > 0
+        ? Math.floor(e.requestCount)
+        : 1;
+    total += reqs;
+    const ageMs = nowMs - t;
+    const ageMin = Math.min(mins - 1, Math.max(0, Math.floor(ageMs / 60_000)));
+    // ageMin 0 = current minute → last slot; ageMin mins-1 = oldest → first slot
+    const idx = mins - 1 - ageMin;
+    if (idx >= 0 && idx < mins) perMinute[idx]!.requests += reqs;
+  }
+
+  return {
+    windowMinutes: mins,
+    requests: total,
+    rpm: mins > 0 ? total / mins : 0,
+    perMinute,
+  };
+}
+
 export function costReport(events: UsageEvent[], since: string | null = null, until: string | null = null) {
   const byAgent = aggregate(events, "agent", "cost", since, until);
   const byModel = aggregate(events, "model", "cost", since, until);

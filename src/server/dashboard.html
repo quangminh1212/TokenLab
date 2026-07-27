@@ -182,6 +182,8 @@
       chartByHour: false,
       groups: [],
       totals: null,
+      /** Live RPM window from /api/stats.live (last 3 minutes) */
+      live: null,
       scanning: false,
       awaitingData: true, // until first non-empty scan or confirmed idle empty
       scanRevision: 0,
@@ -428,10 +430,29 @@
       </div>`;
     }
 
-    function renderOverview(t) {
+    function renderOverview(t, live) {
       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
+      const liveInfo = live || state.live || null;
+      const rpm = liveInfo && typeof liveInfo.rpm === 'number' ? liveInfo.rpm : null;
+      const rpmReq = liveInfo && typeof liveInfo.requests === 'number' ? liveInfo.requests : null;
+      const perMin = Array.isArray(liveInfo?.perMinute) ? liveInfo.perMinute : [];
+      // Show last-3-min breakdown oldest→newest e.g. 12 · 8 · 15
+      const spark = perMin.length
+        ? perMin.map((m) => (m && typeof m.requests === 'number' ? m.requests : 0)).join(' · ')
+        : '';
+      const rpmCard = rpm != null
+        ? overviewCard(
+            'Req/min (3m)',
+            (Math.round(rpm * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }),
+            'tone-primary',
+            spark
+              ? spark + ' /min · ' + (rpmReq || 0) + ' req · live'
+              : (rpmReq || 0) + ' req in last 3 min · live',
+          )
+        : overviewCard('Req/min (3m)', '—', 'tone-primary', 'Live rate · last 3 minutes');
       $('overview').innerHTML = [
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
+        rpmCard,
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
         overviewCard('Cached tokens', fmtFull(cache), 'tone-info'),
         overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
@@ -640,6 +661,9 @@
         ]);
 
         state.totals = stats.totals || {};
+        // Live RPM is always on /api/stats (full cache window), not period-filtered
+        if (stats.live && typeof stats.live === 'object') state.live = stats.live;
+        else if (seriesStats.live && typeof seriesStats.live === 'object') state.live = seriesStats.live;
         state.lastTotalsKey = totalsKey(state.totals);
         let groups = stats.groups || [];
         // Chronological for time buckets
@@ -667,9 +691,13 @@
         state.lastEventCount = eventCount;
 
         const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
-        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} rows${scanHint}`;
+        const rpmHint =
+          state.live && typeof state.live.rpm === 'number'
+            ? ' \u00B7 ' + (Math.round(state.live.rpm * 10) / 10) + ' req/min'
+            : '';
+        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} rows${rpmHint}${scanHint}`;
 
-        renderOverview(state.totals);
+        renderOverview(state.totals, state.live);
         renderChart();
         renderTable();
 
