@@ -287,6 +287,7 @@ if merged_daily or live_j:
     # Rebuild recent daily floors from request-details + history when live daily
     # under-counts requests (common: dailySummary=1 while RD has dozens of calls today).
     def _agg_day_from_rows(rows):
+        """Aggregate only rows with real token usage (skip empty stream probes)."""
         from collections import defaultdict
         by_day = defaultdict(lambda: {
             "requests": 0, "promptTokens": 0, "completionTokens": 0, "cost": 0.0, "byModel": {}
@@ -302,6 +303,10 @@ if merged_daily or live_j:
             pt = int(float(tok.get("prompt_tokens") or row.get("promptTokens") or 0))
             ct = int(float(tok.get("completion_tokens") or row.get("completionTokens") or 0))
             cost = float(row.get("cost") or 0)
+            # Empty "say test" / zero-token stream success must NOT inflate request count
+            # (VPS dailySummary also ignores them → dashboard shows 1 RQ not 35).
+            if pt + ct <= 0 and cost <= 0:
+                continue
             model = str(row.get("model") or "mixed")
             provider = str(row.get("provider") or "")
             d = by_day[day]
@@ -328,17 +333,23 @@ if merged_daily or live_j:
         prev_pt = int(prev.get("promptTokens") or 0)
         prev_ct = int(prev.get("completionTokens") or 0)
         prev_cost = float(prev.get("cost") or 0)
-        # Lift request count / tokens / cost to the max of live daily vs RD+hist rebuild
-        new_req = max(prev_req, int(built["requests"]))
-        new_pt = max(prev_pt, int(built["promptTokens"]))
-        new_ct = max(prev_ct, int(built["completionTokens"]))
-        new_cost = max(prev_cost, float(built["cost"]))
+        built_req = int(built["requests"])
+        built_pt = int(built["promptTokens"])
+        built_ct = int(built["completionTokens"])
+        built_cost = float(built["cost"])
+        # Only lift when RD/hist has *more token volume or cost* than live daily.
+        # Never inflate request count alone from zero-token probes.
+        if built_pt + built_ct <= prev_pt + prev_ct and built_cost <= prev_cost + 1e-9:
+            continue
+        new_req = max(prev_req, built_req)
+        new_pt = max(prev_pt, built_pt)
+        new_ct = max(prev_ct, built_ct)
+        new_cost = max(prev_cost, built_cost)
         if new_req == prev_req and new_pt == prev_pt and new_ct == prev_ct and abs(new_cost - prev_cost) < 1e-9:
             continue
-        # Prefer previous byModel when richer; else rebuilt
         prev_bm = prev.get("byModel") if isinstance(prev.get("byModel"), dict) else {}
         built_bm = built.get("byModel") or {}
-        by_model = prev_bm if len(prev_bm) >= len(built_bm) else built_bm
+        by_model = prev_bm if (prev_pt + prev_ct) >= (built_pt + built_ct) else built_bm
         merged_daily[day] = {
             **prev,
             "requests": new_req,
