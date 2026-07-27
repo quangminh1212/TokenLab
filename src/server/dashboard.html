@@ -469,12 +469,13 @@
             ].filter(Boolean).join(' · '),
           )
         : overviewCard('RPM', '—', 'tone-primary', 'N×60/T · sliding ' + Math.round(winSec) + 's');
+      // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout on common widths)
       $('overview').innerHTML = [
-        overviewCard('Total requests', fmtFull(t.eventCount || 0)),
-        rpmCard,
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
         overviewCard('Cached tokens', fmtFull(cache), 'tone-info'),
         overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
+        overviewCard('Total requests', fmtFull(t.eventCount || 0)),
+        rpmCard,
         overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing'),
       ].join('');
     }
