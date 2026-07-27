@@ -165,6 +165,78 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("gap-fills models missing from partial history via daily byModel", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-gapfill-"));
+    try {
+      const history = Array.from({ length: 30 }, (_, i) => ({
+        id: `rq-sol-${i}`,
+        timestamp: `2026-07-26T12:${String(i).padStart(2, "0")}:00.000Z`,
+        provider: "openai-compatible",
+        model: "gpt-5.6-sol",
+        promptTokens: 10_000,
+        completionTokens: 100,
+        cost: 0.05,
+        tokens: { prompt_tokens: 10_000, completion_tokens: 100 },
+      }));
+      await writeFile(
+        path.join(dir, "request-details.jsonl"),
+        history.map((r) => JSON.stringify(r)).join("\n") + "\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          "2026-07-26": {
+            requests: 35,
+            promptTokens: 350_000,
+            completionTokens: 3_500,
+            cost: 2.0,
+            byModel: {
+              "gpt-5.6-sol|p": {
+                requests: 30,
+                promptTokens: 300_000,
+                completionTokens: 3_000,
+                cost: 1.5,
+                rawModel: "gpt-5.6-sol",
+                provider: "p",
+              },
+              "qwen3.7-max|p": {
+                requests: 4,
+                promptTokens: 40_000,
+                completionTokens: 400,
+                cost: 0.4,
+                rawModel: "qwen3.7-max",
+                provider: "p",
+              },
+              "minimax-m3|p": {
+                requests: 1,
+                promptTokens: 10_000,
+                completionTokens: 100,
+                cost: 0.1,
+                rawModel: "minimax-m3",
+                provider: "p",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "9router");
+      const models = new Set(events.map((e) => e.model));
+      assert.ok(models.has("gpt-5.6-sol"), "history model kept");
+      assert.ok(models.has("qwen3.7-max"), "missing model gap-filled from daily");
+      assert.ok(models.has("minimax-m3"), "second missing model gap-filled");
+      // Individual sol RQs still present (not collapsed)
+      assert.ok(events.filter((e) => e.model === "gpt-5.6-sol" && !e.estimated).length >= 20);
+      // Gap-fill rows are estimated daily rollups
+      assert.ok(events.some((e) => e.model === "qwen3.7-max" && e.estimated));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("prefers multi-request history over giant daily byModel blobs", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");

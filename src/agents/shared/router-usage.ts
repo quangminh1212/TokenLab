@@ -231,7 +231,10 @@ function reconcileEventsAndDaily(
     }
 
     if (shouldPreferRequestEvents(dayEvents, daily.day)) {
+      // Keep individual RQs for RECENT EVENTS, but still surface models that only
+      // appear in daily byModel (rolling history windows often drop minority models).
       out.push(...dayEvents);
+      out.push(...gapFillMissingModels(dateKey, daily.day, agent, daily.source, dayEvents));
       continue;
     }
 
@@ -246,6 +249,9 @@ function reconcileEventsAndDaily(
  * Prefer real request rows when we have a multi-RQ sample that covers a meaningful
  * slice of the day (count or tokens). A single stray history row must not replace
  * a full daily rollup.
+ *
+ * Never short-circuit on raw count alone: a 2MB history tail can have 20+ rows of one
+ * model while daily still holds the rest of the day (other models / majority tokens).
  */
 function shouldPreferRequestEvents(
   dayEvents: UsageEvent[],
@@ -263,13 +269,81 @@ function shouldPreferRequestEvents(
     0,
   );
 
-  // Enough individual RQs for RECENT EVENTS even when the export is a rolling window
-  if (reqCount >= 20) return true;
-
   const coverageByCount = dayReqTarget > 0 ? reqCount / dayReqTarget : 1;
   const coverageByTok = dayTok > 0 ? reqTok / dayTok : 1;
   // ≥15% of the day observed as real RQs → prefer split events over one model blob
   return coverageByCount >= 0.15 || coverageByTok >= 0.15;
+}
+
+/** Model keys present in request-level events (normalized). */
+function modelsPresentInEvents(events: UsageEvent[]): Set<string> {
+  const s = new Set<string>();
+  for (const e of events) {
+    const m = normalizeModelName(e.model) || e.model || "";
+    if (m) s.add(m);
+  }
+  return s;
+}
+
+/**
+ * When history is preferred but incomplete vs daily.byModel, emit estimated rollups
+ * only for models that never appear in the request sample (no double-count).
+ */
+function gapFillMissingModels(
+  dateKey: string,
+  day: Record<string, unknown>,
+  agent: AgentId,
+  source: string,
+  dayEvents: UsageEvent[],
+): UsageEvent[] {
+  const byModel = day.byModel;
+  if (!byModel || typeof byModel !== "object" || Array.isArray(byModel)) return [];
+
+  const present = modelsPresentInEvents(dayEvents);
+  const missing: Record<string, unknown> = {};
+  let missIn = 0;
+  let missOut = 0;
+  let missCost = 0;
+
+  for (const [modelKey, mraw] of Object.entries(byModel as Record<string, unknown>)) {
+    if (!mraw || typeof mraw !== "object") continue;
+    const m = mraw as Record<string, unknown>;
+    const model =
+      normalizeModelName(
+        (typeof m.rawModel === "string" && m.rawModel) ||
+          modelKey.split("|")[0] ||
+          modelKey,
+      ) || "mixed";
+    if (present.has(model)) continue;
+    const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
+    const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
+    const cost = num(m.cost);
+    if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
+    missing[modelKey] = mraw;
+    missIn += inputTokens;
+    missOut += outputTokens;
+    missCost += cost;
+  }
+
+  if (Object.keys(missing).length === 0) return [];
+
+  // Expand only the missing slice — day totals match byModel so completeness check passes.
+  return expandOneDay(
+    dateKey,
+    {
+      requests: Object.values(missing).reduce(
+        (a: number, m) => a + num((m as Record<string, unknown>).requests),
+        0,
+      ),
+      promptTokens: missIn,
+      completionTokens: missOut,
+      cost: missCost,
+      byModel: missing,
+    },
+    agent,
+    source,
+    dayEvents,
+  );
 }
 
 /**
@@ -577,8 +651,9 @@ function expandOneDay(
       const provider = typeof m.provider === "string" ? m.provider : null;
       const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
       const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
+      const cacheReadTokens = num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens);
       const cost = num(m.cost);
-      if (inputTokens + outputTokens <= 0 && cost <= 0) continue;
+      if (inputTokens + outputTokens + cacheReadTokens <= 0 && cost <= 0) continue;
       modelCost += cost;
       modelTokens += inputTokens + outputTokens;
       const ts = syntheticDailyTimestamp(
@@ -594,7 +669,11 @@ function expandOneDay(
           promptTokens: inputTokens,
           completionTokens: outputTokens,
           cost,
-          tokens: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
+          tokens: {
+            prompt_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            cached_tokens: cacheReadTokens,
+          },
         },
         agent,
         source,

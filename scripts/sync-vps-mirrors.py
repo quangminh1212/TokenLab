@@ -54,6 +54,38 @@ if os.path.isfile("/root/.9router/db.json"):
     shutil.copyfile("/root/.9router/db.json", "/tmp/xlab-mirror-9router-db.json")
     print("COPIED 9router db.json")
 
+# Recent per-request history (tail) so TokenLab "today"/RECENT EVENTS see new models
+# without re-downloading the full multi‑MB lifetime jsonl every minute.
+def export_sqlite_history_tail(db_path: str, out_path: str, limit: int = 8000) -> int:
+    if not os.path.isfile(db_path):
+        return 0
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    try:
+        rows = cur.execute(
+            """SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint,
+                      promptTokens, completionTokens, cost, status, tokens, meta
+               FROM usageHistory ORDER BY id DESC LIMIT ?""",
+            (int(limit),),
+        ).fetchall()
+    except Exception:
+        con.close()
+        return 0
+    # Write chronological order (oldest → newest) for stable tail merges
+    with open(out_path, "w", encoding="utf-8") as f:
+        for row in reversed(rows):
+            f.write(json.dumps(dict(row), ensure_ascii=False, separators=(",", ":")) + "\n")
+    con.close()
+    return len(rows)
+
+n9h = export_sqlite_history_tail(
+    "/root/.9router/db/data.sqlite",
+    "/tmp/xlab-mirror-9router-usage-history.jsonl",
+    8000,
+)
+print("EXPORTED_9ROUTER_HIST_TAIL", n9h)
+
 # --- RouterLab / xlabrouter (systemd DATA_DIR) ---
 root = Path("/var/lib/xlabrouter")
 dbj = root / "db.json"
@@ -181,6 +213,7 @@ def main() -> int:
         # 9router
         ("/tmp/xlab-mirror-9router-usage-daily.json", "9router", "usage-daily.json"),
         ("/tmp/xlab-mirror-9router-db.json", "9router", "db.json"),
+        ("/tmp/xlab-mirror-9router-usage-history.jsonl", "9router", "usage-history.jsonl"),
         # RouterLab (agent id xlabrouter)
         ("/tmp/xlab-mirror-xlabrouter-usage-daily.json", "xlabrouter", "usage-daily.json"),
         ("/tmp/xlab-mirror-xlabrouter-usage-history.jsonl", "xlabrouter", "usage-history.jsonl"),
