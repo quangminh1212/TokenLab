@@ -294,6 +294,77 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("does not stamp yesterday daily rollup into next local morning (Today leak)", async () => {
+    // Reproduce: history spill at 17:12Z (00:12 UTC+7 next day) must NOT pull
+    // the full previous UTC-day daily ($448-class) into TokenLab "Today".
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { filterByPeriod } = await import("../src/util.js");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-today-leak-"));
+    try {
+      // A few early-next-local-day rows still bucketed under UTC dateKey 2026-07-27
+      const history = Array.from({ length: 7 }, (_, i) => ({
+        id: `spill-${i}`,
+        timestamp: `2026-07-27T17:${String(10 + i).padStart(2, "0")}:00.000Z`,
+        provider: "openai-compatible",
+        model: "qwen3.7-max",
+        promptTokens: 1000,
+        completionTokens: 10,
+        cost: 0.01,
+        tokens: { prompt_tokens: 1000, completion_tokens: 10 },
+      }));
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        history.map((r) => JSON.stringify(r)).join("\n") + "\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          "2026-07-27": {
+            requests: 9733,
+            promptTokens: 815_566_524,
+            completionTokens: 9_879_812,
+            cost: 448.3367,
+            byModel: {
+              "qwen3.7-max|p": {
+                requests: 9733,
+                promptTokens: 815_566_524,
+                completionTokens: 9_879_812,
+                cost: 448.3367,
+                rawModel: "qwen3.7-max",
+                provider: "p",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "9router");
+      const rollups = events.filter((e) => e.estimated);
+      assert.ok(rollups.length >= 1, "expected daily rollup for 2026-07-27");
+      for (const e of rollups) {
+        // Must stay on UTC calendar dateKey — not inherit 17:xx spill
+        assert.equal(e.timestamp.slice(0, 10), "2026-07-27");
+        assert.ok(
+          e.timestamp === "2026-07-27T12:00:00.000Z" || e.timestamp === "2026-07-27T00:00:00.000Z",
+          `rollup ts must be dateKey noon/start, got ${e.timestamp}`,
+        );
+      }
+      // Local "today" starting 17:00Z 2026-07-27 (UTC+7 midnight Jul 28) must NOT
+      // include the $448 prior-day rollup.
+      const todayStart = "2026-07-27T17:00:00.000Z";
+      const inToday = filterByPeriod(events, todayStart, null, "UTC");
+      const todayCost = inToday.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
+      assert.ok(
+        todayCost < 1,
+        `yesterday daily must not leak into local today (cost=${todayCost})`,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("uses dailySummary as day authority when history would under/over count", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");

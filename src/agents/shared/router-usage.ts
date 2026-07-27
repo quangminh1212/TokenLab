@@ -446,19 +446,35 @@ function gapFillDailyDeficits(
 
 /**
  * Pick a stable, non-future timestamp for a synthetic daily rollup event.
- * Prefer real request times for that day; never invent noon-UTC while it is still in the future
- * (that made RECENT EVENTS stuck on "Just now" all morning local time).
+ *
+ * Prefer a real same-UTC-day request time **before noon UTC** (accurate timeAgo for
+ * morning activity). Never inherit late-evening UTC request times (e.g. 17:12Z):
+ * for UTC+7 that is 00:12 local next day, and stamping yesterday's full daily
+ * rollup there leaked ~$400+ of prior-day 9router cost into TokenLab "Today".
+ *
+ * After noon UTC on dateKey, anchor at noon. While the UTC day is still before
+ * noon and has no safe preferred time, use start-of-day (not a future noon).
  */
 function syntheticDailyTimestamp(
   dateKey: string,
   preferred?: string | null,
 ): string {
+  const noon = Date.parse(`${dateKey}T12:00:00.000Z`);
+  const dayStart = Date.parse(`${dateKey}T00:00:00.000Z`);
+  const now = Date.now();
+
   if (preferred) {
     const t = Date.parse(preferred);
-    if (Number.isFinite(t)) return new Date(t).toISOString();
+    if (Number.isFinite(t) && Number.isFinite(dayStart) && Number.isFinite(noon)) {
+      const prefDay = new Date(t).toISOString().slice(0, 10);
+      // Only accept preferred times that fall on the same UTC calendar dateKey
+      // and not after noon (late UTC = next local morning for SEA UTC+7).
+      if (prefDay === dateKey && t >= dayStart && t <= noon) {
+        return new Date(t).toISOString();
+      }
+    }
   }
-  const noon = Date.parse(`${dateKey}T12:00:00.000Z`);
-  const now = Date.now();
+
   // Mid-day anchor only when it is already in the past (completed mornings UTC / past days)
   if (Number.isFinite(noon) && noon <= now) {
     return `${dateKey}T12:00:00.000Z`;
