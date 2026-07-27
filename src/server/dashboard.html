@@ -496,30 +496,8 @@
         minimumFractionDigits: 0,
         maximumFractionDigits: 1,
       });
-      const rpsHint =
-        rate.rps < 0.1 && rate.rps > 0
-          ? rate.rps.toFixed(3) + ' RPS'
-          : (Math.round(rate.rps * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' RPS';
-      const mins = Math.max(1, Math.round(rate.windowMinutes));
-      const hours = rate.windowMinutes >= 120 ? Math.round(rate.windowMinutes / 60) : null;
-      const spanHint = hours != null ? hours + 'h' : mins + 'm';
-      // Optional live 3m pulse in hint when traffic is hot
-      const liveInfo = live || state.live || null;
-      const liveRpm =
-        liveInfo && typeof liveInfo.rpm === 'number' && liveInfo.rpm > 0
-          ? 'live ' + (Math.round(liveInfo.rpm * 10) / 10) + '/min'
-          : null;
-      const rpmCard = overviewCard(
-        'RPM',
-        rpmVal,
-        'tone-primary',
-        [
-          fmtFull(rate.requests) + ' req / ' + spanHint,
-          rpsHint,
-          rate.period + ' mean',
-          liveRpm,
-        ].filter(Boolean).join(' · '),
-      );
+      // Period-mean number only — no subtitle under RPM
+      const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
       // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout on common widths)
       $('overview').innerHTML = [
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
