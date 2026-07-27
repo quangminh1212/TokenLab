@@ -248,6 +248,7 @@ if merged_daily or live_j:
     # request-details (full records when small; else last 8000)
     rd = root / "request-details.json"
     nrd = 0
+    rd_rows = []
     if rd.is_file():
         try:
             data = json.loads(rd.read_text(encoding="utf-8", errors="ignore"))
@@ -261,6 +262,8 @@ if merged_daily or live_j:
                     if not isinstance(row, dict):
                         continue
                     tokens = row.get("tokens") or {}
+                    if not isinstance(tokens, dict):
+                        tokens = {}
                     slim_row = {
                         "id": row.get("id"),
                         "timestamp": row.get("timestamp") or row.get("createdAt") or row.get("time"),
@@ -271,14 +274,112 @@ if merged_daily or live_j:
                         "status": row.get("status") or row.get("statusCode"),
                         "tokens": tokens,
                         "cost": row.get("cost"),
-                        "promptTokens": tokens.get("prompt_tokens") if isinstance(tokens, dict) else row.get("promptTokens"),
-                        "completionTokens": tokens.get("completion_tokens") if isinstance(tokens, dict) else row.get("completionTokens"),
+                        "promptTokens": tokens.get("prompt_tokens") if tokens else row.get("promptTokens"),
+                        "completionTokens": tokens.get("completion_tokens") if tokens else row.get("completionTokens"),
                     }
                     f.write(json.dumps(slim_row, ensure_ascii=False, separators=(",", ":")) + "\n")
+                    rd_rows.append(slim_row)
                     nrd += 1
         except Exception as e:
             print("RD_ERR", e)
     print("EXPORTED_ROUTERLAB_RD", nrd)
+
+    # Rebuild recent daily floors from request-details + history when live daily
+    # under-counts requests (common: dailySummary=1 while RD has dozens of calls today).
+    def _agg_day_from_rows(rows):
+        from collections import defaultdict
+        by_day = defaultdict(lambda: {
+            "requests": 0, "promptTokens": 0, "completionTokens": 0, "cost": 0.0, "byModel": {}
+        })
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            ts = str(row.get("timestamp") or "")
+            day = ts[:10]
+            if len(day) != 10:
+                continue
+            tok = row.get("tokens") if isinstance(row.get("tokens"), dict) else {}
+            pt = int(float(tok.get("prompt_tokens") or row.get("promptTokens") or 0))
+            ct = int(float(tok.get("completion_tokens") or row.get("completionTokens") or 0))
+            cost = float(row.get("cost") or 0)
+            model = str(row.get("model") or "mixed")
+            provider = str(row.get("provider") or "")
+            d = by_day[day]
+            d["requests"] += 1
+            d["promptTokens"] += pt
+            d["completionTokens"] += ct
+            d["cost"] += cost
+            mk = f"{model}|{provider}" if provider else model
+            bm = d["byModel"].setdefault(mk, {
+                "requests": 0, "promptTokens": 0, "completionTokens": 0, "cost": 0.0,
+                "rawModel": model, "provider": provider or None,
+            })
+            bm["requests"] += 1
+            bm["promptTokens"] += pt
+            bm["completionTokens"] += ct
+            bm["cost"] += cost
+        return by_day
+
+    rebuilt = _agg_day_from_rows(list(rd_rows) + list(live_hist if isinstance(live_hist, list) else []))
+    patched = 0
+    for day, built in rebuilt.items():
+        prev = merged_daily.get(day) if isinstance(merged_daily.get(day), dict) else {}
+        prev_req = int(prev.get("requests") or 0)
+        prev_pt = int(prev.get("promptTokens") or 0)
+        prev_ct = int(prev.get("completionTokens") or 0)
+        prev_cost = float(prev.get("cost") or 0)
+        # Lift request count / tokens / cost to the max of live daily vs RD+hist rebuild
+        new_req = max(prev_req, int(built["requests"]))
+        new_pt = max(prev_pt, int(built["promptTokens"]))
+        new_ct = max(prev_ct, int(built["completionTokens"]))
+        new_cost = max(prev_cost, float(built["cost"]))
+        if new_req == prev_req and new_pt == prev_pt and new_ct == prev_ct and abs(new_cost - prev_cost) < 1e-9:
+            continue
+        # Prefer previous byModel when richer; else rebuilt
+        prev_bm = prev.get("byModel") if isinstance(prev.get("byModel"), dict) else {}
+        built_bm = built.get("byModel") or {}
+        by_model = prev_bm if len(prev_bm) >= len(built_bm) else built_bm
+        merged_daily[day] = {
+            **prev,
+            "requests": new_req,
+            "promptTokens": new_pt,
+            "completionTokens": new_ct,
+            "cost": new_cost,
+            "byModel": by_model,
+        }
+        patched += 1
+        print("PATCH_DAY", day, "req", prev_req, "->", new_req, "pt", prev_pt, "->", new_pt)
+    if patched:
+        # rewrite daily/usageData/db after patch
+        total_req = sum(int((d or {}).get("requests") or 0) for d in merged_daily.values())
+        total_pt = sum(int((d or {}).get("promptTokens") or 0) for d in merged_daily.values())
+        total_ct = sum(int((d or {}).get("completionTokens") or 0) for d in merged_daily.values())
+        total_cost = sum(float((d or {}).get("cost") or 0) for d in merged_daily.values())
+        Path("/tmp/xlab-mirror-xlabrouter-usage-daily.json").write_text(
+            json.dumps(merged_daily, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        )
+        u_out = {
+            "dailySummary": merged_daily,
+            "history": live_hist if isinstance(live_hist, list) else [],
+            "totalRequestsLifetime": total_req,
+            "cockpitImports": ((live_j.get("usageData") or {}).get("cockpitImports") if live_j else None) or [],
+        }
+        Path("/tmp/xlab-mirror-xlabrouter-usageData.json").write_text(
+            json.dumps(u_out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        )
+        slim = {
+            "usageData": u_out,
+            "combos": (live_j.get("combos") or []) if live_j else [],
+            "settings": {
+                k: (live_j.get("settings") or {}).get(k)
+                for k in ("comboStrategies", "comboStrategy", "stickyRoundRobinLimit")
+                if isinstance(live_j.get("settings"), dict)
+            } if live_j else {},
+        }
+        Path("/tmp/xlab-mirror-xlabrouter-db.json").write_text(
+            json.dumps(slim, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        )
+        print("REWROTE_AFTER_RD_PATCH days", patched, "lifetime_req", total_req, "pt", total_pt, "cost", round(total_cost, 4))
 else:
     print("MISS_ROUTERLAB_DB")
 '''

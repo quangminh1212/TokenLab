@@ -717,7 +717,7 @@ export function enforceMonotonicAgentDays(
   if (!prev?.length) return next || [];
   if (!next?.length) return prev;
 
-  type Bucket = { events: UsageEvent[]; tok: number; cost: number };
+  type Bucket = { events: UsageEvent[]; tok: number; cost: number; req: number };
   const bucketize = (list: UsageEvent[]): Map<string, Bucket> => {
     const map = new Map<string, Bucket>();
     for (const e of list) {
@@ -727,12 +727,14 @@ export function enforceMonotonicAgentDays(
       const key = /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${agent}|${day}` : `${agent}|__noday__|${e.id}`;
       let b = map.get(key);
       if (!b) {
-        b = { events: [], tok: 0, cost: 0 };
+        b = { events: [], tok: 0, cost: 0, req: 0 };
         map.set(key, b);
       }
       b.events.push({ ...e, agent });
       b.tok += eventTokenWeight(e);
       b.cost += Number(e.estimatedCost) || 0;
+      const rc = e.requestCount;
+      b.req += typeof rc === "number" && rc > 0 ? Math.floor(rc) : 1;
     }
     return map;
   };
@@ -745,8 +747,11 @@ export function enforceMonotonicAgentDays(
   const better = (a: Bucket, b: Bucket): Bucket => {
     if (a.tok > b.tok * 1.001) return a;
     if (b.tok > a.tok * 1.001) return b;
-    if (a.cost > b.cost) return a;
-    if (b.cost > a.cost) return b;
+    if (a.cost > b.cost * 1.001) return a;
+    if (b.cost > a.cost * 1.001) return b;
+    // Same tokens/cost — prefer more real requests (e.g. RD rebuild 35 vs stale daily 1)
+    if (a.req > b.req) return a;
+    if (b.req > a.req) return b;
     return a.events.length >= b.events.length ? a : b;
   };
 
