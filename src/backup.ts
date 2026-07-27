@@ -15,6 +15,7 @@ import type { TokenTotals, UsageEvent } from "./types.js";
 import {
   appDataDir,
   filterByPeriod,
+  normalizeAgentId,
   normalizeModelName,
   pathExists,
   stableId,
@@ -633,7 +634,8 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       continue;
     }
     if (requests.length === 0) {
-      out.push(...dailies);
+      // Drop redundant "mixed" day blob when model-specific rollups already cover the day.
+      out.push(...dedupeMixedDailyRollups(dailies));
       continue;
     }
 
@@ -665,8 +667,95 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       continue;
     }
 
-    // Sparse history — authoritative daily floor only.
-    out.push(...dailies);
+    // Sparse history — authoritative daily floor only (no mixed+byModel double count).
+    out.push(...dedupeMixedDailyRollups(dailies));
+  }
+  return out;
+}
+
+/**
+ * When a day has both model-specific daily rollups AND a "mixed" whole-day blob
+ * (common after Gist import + local rescan of the same RouterLab history),
+ * keep model rows and drop mixed if they already cover ≥95% of mixed tokens.
+ * Prevents all-time cost oscillating between ~double-count and de-duped totals.
+ */
+function dedupeMixedDailyRollups(dailies: UsageEvent[]): UsageEvent[] {
+  if (dailies.length < 2) return dailies;
+  const mixed = dailies.filter((e) => {
+    const m = (typeof e.model === "string" && e.model.trim()) || "";
+    return !m || m === "mixed" || m === "unknown";
+  });
+  const models = dailies.filter((e) => {
+    const m = (typeof e.model === "string" && e.model.trim()) || "";
+    return m && m !== "mixed" && m !== "unknown";
+  });
+  if (mixed.length === 0 || models.length === 0) return dailies;
+
+  const modelTok = models.reduce((a, e) => a + eventTokenWeight(e), 0);
+  const modelCost = models.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
+  const keptMixed: UsageEvent[] = [];
+  for (const m of mixed) {
+    const mt = eventTokenWeight(m);
+    const mc = Number(m.estimatedCost) || 0;
+    // Model rows already explain this mixed blob → drop mixed (avoid double count).
+    if (mt > 0 && modelTok >= mt * 0.95) continue;
+    if (mc > 0 && modelCost >= mc * 0.95 && modelTok >= mt * 0.9) continue;
+    keptMixed.push(m);
+  }
+  return [...models, ...keptMixed];
+}
+
+/**
+ * Per agent×day high-water mark: never replace a richer previous day snapshot
+ * with a thinner rescan. Takes the side with more tokens (then cost, then rows).
+ * Usage totals can only grow (or stay) across rescans — never silently drop.
+ */
+export function enforceMonotonicAgentDays(
+  prev: UsageEvent[],
+  next: UsageEvent[],
+): UsageEvent[] {
+  if (!prev?.length) return next || [];
+  if (!next?.length) return prev;
+
+  type Bucket = { events: UsageEvent[]; tok: number; cost: number };
+  const bucketize = (list: UsageEvent[]): Map<string, Bucket> => {
+    const map = new Map<string, Bucket>();
+    for (const e of list) {
+      if (!e || typeof e.agent !== "string") continue;
+      const agent = normalizeAgentId(e.agent);
+      const day = (e.timestamp || "").slice(0, 10);
+      const key = /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${agent}|${day}` : `${agent}|__noday__|${e.id}`;
+      let b = map.get(key);
+      if (!b) {
+        b = { events: [], tok: 0, cost: 0 };
+        map.set(key, b);
+      }
+      b.events.push({ ...e, agent });
+      b.tok += eventTokenWeight(e);
+      b.cost += Number(e.estimatedCost) || 0;
+    }
+    return map;
+  };
+
+  const prevMap = bucketize(prev);
+  const nextMap = bucketize(next);
+  const keys = new Set<string>([...prevMap.keys(), ...nextMap.keys()]);
+  const out: UsageEvent[] = [];
+
+  const better = (a: Bucket, b: Bucket): Bucket => {
+    if (a.tok > b.tok * 1.001) return a;
+    if (b.tok > a.tok * 1.001) return b;
+    if (a.cost > b.cost) return a;
+    if (b.cost > a.cost) return b;
+    return a.events.length >= b.events.length ? a : b;
+  };
+
+  for (const key of keys) {
+    const p = prevMap.get(key);
+    const n = nextMap.get(key);
+    if (p && n) out.push(...better(p, n).events);
+    else if (n) out.push(...n.events);
+    else if (p) out.push(...p.events);
   }
   return out;
 }
@@ -939,7 +1028,7 @@ export async function saveScanCache(
 ): Promise<void> {
   const mode = opts.mode === "quick" ? "quick" : "full";
   // Progressive saves already hold clean-ish rows; skip O(n) collapse passes mid-scan.
-  const clean =
+  let clean =
     mode === "quick"
       ? events
       : collapseExactUsageDuplicates(
@@ -957,6 +1046,26 @@ export async function saveScanCache(
     } catch {
       /* optional */
     }
+
+    // Full save: never write a thinner all-time snapshot than what is already on disk.
+    // (Rescans that flip daily↔partial history used to shrink EST. COST by tens of k$.)
+    if (mode === "full") {
+      try {
+        const existing = await loadScanCache();
+        if (existing.length > 0) {
+          const merged = enforceMonotonicAgentDays(existing, clean);
+          clean = collapseExactUsageDuplicates(
+            collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
+          );
+        }
+      } catch (err) {
+        logError(
+          "saveScanCache: high-water merge failed (continuing with in-memory):",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
     // One serialize only — avoid JSON.parse(verify) which doubled peak RAM (~8MB×2+).
     const json = JSON.stringify(clean);
     if (!json.startsWith("[") || !json.endsWith("]")) {
@@ -1272,14 +1381,12 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
     const cacheReadTokens = Number(e.cacheReadTokens) || 0;
     const cacheWriteTokens = Number(e.cacheWriteTokens) || 0;
     // XLab Router → RouterLab (canonical agent id)
-    const agentRaw = String(e.agent);
-    const agent =
-      agentRaw === "xlabrouter" ||
-      agentRaw === "xlrouter" ||
-      agentRaw === "xlab-router" ||
-      agentRaw === "xlab_router"
-        ? ("routerlab" as UsageEvent["agent"])
-        : (agentRaw as UsageEvent["agent"]);
+    const agent = normalizeAgentId(String(e.agent));
+    const requestCountRaw = Number(e.requestCount);
+    const requestCount =
+      Number.isFinite(requestCountRaw) && requestCountRaw > 0
+        ? Math.floor(requestCountRaw)
+        : undefined;
     out.push({
       id: e.id,
       agent,
@@ -1304,6 +1411,7 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
       workspace: e.workspace == null ? null : String(e.workspace),
       sourcePath: typeof e.sourcePath === "string" ? e.sourcePath : "backup",
       estimated: Boolean(e.estimated),
+      ...(requestCount != null ? { requestCount } : {}),
     });
   }
   return out;

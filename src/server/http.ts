@@ -10,6 +10,7 @@ import {
   collapseExactUsageDuplicates,
   collapseRouterDailyEvents,
   collapseSourcePathRollups,
+  enforceMonotonicAgentDays,
   loadImportedEvents,
   loadScanCache,
   mergeEventsByIdPreferRicher,
@@ -70,7 +71,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let importedEvents: UsageEvent[] = await loadImportedEvents();
   /** Last local scan snapshot — unioned so incomplete/timeout passes never wipe known usage. */
   const diskScanCache = await loadScanCache();
-  cache = mergeLocalPreferOverGistRollups(diskScanCache, importedEvents);
+  // Union import + disk, then collapse so xlabrouter/routerlab never double-count
+  // and day totals never shrink vs either source.
+  cache = collapseExactUsageDuplicates(
+    collapseSourcePathRollups(
+      collapseRouterDailyEvents(
+        enforceMonotonicAgentDays(
+          diskScanCache,
+          mergeLocalPreferOverGistRollups(diskScanCache, importedEvents),
+        ),
+      ),
+    ),
+  );
   if (diskScanCache.length > 0) {
     console.log(`[tokenlab] loaded ${diskScanCache.length} cached scan events`);
   }
@@ -254,9 +266,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           scanned = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
+          // Never let a thinner rescan shrink per-agent day totals vs previous cache.
+          scanned = enforceMonotonicAgentDays(prev, scanned);
+          scanned = collapseExactUsageDuplicates(
+            collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
+          );
         }
         // Keep imported + local. Drop same-machine Gist rollups when local covers key.
-        cache = mergeLocalPreferOverGistRollups(scanned, importedEvents);
+        // Then high-water again so imported history cannot be wiped by a partial local day.
+        let merged = mergeLocalPreferOverGistRollups(scanned, importedEvents);
+        if (finalize) {
+          merged = enforceMonotonicAgentDays(prev, merged);
+          merged = collapseExactUsageDuplicates(
+            collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
+          );
+        }
+        cache = merged;
       };
 
       const scheduleProgressBroadcast = (payload: Record<string, unknown>): void => {

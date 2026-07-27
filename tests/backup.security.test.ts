@@ -229,6 +229,90 @@ test("collapseRouterDailyEvents never shrinks when partial history reappears", (
   assert.ok(mixedTok >= fullTok, "rescan must not drop totals below prior daily floor");
 });
 
+test("enforceMonotonicAgentDays keeps richer previous day", async () => {
+  const { enforceMonotonicAgentDays } = await import("../src/backup.js");
+  const prev = [
+    evt({
+      id: "day-rich",
+      agent: "routerlab",
+      model: "mixed",
+      estimated: true,
+      inputTokens: 5_000_000,
+      totalTokens: 5_100_000,
+      estimatedCost: 100,
+      timestamp: "2026-05-25T12:00:00.000Z",
+    }),
+  ];
+  const next = [
+    evt({
+      id: "day-thin",
+      agent: "routerlab",
+      model: "mixed",
+      estimated: true,
+      inputTokens: 100_000,
+      totalTokens: 110_000,
+      estimatedCost: 2,
+      timestamp: "2026-05-25T12:00:00.000Z",
+    }),
+    evt({
+      id: "day-new",
+      agent: "routerlab",
+      model: "gpt-5",
+      estimated: true,
+      inputTokens: 50_000,
+      totalTokens: 55_000,
+      estimatedCost: 1,
+      timestamp: "2026-07-27T12:00:00.000Z",
+    }),
+  ];
+  const merged = enforceMonotonicAgentDays(prev, next);
+  const tok = merged.reduce((a, e) => a + (e.totalTokens || 0), 0);
+  assert.ok(tok >= 5_100_000, "must keep previous rich day");
+  assert.ok(merged.some((e) => e.id === "day-new"), "must still add new days");
+  assert.ok(
+    merged.some((e) => (e.totalTokens || 0) >= 5_000_000),
+    "rich day row present",
+  );
+});
+
+test("collapseRouterDailyEvents drops mixed when model rows cover the day", () => {
+  const mixed = evt({
+    id: "mixed-blob",
+    agent: "routerlab",
+    model: "mixed",
+    estimated: true,
+    inputTokens: 1_000_000,
+    totalTokens: 1_000_000,
+    estimatedCost: 10,
+    timestamp: "2026-05-25T12:00:00.000Z",
+  });
+  const m1 = evt({
+    id: "m1",
+    agent: "routerlab",
+    model: "gpt-5.5",
+    estimated: true,
+    inputTokens: 600_000,
+    totalTokens: 600_000,
+    estimatedCost: 6,
+    timestamp: "2026-05-25T12:00:00.000Z",
+  });
+  const m2 = evt({
+    id: "m2",
+    agent: "routerlab",
+    model: "claude-opus-4.7",
+    estimated: true,
+    inputTokens: 400_000,
+    totalTokens: 400_000,
+    estimatedCost: 4,
+    timestamp: "2026-05-25T12:00:00.000Z",
+  });
+  const merged = collapseRouterDailyEvents([mixed, m1, m2]);
+  assert.equal(merged.some((e) => e.id === "mixed-blob"), false);
+  assert.equal(merged.length, 2);
+  const tok = merged.reduce((a, e) => a + (e.totalTokens || 0), 0);
+  assert.equal(tok, 1_000_000);
+});
+
 test("preferRicherEvent fills null model even when default cost is higher", () => {
   const stale = evt({
     id: "same",
