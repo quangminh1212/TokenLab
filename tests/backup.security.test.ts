@@ -147,12 +147,46 @@ test("collapseRouterDailyEvents prefers requests when they exceed stale daily", 
     timestamp: "2026-07-16T09:00:00.000Z",
   });
   const merged = collapseRouterDailyEvents([staleDaily, r1, r2]);
-  // Prefer overcount: request sum (73k) > daily (1.1k) → keep both requests, drop daily
+  // Request sum (73k) >> daily (1.1k): still keep requests (richer than stale daily floor).
+  // NOTE: overshoot vs a *complete* remote daily is handled separately — here daily is stale/tiny.
   assert.equal(merged.some((e) => e.id === "daily-stale"), false);
   assert.ok(merged.some((e) => e.id === "r1"));
   assert.ok(merged.some((e) => e.id === "r2"));
   const tok = merged.reduce((a, e) => a + (e.totalTokens || 0), 0);
   assert.equal(tok, 73_000);
+});
+
+test("collapseRouterDailyEvents uses daily when request rows overshoot remote daily", () => {
+  // Remote dashboard dailySummary is authoritative; inflated request history must not win.
+  const daily = evt({
+    id: "daily-auth",
+    agent: "routerlab",
+    model: "mixed",
+    estimated: true,
+    inputTokens: 130_000_000,
+    totalTokens: 131_000_000,
+    estimatedCost: 146,
+    requestCount: 2805,
+    timestamp: "2026-07-26T12:00:00.000Z",
+  });
+  const requests = Array.from({ length: 50 }, (_, i) =>
+    evt({
+      id: "rq-over-" + i,
+      agent: "routerlab",
+      model: "gpt-5.6-sol",
+      estimated: false,
+      inputTokens: 4_000_000,
+      totalTokens: 4_010_000,
+      estimatedCost: 10,
+      timestamp: "2026-07-26T10:" + String(i).padStart(2, "0") + ":00.000Z",
+    }),
+  );
+  // 50 * 4.01M = 200.5M > 131M daily → prefer daily (match VPS dashboard)
+  const merged = collapseRouterDailyEvents([daily, ...requests]);
+  assert.ok(merged.some((e) => e.id === "daily-auth"));
+  assert.equal(merged.some((e) => String(e.id).startsWith("rq-over-")), false);
+  const tok = merged.reduce((a, e) => a + (e.totalTokens || 0), 0);
+  assert.equal(tok, 131_000_000);
 });
 
 test("collapseRouterDailyEvents keeps multi-RQ detail AND daily floor (no total drop)", () => {

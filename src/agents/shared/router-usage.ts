@@ -14,6 +14,25 @@ import { normalizeModelName, num, pathExists, readText, stableId } from "../../u
  * → a single 5.2M-token "event"). RECENT EVENTS must show real individual requests.
  * Daily rollups remain the fallback so days without history still contribute totals.
  */
+/**
+ * Order roots so the VPS mirror (tokenlab/mirrors/{agent}) is scanned first,
+ * and we can stop loading per-request history after the first rich root to
+ * avoid multi-folder twin inflation (routerlab + xlabrouter + Dev\\VPS\\...).
+ */
+function prioritizeRouterRoots(roots: string[], agent: AgentId): string[] {
+  const score = (r: string): number => {
+    const s = r.replace(/\\/g, "/").toLowerCase();
+    if (s.includes("/mirrors/routerlab") || s.includes("/mirrors/9router")) return 100;
+    if (s.includes("/mirrors/xlabrouter")) return 90;
+    if (s.includes("my.bnix.one") && (s.includes("routerlab") || s.includes("9router") || s.includes("xlabrouter")))
+      return 80;
+    if (s.includes("/.9router") || s.includes("/var/lib/xlabrouter")) return 70;
+    if (s.includes("xlab-token/mirrors")) return 60;
+    return 10;
+  };
+  return [...roots].sort((a, b) => score(b) - score(a));
+}
+
 export async function parseRouterUsage(
   roots: string[],
   agent: AgentId,
@@ -25,6 +44,7 @@ export async function parseRouterUsage(
   // Second-precision timestamp absorbs 1ms drift between mirror copies.
   const contentIndex = new Map<string, number>();
   const dailyMaps: Array<{ source: string; daily: Record<string, unknown> }> = [];
+  let loadedRequestHistoryFromRoot: string | null = null;
 
   const contentFingerprint = (e: UsageEvent): string => {
     const ts = (e.timestamp || "").slice(0, 19); // YYYY-MM-DDTHH:mm:ss
@@ -68,7 +88,11 @@ export async function parseRouterUsage(
     }
   };
 
-  for (const root of roots) {
+  // Prefer a single VPS-mirror root first for router agents so twin copies
+  // (routerlab + xlabrouter + AppData) do not inflate request-level history.
+  const orderedRoots = prioritizeRouterRoots(roots, agent);
+
+  for (const root of orderedRoots) {
     if (!(await pathExists(root))) continue;
 
     let hasDailyForRoot = false;
@@ -121,59 +145,81 @@ export async function parseRouterUsage(
     }
 
     // --- B) Per-request history (preferred for RECENT EVENTS) ---
-    // Always load request-level rows so multi-RQ days are not collapsed into one model event.
-    for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
-      const dbPath = path.join(root, dbRel);
-      if (!(await pathExists(dbPath))) continue;
-      // Prefer a larger recent window so RECENT EVENTS can list individual RQs
-      pushEvents(await parseSqliteUsage(dbPath, agent, hasDailyForRoot ? 5_000 : 20_000));
-    }
+    // Load request-level rows from the first rich root only — twin mirrors
+    // (routerlab + xlabrouter) previously inflated same-day totals vs VPS dashboard.
+    const loadHistoryHere =
+      !loadedRequestHistoryFromRoot ||
+      loadedRequestHistoryFromRoot === root;
 
-    // Embedded history inside usage/db wrappers (always try — content-deduped)
-    if (await pathExists(usagePath)) {
-      pushEvents(await parseUsageJsonFile(usagePath, agent));
-    }
-    if (await pathExists(dbJsonPath)) {
-      pushEvents(await parseDbJsonUsage(dbJsonPath, agent));
-    }
-    if (await pathExists(usageDataPath)) {
-      pushEvents(await parseUsageJsonFile(usageDataPath, agent));
-    }
+    if (loadHistoryHere) {
+      let gotHistory = false;
+      for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
+        const dbPath = path.join(root, dbRel);
+        if (!(await pathExists(dbPath))) continue;
+        // Prefer a larger recent window so RECENT EVENTS can list individual RQs
+        const rows = await parseSqliteUsage(dbPath, agent, hasDailyForRoot ? 5_000 : 20_000);
+        if (rows.length) {
+          pushEvents(rows);
+          gotHistory = true;
+        }
+      }
 
-    // One preferred history stream per root: request-details (stable ids) first,
-    // then usage-history. Avoid loading twin json+jsonl mirrors of the same window.
-    const historyPreference = [
-      "request-details.json",
-      "request-details.jsonl",
-      "usage-history.json",
-      "usageHistory.json",
-      "usage-history.jsonl",
-    ];
-    let loadedHistoryFile = false;
-    for (const name of historyPreference) {
-      const p = path.join(root, name);
-      if (!(await pathExists(p))) continue;
-      if (name.endsWith(".jsonl")) {
-        try {
-          const { stat } = await import("node:fs/promises");
-          const st = await stat(p);
-          // Cap multi-MB jsonl; still read a large tail so recent RQs stay visible.
-          const maxBytes = 12 * 1024 * 1024;
-          if (st.size > maxBytes) {
-            pushEvents(await parseHistoryExportTail(p, agent, 2 * 1024 * 1024));
-          } else {
+      // Embedded history inside usage/db wrappers
+      if (await pathExists(usagePath)) {
+        const rows = await parseUsageJsonFile(usagePath, agent);
+        if (rows.length) {
+          pushEvents(rows);
+          gotHistory = true;
+        }
+      }
+      if (await pathExists(dbJsonPath)) {
+        const rows = await parseDbJsonUsage(dbJsonPath, agent);
+        if (rows.length) {
+          pushEvents(rows);
+          gotHistory = true;
+        }
+      }
+      if (await pathExists(usageDataPath)) {
+        const rows = await parseUsageJsonFile(usageDataPath, agent);
+        if (rows.length) {
+          pushEvents(rows);
+          gotHistory = true;
+        }
+      }
+
+      // One preferred history stream per root: request-details first, then usage-history.
+      const historyPreference = [
+        "request-details.json",
+        "request-details.jsonl",
+        "usage-history.json",
+        "usageHistory.json",
+        "usage-history.jsonl",
+      ];
+      for (const name of historyPreference) {
+        const p = path.join(root, name);
+        if (!(await pathExists(p))) continue;
+        if (name.endsWith(".jsonl")) {
+          try {
+            const { stat } = await import("node:fs/promises");
+            const st = await stat(p);
+            const maxBytes = 12 * 1024 * 1024;
+            if (st.size > maxBytes) {
+              pushEvents(await parseHistoryExportTail(p, agent, 2 * 1024 * 1024));
+            } else {
+              pushEvents(await parseHistoryExport(p, agent));
+            }
+          } catch {
             pushEvents(await parseHistoryExport(p, agent));
           }
-        } catch {
+        } else {
           pushEvents(await parseHistoryExport(p, agent));
         }
-      } else {
-        pushEvents(await parseHistoryExport(p, agent));
+        gotHistory = true;
+        break;
       }
-      loadedHistoryFile = true;
-      break;
+
+      if (gotHistory) loadedRequestHistoryFromRoot = root;
     }
-    void loadedHistoryFile;
   }
 
   return reconcileEventsAndDaily(eventLevel, dailyMaps, agent);
@@ -268,6 +314,16 @@ function shouldPreferRequestEvents(
     (a, e) => a + (Number(e.inputTokens) || 0) + (Number(e.outputTokens) || 0),
     0,
   );
+
+  // VPS dashboards (RouterLab :1212, 9router) use dailySummary as the day total.
+  // Whenever we have a substantial daily rollup, prefer it over request tails —
+  // partial/twin history was overshooting cost (e.g. $499 vs remote $146).
+  if (dayReqTarget >= 20 && dayTok >= 10_000) {
+    return false;
+  }
+
+  // History/RD twin copies often overshoot tiny dailies too.
+  if (dayTok > 0 && reqTok > dayTok * 1.05) return false;
 
   const coverageByCount = dayReqTarget > 0 ? reqCount / dayReqTarget : 1;
   const coverageByTok = dayTok > 0 ? reqTok / dayTok : 1;

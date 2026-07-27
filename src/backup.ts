@@ -639,36 +639,68 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       continue;
     }
 
-    const dailyTok = dailies.reduce((a, e) => a + eventTokenWeight(e), 0);
+    const dailiesClean = dedupeMixedDailyRollups(dailies);
+    const dailyTok = dailiesClean.reduce((a, e) => a + eventTokenWeight(e), 0);
     const reqTok = requests.reduce((a, e) => a + eventTokenWeight(e), 0);
-    const dailyCost = dailies.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
+    const dailyCost = dailiesClean.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
     const reqCost = requests.reduce((a, e) => a + (Number(e.estimatedCost) || 0), 0);
+    const dailyReq = dailiesClean.reduce((a, e) => {
+      const rc = e.requestCount;
+      return a + (typeof rc === "number" && rc > 0 ? Math.floor(rc) : 1);
+    }, 0);
+    const reqReq = requests.reduce((a, e) => {
+      const rc = e.requestCount;
+      return a + (typeof rc === "number" && rc > 0 ? Math.floor(rc) : 1);
+    }, 0);
 
-    // Full request coverage (or higher than daily) → requests alone are enough.
-    const requestsCoverDaily =
-      reqTok >= dailyTok * 0.98 ||
-      (reqTok > dailyTok) ||
-      (reqTok === dailyTok && reqCost >= dailyCost);
+    // Request rows overshoot a *complete* daily (twin history/RD, reprice, multi-root).
+    // Remote dashboards use dailySummary as authority — prefer daily in that case.
+    // If daily is tiny/stale (few reqs) and requests are much richer, keep requests.
+    const dailyLooksAuthoritative =
+      dailyReq >= 10 ||
+      dailyTok >= 100_000 ||
+      (dailyCost > 0 && dailyTok >= 10_000);
+    const requestsOvershootDaily =
+      dailyLooksAuthoritative &&
+      ((dailyTok > 0 && reqTok > dailyTok * 1.05) ||
+        (dailyCost > 0 && reqCost > dailyCost * 1.15 && reqTok >= dailyTok * 0.9));
 
-    // Multi-RQ sample useful for RECENT EVENTS but incomplete vs daily.
+    // Stale/tiny daily but rich request history → keep requests (legacy incomplete rollup).
+    if (!dailyLooksAuthoritative && reqTok > dailyTok) {
+      out.push(...requests);
+      continue;
+    }
+
+    // Full request coverage within daily envelope → keep individual RQs for RECENT.
+    const requestsMatchDaily =
+      !requestsOvershootDaily &&
+      dailyTok > 0 &&
+      reqTok >= dailyTok * 0.95 &&
+      reqTok <= dailyTok * 1.05;
+
+    // Multi-RQ sample incomplete vs daily → RQs + gap-fill remainder.
     const wantRequestDetail =
+      !requestsOvershootDaily &&
       requests.length >= 2 &&
-      (requests.length >= 20 || reqTok >= dailyTok * 0.15 || requests.length > dailies.length);
+      (requests.length >= 20 ||
+        reqTok >= dailyTok * 0.15 ||
+        (dailyReq > 0 && reqReq >= dailyReq * 0.15) ||
+        requests.length > dailiesClean.length);
 
-    if (requestsCoverDaily) {
+    if (requestsMatchDaily) {
       out.push(...requests);
       continue;
     }
 
-    if (wantRequestDetail) {
-      // Keep individual RQs + daily remainder so totals never drop below daily.
+    if (wantRequestDetail && reqTok < dailyTok * 0.98) {
+      // Keep individual RQs + daily remainder so totals match remote daily floor.
       out.push(...requests);
-      out.push(...gapFillRouterDayFromDailies(dailies, requests));
+      out.push(...gapFillRouterDayFromDailies(dailiesClean, requests));
       continue;
     }
 
-    // Sparse history — authoritative daily floor only (no mixed+byModel double count).
-    out.push(...dedupeMixedDailyRollups(dailies));
+    // Default / overshoot: authoritative daily (matches VPS dashboard stats).
+    out.push(...dailiesClean);
   }
   return out;
 }
@@ -745,6 +777,15 @@ export function enforceMonotonicAgentDays(
   const out: UsageEvent[] = [];
 
   const better = (a: Bucket, b: Bucket): Bucket => {
+    const aLive = a.events.filter((e) => !e.estimated).length;
+    const bLive = b.events.filter((e) => !e.estimated).length;
+    const aEst = a.events.length - aLive;
+    const bEst = b.events.length - bLive;
+    // Corrected daily rollup (from VPS dailySummary) beats inflated multi-root
+    // request history that overshoots the same calendar day.
+    if (bEst > 0 && bLive === 0 && aLive >= 10 && a.tok > b.tok * 1.05) return b;
+    if (aEst > 0 && aLive === 0 && bLive >= 10 && b.tok > a.tok * 1.05) return a;
+
     if (a.tok > b.tok * 1.001) return a;
     if (b.tok > a.tok * 1.001) return b;
     if (a.cost > b.cost * 1.001) return a;
