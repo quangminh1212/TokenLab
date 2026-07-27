@@ -85,6 +85,64 @@ export function aggregate(
  * Only real per-call rows count — estimated daily rollups and zero-token probes
  * are excluded so the rate reflects live traffic, not historical floors.
  */
+/**
+ * Count distinct UTC minute buckets that contain ≥1 event.
+ * Matches RouterLab `countActiveMinutes` — idle gaps do not dilute RPM.
+ */
+export function countActiveMinutes(events: UsageEvent[]): number {
+  if (!Array.isArray(events) || events.length === 0) return 0;
+  const buckets = new Set<number>();
+  for (const e of events) {
+    if (!e) continue;
+    const t = new Date(e.timestamp).getTime();
+    if (!Number.isFinite(t)) continue;
+    buckets.add(Math.floor(t / 60_000));
+  }
+  return buckets.size;
+}
+
+function eventRequestCount(e: UsageEvent): number {
+  const rc = e.requestCount;
+  if (typeof rc === "number" && Number.isFinite(rc) && rc > 0) return Math.floor(rc);
+  return 1;
+}
+
+/**
+ * Period RPM over **active usage minutes only** (not full wall-clock Today/24h/7d).
+ *
+ *   activeMinutes = |{ floor(ts/60s) for each event }|
+ *   RPM = totalRequests / activeMinutes
+ *
+ * Same definition as RouterLab usage stats. Idle time between bursts is ignored,
+ * so 11 requests in 5 busy minutes → 2.2 RPM (not 11 / minutes-since-midnight).
+ */
+export function computeActiveUsageRpm(events: UsageEvent[]): {
+  requests: number;
+  activeMinutes: number;
+  /** RPM = requests / activeMinutes */
+  rpm: number;
+  /** RPS equivalent = rpm / 60 */
+  rps: number;
+  method: "active_minutes_mean";
+  unit: "req/min";
+} {
+  let requests = 0;
+  for (const e of events) {
+    if (!e) continue;
+    requests += eventRequestCount(e);
+  }
+  const activeMinutes = countActiveMinutes(events);
+  const rpm = activeMinutes > 0 ? requests / activeMinutes : 0;
+  return {
+    requests,
+    activeMinutes,
+    rpm,
+    rps: rpm / 60,
+    method: "active_minutes_mean",
+    unit: "req/min",
+  };
+}
+
 export function computeLiveRequestRate(
   events: UsageEvent[],
   windowMinutes = 3,

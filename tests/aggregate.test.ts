@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aggregate, computeLiveRequestRate } from "../src/aggregate.js";
+import {
+  aggregate,
+  computeActiveUsageRpm,
+  computeLiveRequestRate,
+  countActiveMinutes,
+} from "../src/aggregate.js";
 import type { UsageEvent } from "../src/types.js";
 
 const sample: UsageEvent[] = [
@@ -55,6 +60,41 @@ test("aggregate eventCount sums requestCount (daily rollup style)", () => {
   assert.equal(r.totals.eventCount, 100);
   assert.equal(r.groups.find((g) => g.key === "gpt-4.1")?.eventCount, 90);
   assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
+});
+
+test("computeActiveUsageRpm uses active minutes only (idle gaps ignored)", () => {
+  // 10 requests across 2 distinct minutes, with a long idle gap between
+  const events: UsageEvent[] = [
+    {
+      ...sample[0]!,
+      id: "a1",
+      timestamp: "2026-07-28T01:00:10.000Z",
+      requestCount: 4,
+      estimated: false,
+    },
+    {
+      ...sample[0]!,
+      id: "a2",
+      timestamp: "2026-07-28T01:00:40.000Z", // same minute as a1
+      requestCount: 1,
+      estimated: false,
+    },
+    {
+      ...sample[0]!,
+      id: "b1",
+      timestamp: "2026-07-28T03:15:00.000Z", // different minute, long idle after a*
+      requestCount: 5,
+      estimated: false,
+    },
+  ];
+  assert.equal(countActiveMinutes(events), 2);
+  const r = computeActiveUsageRpm(events);
+  assert.equal(r.method, "active_minutes_mean");
+  assert.equal(r.requests, 10); // 4+1+5
+  assert.equal(r.activeMinutes, 2);
+  // NOT 10 / wall-clock hours — only busy minutes
+  assert.equal(r.rpm, 5); // 10 / 2
+  assert.ok(Math.abs(r.rps - 5 / 60) < 1e-9);
 });
 
 test("computeLiveRequestRate uses sliding-window mean (RPM = N×60/T)", () => {

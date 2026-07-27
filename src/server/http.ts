@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregate, costReport } from "../aggregate.js";
+import { aggregate, computeActiveUsageRpm, costReport } from "../aggregate.js";
 import { buildRecentLiveEvents, computeDashboardLiveRate } from "../live-rate.js";
 import { AGENTS, detectAgents, scanAll } from "../agents/index.js";
 import {
@@ -571,9 +571,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       }
       const events = filterByPeriod(cache, since, until, configuredTimeZone());
       const stats = aggregate(events, groupBy, sort, since, until);
+      // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
+      const usageRpm = computeActiveUsageRpm(events);
       // Live RPM: cache live rows + hot 9router/RouterLab history tails (not period filter)
       const live = await computeDashboardLiveRate(cache, 3);
-      return json(res, 200, { ...stats, live });
+      return json(res, 200, { ...stats, usageRpm, live });
     }
 
     if (req.method === "GET" && pathname === "/api/rpm") {

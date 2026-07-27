@@ -184,7 +184,9 @@
       totals: null,
       /** Live 3m window (optional secondary) from /api/stats.live */
       live: null,
-      /** Server local-day start for "today" RPM (ISO) */
+      /** Period RPM over active usage minutes only (from /api/stats.usageRpm) */
+      usageRpm: null,
+      /** Server local-day start for "today" (ISO) */
       todayStartsAt: null,
       scanning: false,
       awaitingData: true, // until first non-empty scan or confirmed idle empty
@@ -432,29 +434,6 @@
       </div>`;
     }
 
-    /**
-     * Elapsed ms for the active period (used for period-mean RPM).
-     * Today = since local midnight (server tz); 24h/7d/30d = full window; All = 24h floor.
-     */
-    function periodElapsedMs() {
-      const now = Date.now();
-      const p = state.period || 'today';
-      if (p === 'today') {
-        let start = state.todayStartsAt ? Date.parse(state.todayStartsAt) : NaN;
-        if (!Number.isFinite(start)) {
-          const d = new Date();
-          d.setHours(0, 0, 0, 0);
-          start = d.getTime();
-        }
-        return Math.max(60_000, now - start);
-      }
-      if (p === '24h') return 24 * 3_600_000;
-      if (p === '7d') return 7 * 24 * 3_600_000;
-      if (p === '30d') return 30 * 24 * 3_600_000;
-      // All-time: unknown span — use 24h as minimum so RPM stays defined
-      return 24 * 3_600_000;
-    }
-
     function periodLabel() {
       const p = state.period || 'today';
       if (p === 'today') return 'today';
@@ -465,24 +444,32 @@
     }
 
     /**
-     * Period-mean rate from TOTAL REQUESTS (dashboard period filter):
-     *   RPM = N × 60 / T_seconds
-     *   RPS = N / T_seconds
-     * Matches international mean-rate definition over the selected period.
+     * RPM over active usage minutes only (idle gaps ignored):
+     *   activeMinutes = distinct minute buckets with ≥1 request
+     *   RPM = totalRequests / activeMinutes
+     * Server computes this in /api/stats.usageRpm (RouterLab-compatible).
+     * Fallback: same formula if only totals are present (activeMinutes unknown → 0).
      */
     function periodRequestRate(totalRequests) {
+      const ur = state.usageRpm;
+      if (ur && typeof ur === 'object' && Number.isFinite(Number(ur.rpm))) {
+        return {
+          requests: Number(ur.requests) || Math.max(0, Number(totalRequests) || 0),
+          activeMinutes: Number(ur.activeMinutes) || 0,
+          rpm: Number(ur.rpm) || 0,
+          rps: Number(ur.rps) || 0,
+          method: ur.method || 'active_minutes_mean',
+          unit: 'req/min',
+          period: periodLabel(),
+        };
+      }
       const N = Math.max(0, Number(totalRequests) || 0);
-      const Tms = periodElapsedMs();
-      const Tsec = Tms / 1000;
-      const rps = Tsec > 0 ? N / Tsec : 0;
-      const rpm = rps * 60;
       return {
         requests: N,
-        windowSeconds: Tsec,
-        windowMinutes: Tsec / 60,
-        rpm,
-        rps,
-        method: 'period_mean',
+        activeMinutes: 0,
+        rpm: 0,
+        rps: 0,
+        method: 'active_minutes_mean',
         unit: 'req/min',
         period: periodLabel(),
       };
@@ -490,13 +477,13 @@
 
     function renderOverview(t, live) {
       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
-      // RPM from period TOTAL REQUESTS (not 3m idle window)
+      // RPM = requests / active usage minutes (not wall-clock Today/24h)
       const rate = periodRequestRate(t.eventCount || 0);
       const rpmVal = (Math.round(rate.rpm * 10) / 10).toLocaleString(undefined, {
         minimumFractionDigits: 0,
         maximumFractionDigits: 1,
       });
-      // Period-mean number only — no subtitle under RPM
+      // Active-usage mean — no subtitle under RPM
       const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
       // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout on common widths)
       $('overview').innerHTML = [
@@ -711,7 +698,11 @@
         ]);
 
         state.totals = stats.totals || {};
-        // Live RPM is always on /api/stats (full cache window), not period-filtered
+        // Period RPM: active-minutes mean from filtered events (not wall-clock span)
+        if (stats.usageRpm && typeof stats.usageRpm === 'object') state.usageRpm = stats.usageRpm;
+        else if (seriesStats.usageRpm && typeof seriesStats.usageRpm === 'object') state.usageRpm = seriesStats.usageRpm;
+        else state.usageRpm = null;
+        // Live 3m window (secondary) from /api/stats
         if (stats.live && typeof stats.live === 'object') state.live = stats.live;
         else if (seriesStats.live && typeof seriesStats.live === 'object') state.live = seriesStats.live;
         state.lastTotalsKey = totalsKey(state.totals);
