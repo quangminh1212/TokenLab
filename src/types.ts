@@ -83,6 +83,10 @@ export interface TokenTotals {
   cacheWriteTokens: number;
   totalTokens: number;
   estimatedCost: number;
+  /** Rate-weighted cost parts (not token-share of total). */
+  inputCost?: number;
+  cacheCost?: number;
+  outputCost?: number;
   currency: string;
   eventCount: number;
 }

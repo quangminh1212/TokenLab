@@ -277,6 +277,44 @@ export function getRateForModel(model: string | null | undefined): {
   return { key: key || "default", rate: BUNDLED_RATES.default, source: "default" };
 }
 
+/**
+ * Split cost by **rate** (input / cache read-write / output), not by token count share.
+ * When `actualTotal` is set (e.g. router-reported cost), scale parts to match while
+ * keeping relative rate weights so Cache $ is not inflated like Input $.
+ */
+export function priceCostParts(
+  model: string | null,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0,
+  actualTotal?: number | null,
+): { inputCost: number; cacheCost: number; outputCost: number; tableTotal: number } {
+  const { rate } = getRateForModel(model);
+  const inputCost = (inputTokens * rate.inputPer1M) / 1_000_000;
+  const outputCost = (outputTokens * rate.outputPer1M) / 1_000_000;
+  const cacheCost =
+    (cacheReadTokens * (rate.cacheReadPer1M ?? rate.inputPer1M * 0.1) +
+      cacheWriteTokens * (rate.cacheWritePer1M ?? rate.inputPer1M * 1.25)) /
+    1_000_000;
+  const tableTotal = inputCost + outputCost + cacheCost;
+  if (
+    actualTotal != null &&
+    Number.isFinite(actualTotal) &&
+    tableTotal > 1e-15 &&
+    Math.abs(actualTotal - tableTotal) > 1e-12
+  ) {
+    const s = actualTotal / tableTotal;
+    return {
+      inputCost: inputCost * s,
+      cacheCost: cacheCost * s,
+      outputCost: outputCost * s,
+      tableTotal,
+    };
+  }
+  return { inputCost, cacheCost, outputCost, tableTotal };
+}
+
 export function priceTokens(
   model: string | null,
   inputTokens: number,
@@ -286,12 +324,13 @@ export function priceTokens(
   currency = "USD",
 ): Pick<UsageEvent, "estimatedCost" | "pricingStatus" | "currency"> {
   const { key, rate, source } = getRateForModel(model);
-  const cost =
-    (inputTokens * rate.inputPer1M +
-      outputTokens * rate.outputPer1M +
-      cacheReadTokens * (rate.cacheReadPer1M ?? rate.inputPer1M * 0.1) +
-      cacheWriteTokens * (rate.cacheWritePer1M ?? rate.inputPer1M * 1.25)) /
-    1_000_000;
+  const { tableTotal: cost } = priceCostParts(
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+  );
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens === 0) {
     return { estimatedCost: 0, pricingStatus: "zero_rate", currency };
   }

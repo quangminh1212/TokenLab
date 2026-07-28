@@ -627,18 +627,25 @@
         return;
       }
 
-      // Split cost by token share. input / cache / output are separate additive buckets
-      // (see aggregate.ts) — do NOT subtract cache from input (that zeroed Input $ when
-      // prompt-cache tokens >= input, common on Devin/Claude).
+      // Cost columns use rate-weighted parts from API (input/cache/output rates).
+      // Fallback: token-share only if older aggregate payload lacks inputCost/cacheCost.
       $('tableBody').innerHTML = groups.map((g) => {
         const input = g.inputTokens || 0;
         const output = g.outputTokens || 0;
         const cache = (g.cacheReadTokens || 0) + (g.cacheWriteTokens || 0);
         const totalTok = g.totalTokens || (input + output + cache) || 1;
         const cost = g.estimatedCost || 0;
-        const inputCost = cost * (input / totalTok);
-        const cacheCost = cost * (cache / totalTok);
-        const outCost = cost * (output / totalTok);
+        const hasParts =
+          g.inputCost != null || g.cacheCost != null || g.outputCost != null;
+        const inputCost = hasParts
+          ? Number(g.inputCost) || 0
+          : cost * (input / totalTok);
+        const cacheCost = hasParts
+          ? Number(g.cacheCost) || 0
+          : cost * (cache / totalTok);
+        const outCost = hasParts
+          ? Number(g.outputCost) || 0
+          : cost * (output / totalTok);
 
         const label = formatGroupKey(g.key);
         if (costs) {

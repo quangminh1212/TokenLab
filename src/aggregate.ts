@@ -1,4 +1,5 @@
 import type { GroupBy, GroupRow, StatsResult, TokenTotals, UsageEvent } from "./types.js";
+import { priceCostParts } from "./pricing.js";
 import { normalizeModelName } from "./util.js";
 
 function emptyTotals(currency = "USD"): TokenTotals {
@@ -9,6 +10,9 @@ function emptyTotals(currency = "USD"): TokenTotals {
     cacheWriteTokens: 0,
     totalTokens: 0,
     estimatedCost: 0,
+    inputCost: 0,
+    cacheCost: 0,
+    outputCost: 0,
     currency,
     eventCount: 0,
   };
@@ -21,6 +25,18 @@ function add(t: TokenTotals, e: UsageEvent): void {
   t.cacheWriteTokens += e.cacheWriteTokens;
   t.totalTokens += e.totalTokens;
   t.estimatedCost += e.estimatedCost ?? 0;
+  // Rate-weighted parts (cache uses cacheRead/Write rates, not input rate)
+  const parts = priceCostParts(
+    e.model,
+    e.inputTokens || 0,
+    e.outputTokens || 0,
+    e.cacheReadTokens || 0,
+    e.cacheWriteTokens || 0,
+    e.estimatedCost,
+  );
+  t.inputCost = (t.inputCost || 0) + parts.inputCost;
+  t.cacheCost = (t.cacheCost || 0) + parts.cacheCost;
+  t.outputCost = (t.outputCost || 0) + parts.outputCost;
   // Sum real API requests (daily rollups carry model.requests; per-call rows = 1)
   const reqs = e.requestCount;
   t.eventCount += typeof reqs === "number" && Number.isFinite(reqs) && reqs > 0 ? Math.floor(reqs) : 1;
