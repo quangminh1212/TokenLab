@@ -284,13 +284,15 @@ export async function migrateLegacyDataDir(): Promise<void> {
     }
   }
 
-  // Merge legacy config.json into the new one — never drop existing keys,
-  // only fill missing ones (customRates, gistId, githubToken, preferRouterCost).
+  // Merge legacy config.json into the new one — fill missing keys only.
+  // IMPORTANT: always loadConfig() first. getConfigSync() before load returns
+  // empty defaults and used to re-import a dead legacy gistId every restart,
+  // which made auto-daily POST a brand-new Gist on each run (404 → create).
   try {
     const legacyConfigPath = path.join(legacyDataRoot(), "config.json");
     if (await pathExists(legacyConfigPath)) {
       const legacyCfg = JSON.parse(await readFile(legacyConfigPath, "utf8")) as Record<string, unknown>;
-      const cur = getConfigSync();
+      const cur = await loadConfig();
       const merged: Record<string, unknown> = { ...legacyCfg, ...cur };
       // Deep-merge customRates (legacy rates fill gaps; current wins on conflict)
       const legacyRates = (legacyCfg.pricing as { customRates?: Record<string, unknown> } | undefined)?.customRates;
@@ -301,24 +303,81 @@ export async function migrateLegacyDataDir(): Promise<void> {
           customRates: { ...legacyRates, ...curRates },
         };
       }
-      // Never lose gist credentials from legacy
+      // Gist link: current always wins when set. Never clobber a live gistId
+      // with an older deleted one from %APPDATA%/xlab-token.
       if (legacyCfg.backup && typeof legacyCfg.backup === "object") {
         const lb = legacyCfg.backup as Record<string, unknown>;
-        const cb = cur.backup || {};
+        const cb = (cur.backup || {}) as Record<string, unknown>;
+        const curId = String(cb.gistId || "").trim();
+        const legId = String(lb.gistId || "").trim();
+        const curUrl = String(cb.gistUrl || "").trim();
+        const legUrl = String(lb.gistUrl || "").trim();
+        const curLast = String(cb.lastBackupAt || "");
+        const legLast = String(lb.lastBackupAt || "");
+        const newerLast =
+          curLast && legLast
+            ? new Date(curLast).getTime() >= new Date(legLast).getTime()
+              ? curLast
+              : legLast
+            : curLast || legLast || undefined;
         merged.backup = {
           ...lb,
           ...cb,
-          // Fill missing github token / gist id from legacy
-          ...(cb.githubToken ? {} : lb.githubToken ? { githubToken: lb.githubToken } : {}),
-          ...(cb.gistId ? {} : lb.gistId ? { gistId: lb.gistId } : {}),
-          ...(cb.gistUrl ? {} : lb.gistUrl ? { gistUrl: lb.gistUrl } : {}),
+          githubToken: cb.githubToken || lb.githubToken,
+          // Prefer current link forever once set (single gist + revisions)
+          gistId: curId || legId || undefined,
+          gistUrl: (curId ? curUrl : "") || curUrl || legUrl || undefined,
+          lastBackupAt: newerLast,
+          autoDaily: cb.autoDaily !== undefined ? cb.autoDaily : lb.autoDaily,
         };
       }
       await saveConfig(merged as XlabTokenConfig);
+      // Keep legacy file in sync so a future merge cannot resurrect a dead id
+      await syncLegacyGistMeta({
+        gistId: (merged.backup as { gistId?: string } | undefined)?.gistId,
+        gistUrl: (merged.backup as { gistUrl?: string } | undefined)?.gistUrl,
+        lastBackupAt: (merged.backup as { lastBackupAt?: string } | undefined)?.lastBackupAt,
+      });
       log("migrateLegacyDataDir: merged legacy config.json into current");
     }
   } catch (err) {
     logError("migrateLegacyDataDir: config merge failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+/** Write gistId/url/lastBackupAt into legacy xlab-token config so migrate cannot resurrect a dead id. */
+async function syncLegacyGistMeta(meta: {
+  gistId?: string | null;
+  gistUrl?: string | null;
+  lastBackupAt?: string | null;
+}): Promise<void> {
+  try {
+    const legacyConfigPath = path.join(legacyDataRoot(), "config.json");
+    if (!(await pathExists(legacyConfigPath))) return;
+    const raw = JSON.parse(await readFile(legacyConfigPath, "utf8")) as Record<string, unknown>;
+    const prev = (raw.backup && typeof raw.backup === "object" ? raw.backup : {}) as Record<
+      string,
+      unknown
+    >;
+    const nextId = String(meta.gistId || "").trim();
+    if (!nextId) return;
+    if (
+      prev.gistId === nextId &&
+      prev.gistUrl === (meta.gistUrl || prev.gistUrl) &&
+      prev.lastBackupAt === (meta.lastBackupAt || prev.lastBackupAt)
+    ) {
+      return;
+    }
+    raw.backup = {
+      ...prev,
+      gistId: nextId,
+      ...(meta.gistUrl ? { gistUrl: String(meta.gistUrl) } : {}),
+      ...(meta.lastBackupAt ? { lastBackupAt: String(meta.lastBackupAt) } : {}),
+    };
+    await writeFile(legacyConfigPath, JSON.stringify(raw, null, 2), "utf8");
+    log("syncLegacyGistMeta: legacy config gistId →", nextId);
+  } catch (err) {
+    logError("syncLegacyGistMeta failed:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -2074,9 +2133,12 @@ export async function uploadBackupToGist(opts: {
 
   const headers = githubHeaders(token);
 
+  // One secret Gist, one file (tokenlab.json). PATCH = new revision; POST only
+  // when no gistId yet or the stored gist was deleted (404).
   let res: Response;
   let updated = false;
   if (prevId) {
+    log("Updating existing Gist (PATCH revision):", prevId, "file:", filename);
     res = await fetch(`https://api.github.com/gists/${encodeURIComponent(prevId)}`, {
       method: "PATCH",
       headers,
@@ -2085,8 +2147,9 @@ export async function uploadBackupToGist(opts: {
         files: { [filename]: { content } },
       }),
     });
-    updated = true;
+    updated = res.ok;
     if (res.status === 404) {
+      log("Stored gist 404 (deleted) — creating one replacement Gist, not a new file");
       updated = false;
       res = await fetch("https://api.github.com/gists", {
         method: "POST",
@@ -2099,6 +2162,7 @@ export async function uploadBackupToGist(opts: {
       });
     }
   } else {
+    log("No gistId in config — creating first Gist with", filename);
     res = await fetch("https://api.github.com/gists", {
       method: "POST",
       headers,
@@ -2142,7 +2206,17 @@ export async function uploadBackupToGist(opts: {
       ...(opts.saveToken && token ? { githubToken: token } : {}),
     },
   });
-  log("Backup config saved, gistId:", gist.id, "gistUrl:", gist.htmlUrl);
+  // Prevent legacy xlab-token config from resurrecting a deleted gistId on restart
+  await syncLegacyGistMeta({
+    gistId: gist.id,
+    gistUrl: gist.htmlUrl,
+    lastBackupAt: backup.exportedAt,
+  });
+  log(
+    updated ? "Gist revised (same link):" : "Gist created (new link once):",
+    gist.id,
+    gist.htmlUrl,
+  );
 
   return { backup, gist, scope };
 }
@@ -2235,7 +2309,8 @@ export async function tryAutoDailyGistBackup(events: UsageEvent[]): Promise<Auto
 
   autoDailyGistInFlight = (async (): Promise<AutoDailyGistResult> => {
     try {
-      const cfg = getConfigSync();
+      // Disk load — never trust cold getConfigSync() defaults for gistId
+      const cfg = await loadConfig();
       if (cfg.backup?.autoDaily === false) {
         return { ok: true, skipped: true, reason: "disabled" };
       }
@@ -2250,7 +2325,7 @@ export async function tryAutoDailyGistBackup(events: UsageEvent[]): Promise<Auto
         return { ok: true, skipped: true, reason: "no-events" };
       }
 
-      log("auto daily Gist backup starting…", events.length, "events");
+      log("auto daily Gist backup starting…", events.length, "events", "gistId:", gistId);
       const result = await uploadBackupToGist({
         token,
         gistId,

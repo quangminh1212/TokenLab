@@ -158,10 +158,11 @@
 
         <div class="settings-row settings-row-stack">
           <div class="settings-row-text">
-            <span class="settings-label">GitHub Gist (same file)</span>
+            <span class="settings-label">GitHub Gist (same link + revisions)</span>
             <span class="settings-help">
-              Uploads the <strong>same backup JSON</strong> to a secret Gist:
-              full project settings + usage by <strong>model</strong> / <strong>agent</strong>
+              One secret Gist, one file <code>tokenlab.json</code> — each backup is a
+              <strong>new revision</strong> on the same link (not a new Gist).
+              Full project settings + usage by <strong>model</strong> / <strong>agent</strong>
               for <strong>Today · 24h · 7D · 30D · All</strong> (compact hour/day rollups).
               Multi-machine: same gistId → merge hosts and <strong>sum usage</strong>.
               PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>. Token is never inside the file.
