@@ -1639,11 +1639,11 @@ html.dark .or-prov-dd-opt[aria-selected="true"] {
   overflow: auto;
   padding: 0;
 }
-/* Column grid: Model (flex) | In | Out - same for header + each row */
+/* Column grid: Model | In | Out | Cache */
 .or-head,
 .or-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6.25rem 6.25rem;
+  grid-template-columns: minmax(0, 1fr) 6.25rem 6.25rem 6rem;
   column-gap: 0.65rem;
   align-items: center;
   padding: 0.55rem 1.1rem;
@@ -1664,7 +1664,8 @@ html.dark .or-prov-dd-opt[aria-selected="true"] {
   padding-bottom: 0.55rem;
 }
 .or-head-in,
-.or-head-out {
+.or-head-out,
+.or-head-cache {
   text-align: right;
   padding-right: 0.35rem;
 }
@@ -1884,7 +1885,7 @@ html.dark .or-badge.custom { color: var(--xlab-400); }
 @media (max-width: 720px) {
   .or-head,
   .or-row {
-    grid-template-columns: minmax(0, 1fr) 5rem 5rem;
+    grid-template-columns: minmax(0, 1fr) 5rem 5rem 4.5rem;
     column-gap: 0.4rem;
     padding-left: 0.75rem;
     padding-right: 0.75rem;

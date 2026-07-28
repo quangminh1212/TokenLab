@@ -95,6 +95,7 @@
         <input type="text" id="priceModel" placeholder="Custom model id" />
         <input type="number" id="priceIn" step="0.001" min="0" placeholder="In $/1M" />
         <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
+        <input type="number" id="priceCache" step="0.0001" min="0" placeholder="Cache $/1M" />
         <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
       </div>
     </section>
@@ -518,6 +519,8 @@
       return {
         input: draft?.inputPer1M ?? cust?.inputPer1M ?? m.inputPer1M ?? 0,
         output: draft?.outputPer1M ?? cust?.outputPer1M ?? m.outputPer1M ?? 0,
+        // Single cache rate (cache read); write rate stays backend-only for cost calc
+        cache: draft?.cacheReadPer1M ?? cust?.cacheReadPer1M ?? m.cacheReadPer1M,
         source: draft ? 'draft' : cust ? 'custom' : (m.source || 'openrouter'),
       };
     }
@@ -573,6 +576,7 @@
         <span class="or-head-model">Model</span>
         <span class="or-head-in">In $/1M</span>
         <span class="or-head-out">Out $/1M</span>
+        <span class="or-head-cache">Cache</span>
       </div>`;
 
       const rows = slice.map((m) => {
@@ -581,7 +585,6 @@
         const free = Number(rates.input) === 0 && Number(rates.output) === 0;
         const src = rates.source;
         const displayName = escapeHtml((m.name || m.id || '').replace(/^[^:]+:\s*/, ''));
-        // One horizontal row: icon + name | in | out (labels only in header)
         return `<article class="or-row ${src === 'custom' || src === 'draft' ? 'is-custom' : ''} ${free ? 'is-free' : ''}" data-id="${id}">
           <div class="or-cell-model">
             ${providerIconHtml(m.provider)}
@@ -602,6 +605,7 @@
           </div>
           <input class="price-input or-in" data-field="in" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.input)}" aria-label="Input $/1M" title="Input $/1M" />
           <input class="price-input or-out" data-field="out" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.output)}" aria-label="Output $/1M" title="Output $/1M" />
+          <input class="price-input or-cache" data-field="cache" data-model="${id}" type="number" step="0.0001" min="0" value="${rates.cache != null ? Number(rates.cache) : ''}" aria-label="Cache $/1M" title="Cache $/1M" />
         </article>`;
       }).join('');
 
@@ -690,6 +694,7 @@
         pricingDraft[model] = {
           inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
           outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
+          cacheReadPer1M: Number(card.querySelector('[data-field="cache"]')?.value) || 0,
         };
       });
     }
@@ -728,6 +733,7 @@
             source: c ? 'custom' : 'openrouter',
             inputPer1M: c?.inputPer1M ?? m.inputPer1M,
             outputPer1M: c?.outputPer1M ?? m.outputPer1M,
+            cacheReadPer1M: c?.cacheReadPer1M ?? m.cacheReadPer1M,
           };
         });
         renderList();
@@ -757,6 +763,7 @@
       pricingDraft[model] = {
         inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
         outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
+        cacheReadPer1M: Number(card.querySelector('[data-field="cache"]')?.value) || 0,
       };
       setStatus('Typing\u2026');
       scheduleLivePush();
@@ -810,6 +817,7 @@
       pricingDraft[key] = {
         inputPer1M: Number($('priceIn').value) || 0,
         outputPer1M: Number($('priceOut').value) || 0,
+        cacheReadPer1M: Number($('priceCache').value) || 0,
       };
       // Ensure visible in list
       if (!openrouter.some((m) => m.id.toLowerCase() === key || (m.slug || '').toLowerCase() === key)) {
@@ -824,11 +832,13 @@
           source: 'draft',
           inputPer1M: pricingDraft[key].inputPer1M,
           outputPer1M: pricingDraft[key].outputPer1M,
+          cacheReadPer1M: pricingDraft[key].cacheReadPer1M,
         });
       }
       $('priceModel').value = '';
       $('priceIn').value = '';
       $('priceOut').value = '';
+      $('priceCache').value = '';
       renderList();
       scheduleLivePush();
     };
