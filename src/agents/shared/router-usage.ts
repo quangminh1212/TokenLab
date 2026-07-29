@@ -327,10 +327,44 @@ function shouldPreferRequestEvents(
     num(day.promptTokens ?? day.prompt_tokens) +
     num(day.completionTokens ?? day.completion_tokens);
   const dayCost = num(day.cost);
+  // Count multi-RQ daily rows if present (requestCount), else 1 per event
+  const histReq = dayEvents.reduce((a, e) => {
+    const n =
+      typeof e.requestCount === "number" && e.requestCount > 0
+        ? Math.floor(e.requestCount)
+        : 1;
+    return a + n;
+  }, 0);
   const reqTok = dayEvents.reduce(
     (a, e) => a + (Number(e.inputTokens) || 0) + (Number(e.outputTokens) || 0),
     0,
   );
+
+  // Near-complete request history that matches the daily envelope → keep RQs.
+  // LiteLLM mirrors export full SpendLogs days; real timestamps make local
+  // "Today" work (daily rollups stamped at noon UTC fall into "yesterday" for UTC+7).
+  // Token coverage is the primary signal (count can lag from fingerprint merge / drops).
+  // Require ≥75% of daily request count so a few fat rows cannot replace a full day.
+  const tokNear =
+    dayTok > 0 && reqTok >= dayTok * 0.95 && reqTok <= dayTok * 1.08;
+  if (
+    tokNear &&
+    histReq >= 2 &&
+    (dayReqTarget <= 0 || histReq >= dayReqTarget * 0.75)
+  ) {
+    return true;
+  }
+  // Both count and tokens near-complete (stricter) — still prefer RQs
+  if (
+    dayReqTarget >= 2 &&
+    histReq >= dayReqTarget * 0.95 &&
+    histReq <= dayReqTarget * 1.08 &&
+    dayTok > 0 &&
+    reqTok >= dayTok * 0.95 &&
+    reqTok <= dayTok * 1.08
+  ) {
+    return true;
+  }
 
   // VPS dashboards (RouterLab :1212, 9router) use dailySummary as the day total.
   // Whenever we have a substantial daily rollup, prefer it over request tails —

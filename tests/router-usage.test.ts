@@ -324,6 +324,76 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("prefers near-complete history so local Today sees post-noon UTC requests (LiteLLM)", async () => {
+    // Daily stamp at noon UTC falls into "yesterday" for UTC+7 after local midnight.
+    // When SpendLogs history covers ~all tokens, keep individual RQs (real timestamps).
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { filterByPeriod } = await import("../src/util.js");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-litellm-today-"));
+    try {
+      const n = 50;
+      const history = Array.from({ length: n }, (_, i) => {
+        const mm = String(Math.floor(i / 60)).padStart(2, "0");
+        const ss = String(i % 60).padStart(2, "0");
+        // Mix: morning UTC + post-17:00Z (local next morning UTC+7)
+        const hour = i < 40 ? 10 : 17;
+        return {
+          id: `ll-${i}`,
+          timestamp: `2026-07-29T${String(hour).padStart(2, "0")}:${mm}:${ss}.000Z`,
+          model: "openai/Kimi-k3",
+          provider: "openai",
+          promptTokens: 1000,
+          completionTokens: 10,
+          cost: 0.01,
+          tokens: { prompt_tokens: 1000, completion_tokens: 10 },
+        };
+      });
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        history.map((r) => JSON.stringify(r)).join("\n") + "\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          "2026-07-29": {
+            requests: n,
+            promptTokens: n * 1000,
+            completionTokens: n * 10,
+            cost: n * 0.01,
+            byModel: {
+              "openai/Kimi-k3|openai": {
+                requests: n,
+                promptTokens: n * 1000,
+                completionTokens: n * 10,
+                cost: n * 0.01,
+                rawModel: "openai/Kimi-k3",
+                provider: "openai",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "litellm");
+      assert.ok(events.length >= n * 0.9, `expected ~${n} RQs, got ${events.length}`);
+      assert.ok(
+        events.filter((e) => !e.estimated).length >= n * 0.9,
+        "near-complete history should not collapse to daily rollups only",
+      );
+      // Local Today starting 17:00Z (UTC+7 midnight) must include post-noon spill RQs
+      const todayStart = "2026-07-29T17:00:00.000Z";
+      const inToday = filterByPeriod(events, todayStart, null, "UTC");
+      assert.ok(
+        inToday.length >= 8,
+        `expected post-17:00Z RQs in local Today, got ${inToday.length}`,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not stamp yesterday daily rollup into next local morning (Today leak)", async () => {
     // Reproduce: history spill at 17:12Z (00:12 UTC+7 next day) must NOT pull
     // the full previous UTC-day daily ($448-class) into TokenLab "Today".
