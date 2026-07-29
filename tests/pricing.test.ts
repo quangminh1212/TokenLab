@@ -48,3 +48,21 @@ test("grok-4.5 uses official short cache $0.30 and 2x long context ≥200k", () 
   const expected = (50_000 * 4 + 1_000 * 12 + 200_000 * 0.6) / 1e6;
   assert.ok(Math.abs((long.estimatedCost ?? 0) - expected) < 1e-12);
 });
+
+test("router models qwen3-coder-next / step-3.7-flash / laguna-s-2.1 resolve with OR rates", () => {
+  assert.equal(resolveModelKey("qwen3-coder-next"), "qwen3-coder-next");
+  assert.equal(resolveModelKey("qwen/qwen3-coder-next"), "qwen3-coder-next");
+  assert.equal(resolveModelKey("step-3.7-flash"), "step-3.7-flash");
+  assert.equal(resolveModelKey("stepfun/step-3.7-flash"), "step-3.7-flash");
+  assert.equal(resolveModelKey("laguna-s-2.1"), "laguna-s-2.1");
+  assert.equal(resolveModelKey("poolside/laguna-s-2.1"), "laguna-s-2.1");
+  assert.equal(resolveModelKey("minimax-m2.7"), "minimax-m2.7");
+  assert.equal(resolveModelKey("deepseek-v4-flash"), "deepseek-v4-flash");
+
+  // 1M in + 1M out at bundled rates
+  assert.equal(priceTokens("qwen3-coder-next", 1_000_000, 1_000_000).estimatedCost, 0.18 + 0.9);
+  assert.equal(priceTokens("step-3.7-flash", 1_000_000, 1_000_000).estimatedCost, 0.2 + 1.15);
+  assert.equal(priceTokens("laguna-s-2.1", 1_000_000, 1_000_000).estimatedCost, 0.1 + 0.2);
+  assert.equal(priceTokens("minimax-m3", 1_000_000, 1_000_000).estimatedCost, 0.3 + 1.2);
+  assert.equal(priceTokens("deepseek-v4-flash", 1_000_000, 1_000_000).estimatedCost, 0.14 + 0.28);
+});

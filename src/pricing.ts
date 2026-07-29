@@ -114,7 +114,7 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   // --- MiniMax / Moonshot ---
   // MiniMax paygo (≤512k, 50% promo): $0.30 / $1.20 / cache $0.06
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06 },
-  "minimax-m2.7": { inputPer1M: 0.3, outputPer1M: 1.2 },
+  "minimax-m2.7": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06 },
   "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5 },
   "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41 },
   "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025 },
@@ -124,6 +124,17 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   // Qwen max family (approx OpenRouter-class rates when Hermes/9router labels them)
   "qwen3.7-max": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
   "qwen3.8-max-preview": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
+  // Qwen3 Coder Next (OpenRouter qwen/qwen3-coder-next)
+  "qwen3-coder-next": { inputPer1M: 0.18, outputPer1M: 0.9, cacheReadPer1M: 0.036 },
+  "qwen3-coder": { inputPer1M: 0.22, outputPer1M: 1.8 },
+
+  // --- StepFun / Poolside (OpenRouter list prices) ---
+  // stepfun/step-3.7-flash: $0.20 / $1.15 / cache $0.04
+  "step-3.7-flash": { inputPer1M: 0.2, outputPer1M: 1.15, cacheReadPer1M: 0.04 },
+  "step-3.5-flash": { inputPer1M: 0.1, outputPer1M: 0.3 },
+  // poolside/laguna-s-2.1 paid: $0.10 / $0.20 / cache $0.01 (free tier is $0 via OR)
+  "laguna-s-2.1": { inputPer1M: 0.1, outputPer1M: 0.2, cacheReadPer1M: 0.01 },
+  "laguna-xs-2.1": { inputPer1M: 0.06, outputPer1M: 0.12, cacheReadPer1M: 0.03 },
 
   // --- Agent / router house models (still approx) ---
   "cursor-small": { inputPer1M: 0.2, outputPer1M: 0.8 },
@@ -162,6 +173,8 @@ export function guessProvider(modelId: string): string {
   if (raw.startsWith("kimi") || raw.startsWith("moonshot")) return "moonshotai";
   if (raw.startsWith("qwen")) return "qwen";
   if (raw.startsWith("minimax")) return "minimax";
+  if (raw.startsWith("step-") || raw.startsWith("stepfun")) return "stepfun";
+  if (raw.startsWith("laguna") || raw.startsWith("poolside")) return "poolside";
   if (raw.startsWith("mistral") || raw.startsWith("mixtral") || raw.startsWith("codestral")) {
     return "mistralai";
   }
@@ -188,6 +201,8 @@ const ALIASES: Record<string, string> = {
   "kimi-k3": "kimi-k3",
   "qwen3.7-max": "qwen3.7-max",
   "qwen3.8-max-preview": "qwen3.8-max-preview",
+  "qwen3-coder-next": "qwen3-coder-next",
+  "qwen-qwen3-coder-next": "qwen3-coder-next",
   composer: "default",
   "deep-seek-v4-flash": "deepseek-v4-flash",
   "deep-seek-v4-pro": "deepseek-v4-pro",
@@ -195,6 +210,10 @@ const ALIASES: Record<string, string> = {
   "deepseek-v3-2": "deepseek-v3.2",
   "glm-5-1": "glm-5.1",
   "minimax-m2-7": "minimax-m2.7",
+  "step-3-7-flash": "step-3.7-flash",
+  "step-3-5-flash": "step-3.5-flash",
+  "laguna-s-2-1": "laguna-s-2.1",
+  "laguna-xs-2-1": "laguna-xs-2.1",
 };
 
 function customRates(): Record<string, ModelRate> {
@@ -253,6 +272,10 @@ export function resolveModelKey(model: string | null | undefined): string | null
   if (raw.includes("grok")) return "grok-4.5";
   if (raw.includes("glm")) return "glm-5.1";
   if (raw.includes("minimax")) return "minimax-m3";
+  if (raw.includes("qwen3-coder-next") || raw.includes("qwen3_coder_next")) return "qwen3-coder-next";
+  if (raw.includes("step-3.7") || raw.includes("step-3-7")) return "step-3.7-flash";
+  if (raw.includes("laguna-s")) return "laguna-s-2.1";
+  if (raw.includes("laguna-xs")) return "laguna-xs-2.1";
   return null;
 }
 
