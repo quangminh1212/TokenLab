@@ -404,13 +404,12 @@
           fetch('/api/agents').then((r) => r.json()),
           fetch('/api/health').then((r) => r.json()),
         ]);
-        const detected = health.agentsDetected?.length || 0;
         const eventCount = health.eventCount || 0;
         if (typeof health.scanRevision === 'number') scanRevision = health.scanRevision;
         const scanning = Boolean(health.scanning);
         awaitingData = scanning || (eventCount === 0 && scanRevision === 0);
         const scanHint = scanning ? ' \u00B7 scanning\u2026' : '';
-        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} events${scanHint}`;
+        $('meta').textContent = `v${health.version || ''}${scanHint}`;
 
         costByAgent = {};
         tokensByAgent = {};

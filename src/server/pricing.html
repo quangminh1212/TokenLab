@@ -644,8 +644,7 @@
     async function loadMeta() {
       try {
         const health = await fetch('/api/health').then((r) => r.json());
-        const n = health.agentsDetected?.length || 0;
-        $('meta').textContent = `v${health.version} \u00B7 ${n} agents \u00B7 ${health.eventCount || 0} events`;
+        $('meta').textContent = `v${health.version || ''}`;
       } catch {
         $('meta').innerHTML = '<span class="err">API offline</span>';
       }

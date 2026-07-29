@@ -729,7 +729,6 @@
         state.daySeries = hourly ? fillHourSeries(rawSeries, state.period) : rawSeries;
 
         const eventCount = health.eventCount || 0;
-        const detected = health.agentsDetected?.length || 0;
         state.scanning = Boolean(health.scanning);
         if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
         if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
@@ -741,14 +740,9 @@
         state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
         state.lastEventCount = eventCount;
 
+        // Header meta: version only (+ scan state). Rows / RPM live in overview cards.
         const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
-        // Meta RPM = same period-mean as overview card (from period totals)
-        const periodRpm = periodRequestRate((state.totals && state.totals.eventCount) || 0);
-        const rpmHint =
-          periodRpm.requests > 0
-            ? ' \u00B7 ' + (Math.round(periodRpm.rpm * 10) / 10) + ' RPM (' + periodRpm.period + ')'
-            : '';
-        $('meta').textContent = `v${health.version} \u00B7 ${detected} agents \u00B7 ${fmt(eventCount)} rows${rpmHint}${scanHint}`;
+        $('meta').textContent = `v${health.version || ''}${scanHint}`;
 
         renderOverview(state.totals, state.live);
         renderChart();

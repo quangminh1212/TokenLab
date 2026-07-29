@@ -347,8 +347,7 @@
     async function loadHealth() {
       try {
         const h = await fetch('/api/health').then((r) => r.json());
-        const n = h.agentsDetected?.length || 0;
-        $('meta').textContent = `v${h.version} \u00B7 ${n} agents \u00B7 ${h.eventCount || 0} events`;
+        $('meta').textContent = `v${h.version || ''}`;
         $('versionLabel').textContent = h.version || '\u2014';
         $('eventsLabel').textContent = Number(h.eventCount || 0).toLocaleString();
         $('scanningLabel').textContent = h.scanning ? 'Running' : 'Idle';
