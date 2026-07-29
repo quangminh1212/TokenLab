@@ -200,6 +200,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   function mergeAgentScanLight(fresh: UsageEvent[], prev: UsageEvent[]): UsageEvent[] {
     if (fresh.length === 0) return prev;
     if (prev.length === 0) return fresh;
+    // Router agents (9router / RouterLab / LiteLLM): full re-parse of mirrors is
+    // authoritative for that pass. Union-by-id kept prev noon-stamped dailies
+    // alongside new SpendLogs RQs and collapse then discarded the live rows.
+    const routerAgent =
+      fresh[0]?.agent === "9router" ||
+      fresh[0]?.agent === "routerlab" ||
+      fresh[0]?.agent === "xlabrouter" ||
+      fresh[0]?.agent === "litellm";
+    if (routerAgent && fresh.length >= 5) {
+      return fresh;
+    }
     // Union by id; keep higher token/cost row when same id reappears.
     // Also keeps prev-only rows (already-scanned history) so we only *add*
     // newly seen ids from this pass rather than re-baselining the agent.

@@ -723,6 +723,38 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       dailyReq >= 10 ||
       dailyTok >= 100_000 ||
       (dailyCost > 0 && dailyTok >= 10_000);
+    // Estimated rows that are only a small residual vs live history (LiteLLM gap-fill
+    // after near-complete SpendLogs) must not be treated as the full-day authority —
+    // otherwise collapse drops 1k+ RQs and keeps noon-stamped remainders only.
+    const dailiesAreResidualOnly =
+      requests.length >= 20 &&
+      dailyTok > 0 &&
+      reqTok >= Math.max(dailyTok * 2, dailyTok + 50_000);
+    if (dailiesAreResidualOnly) {
+      out.push(...requests);
+      out.push(...dailiesClean);
+      continue;
+    }
+    // Near-complete live history matching (or modestly exceeding) full-day dailies:
+    // keep individual RQs so local "Today" sees post-noon UTC timestamps.
+    // Mid-day growth can make live tokens 5–35% above a stale cached daily.
+    // Cap request inflation so zero-token stream probes (1 daily vs 35 empty RQs)
+    // still fall through to daily authority.
+    if (
+      requests.length >= 20 &&
+      dailyTok > 0 &&
+      reqTok >= dailyTok * 0.9 &&
+      reqTok <= dailyTok * 1.35 &&
+      (dailyReq <= 0 ||
+        (reqReq >= dailyReq * 0.75 &&
+          reqReq <= Math.max(dailyReq * 1.25, dailyReq + 10)))
+    ) {
+      out.push(...requests);
+      if (reqTok < dailyTok * 0.98) {
+        out.push(...gapFillRouterDayFromDailies(dailiesClean, requests));
+      }
+      continue;
+    }
     const requestsOvershootDaily =
       dailyLooksAuthoritative &&
       ((dailyTok > 0 && reqTok > dailyTok * 1.05) ||
@@ -860,19 +892,24 @@ export function enforceMonotonicAgentDays(
     const bLive = b.events.filter((e) => !e.estimated).length;
     const aEst = a.events.length - aLive;
     const bEst = b.events.length - bLive;
-    // Corrected daily rollup (from VPS dailySummary) beats inflated multi-root
-    // request history that overshoots the same calendar day.
-    if (bEst > 0 && bLive === 0 && aLive >= 10 && a.tok > b.tok * 1.05) return b;
-    if (aEst > 0 && aLive === 0 && bLive >= 10 && b.tok > a.tok * 1.05) return a;
 
+    // Usage only grows: higher token envelope always wins (stale noon-stamped
+    // daily must not block fresher SpendLogs / request history for the same day).
+    // Multi-root inflation is handled in collapseRouterDailyEvents before mono.
     if (a.tok > b.tok * 1.001) return a;
     if (b.tok > a.tok * 1.001) return b;
     if (a.cost > b.cost * 1.001) return a;
     if (b.cost > a.cost * 1.001) return b;
+
     // Same tokens/cost: pure estimated daily (VPS dailySummary) beats a swarm of
     // live zero-token probes that only inflate request count (e.g. 1 vs 35).
     if (aEst > 0 && aLive === 0 && bLive > 0 && a.req > 0 && b.req > a.req * 1.5) return a;
     if (bEst > 0 && bLive === 0 && aLive > 0 && b.req > 0 && a.req > b.req * 1.5) return b;
+
+    // Same envelope: prefer multi-RQ live detail over pure daily (local Today / RECENT).
+    if (bLive >= 20 && aEst > 0 && aLive === 0 && b.req >= a.req * 0.75) return b;
+    if (aLive >= 20 && bEst > 0 && bLive === 0 && a.req >= b.req * 0.75) return a;
+
     // Same tokens/cost — prefer higher request coverage when both sides same kind
     if (a.req > b.req) return a;
     if (b.req > a.req) return b;
