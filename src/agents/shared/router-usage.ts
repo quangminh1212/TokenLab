@@ -4,7 +4,7 @@ import type { AgentId, UsageEvent } from "../../types.js";
 import { normalizeModelName, num, pathExists, readText, stableId } from "../../util.js";
 
 /**
- * Shared parser for 9router / routerlab (ex xlabrouter) local data.
+ * Shared parser for 9router / routerlab (ex xlabrouter) / litellm local data.
  *
  * Preference (request-first for RECENT EVENTS, daily as gap-fill):
  *  1. Per-request history (jsonl / usageHistory / request-details) when multi-RQ sample exists
@@ -22,11 +22,27 @@ import { normalizeModelName, num, pathExists, readText, stableId } from "../../u
 function prioritizeRouterRoots(roots: string[], agent: AgentId): string[] {
   const score = (r: string): number => {
     const s = r.replace(/\\/g, "/").toLowerCase();
-    if (s.includes("/mirrors/routerlab") || s.includes("/mirrors/9router")) return 100;
+    if (
+      s.includes("/mirrors/routerlab") ||
+      s.includes("/mirrors/9router") ||
+      s.includes("/mirrors/litellm")
+    )
+      return 100;
     if (s.includes("/mirrors/xlabrouter")) return 90;
-    if (s.includes("my.bnix.one") && (s.includes("routerlab") || s.includes("9router") || s.includes("xlabrouter")))
+    if (
+      s.includes("my.bnix.one") &&
+      (s.includes("routerlab") ||
+        s.includes("9router") ||
+        s.includes("xlabrouter") ||
+        s.includes("litellm"))
+    )
       return 80;
-    if (s.includes("/.9router") || s.includes("/var/lib/xlabrouter")) return 70;
+    if (
+      s.includes("/.9router") ||
+      s.includes("/var/lib/xlabrouter") ||
+      s.includes("/opt/litellm")
+    )
+      return 70;
     if (s.includes("xlab-token/mirrors")) return 60;
     return 10;
   };

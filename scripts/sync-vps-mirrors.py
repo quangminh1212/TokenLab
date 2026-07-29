@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pull latest 9router + RouterLab (xlabrouter) usage from VPS into local TokenLab mirrors.
+Pull latest 9router + RouterLab (xlabrouter) + LiteLLM usage from VPS into local TokenLab mirrors.
 
 Same pattern as 9router daily export:
   - 9router: SQLite usageDaily → usage-daily.json (+ db.json)
@@ -9,8 +9,11 @@ Same pattern as 9router daily export:
       usageData.history → usage-history.jsonl
       usageData → usageData.json
       db.json (usage-bearing)
+  - LiteLLM (:4000, Postgres litellm):
+      LiteLLM_DailyUserSpend + SpendLogs → usage-daily.json / usage-history.jsonl
+      (TokenLab agent id `litellm`, same router-usage parser shape as 9router)
 
-TokenLab agent ids stay `9router` / `xlabrouter` (label: RouterLab).
+TokenLab agent ids: `9router` / `xlabrouter` (label: RouterLab) / `litellm`.
 """
 from __future__ import annotations
 
@@ -393,6 +396,233 @@ if merged_daily or live_j:
         print("REWROTE_AFTER_RD_PATCH days", patched, "lifetime_req", total_req, "pt", total_pt, "cost", round(total_cost, 4))
 else:
     print("MISS_ROUTERLAB_DB")
+
+# --- LiteLLM (Postgres spend logs → same mirror shape as 9router) ---
+def _psql(sql: str) -> str:
+    import subprocess
+    p = subprocess.run(
+        ["sudo", "-u", "postgres", "psql", "-d", "litellm", "-t", "-A", "-F", "\t", "-c", sql],
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip()
+        print("LITELLM_PSQL_ERR", err[:300])
+        return ""
+    return (p.stdout or "").rstrip("\n")
+
+def _to_iso_z(ts: str) -> str:
+    s = (ts or "").strip()
+    if not s:
+        return ""
+    # "2026-07-29 15:57:01.331" or with +00
+    s = s.replace(" ", "T", 1)
+    if s.endswith("+00") or s.endswith("+00:00"):
+        s = s.split("+")[0] + "Z"
+    elif not s.endswith("Z") and "+" not in s[10:] and s.count("-") <= 2:
+        s = s + "Z"
+    return s
+
+daily_ll = {}
+# SpendLogs is request-level SoT (DailyUserSpend can over-count across keys).
+raw_logs_day = _psql(
+    'SELECT ("startTime"::date)::text, COUNT(*), '
+    "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+    "COALESCE(SUM(spend),0) "
+    'FROM "LiteLLM_SpendLogs" '
+    'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
+    "GROUP BY 1 ORDER BY 1"
+)
+if raw_logs_day:
+    for line in raw_logs_day.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        date_key = (parts[0] or "").strip()[:10]
+        if len(date_key) != 10:
+            continue
+        try:
+            reqs = int(float(parts[1] or 0))
+            pt = int(float(parts[2] or 0))
+            ct = int(float(parts[3] or 0))
+            cost = float(parts[4] or 0)
+        except Exception:
+            continue
+        daily_ll[date_key] = {
+            "requests": reqs, "promptTokens": pt, "completionTokens": ct,
+            "cachedTokens": 0, "cost": cost, "byModel": {},
+        }
+
+raw_by_model = _psql(
+    'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
+    "COALESCE(custom_llm_provider,''), COUNT(*), "
+    "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+    "COALESCE(SUM(spend),0) "
+    'FROM "LiteLLM_SpendLogs" '
+    'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
+    "GROUP BY 1,2,3 ORDER BY 1"
+)
+if raw_by_model:
+    for line in raw_by_model.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 7:
+            continue
+        date_key = (parts[0] or "").strip()[:10]
+        if len(date_key) != 10:
+            continue
+        model = (parts[1] or "mixed").strip() or "mixed"
+        provider = (parts[2] or "").strip()
+        try:
+            reqs = int(float(parts[3] or 0))
+            pt = int(float(parts[4] or 0))
+            ct = int(float(parts[5] or 0))
+            cost = float(parts[6] or 0)
+        except Exception:
+            continue
+        day = daily_ll.setdefault(date_key, {
+            "requests": 0, "promptTokens": 0, "completionTokens": 0,
+            "cachedTokens": 0, "cost": 0.0, "byModel": {},
+        })
+        bm = day.setdefault("byModel", {})
+        if not isinstance(bm, dict):
+            bm = {}
+            day["byModel"] = bm
+        mk = f"{model}|{provider}" if provider else model
+        bm[mk] = {
+            "requests": reqs, "promptTokens": pt, "completionTokens": ct,
+            "cachedTokens": 0, "cost": cost, "rawModel": model,
+            "provider": provider or None,
+        }
+
+# Fallback only when SpendLogs empty: DailyUserSpend (may over-count keys)
+if not daily_ll:
+    raw_daily = _psql(
+        'SELECT date, COALESCE(model, \'\'), COALESCE(custom_llm_provider, \'\'), '
+        "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+        "COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(cache_creation_input_tokens),0), "
+        "COALESCE(SUM(spend),0), COALESCE(SUM(api_requests),0), "
+        "COALESCE(SUM(successful_requests),0) "
+        'FROM "LiteLLM_DailyUserSpend" '
+        "GROUP BY date, model, custom_llm_provider ORDER BY date"
+    )
+    if raw_daily:
+        for line in raw_daily.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 10:
+                continue
+            date_key = (parts[0] or "").strip()[:10]
+            if len(date_key) != 10:
+                continue
+            model = (parts[1] or "").strip() or "mixed"
+            provider = (parts[2] or "").strip()
+            try:
+                pt = int(float(parts[3] or 0))
+                ct = int(float(parts[4] or 0))
+                cache_r = int(float(parts[5] or 0))
+                cost = float(parts[7] or 0)
+                reqs = int(float(parts[8] or 0))
+                ok = int(float(parts[9] or 0))
+            except Exception:
+                continue
+            if reqs <= 0 and ok > 0:
+                reqs = ok
+            if pt + ct + cache_r <= 0 and cost <= 0 and reqs <= 0:
+                continue
+            day = daily_ll.setdefault(date_key, {
+                "requests": 0, "promptTokens": 0, "completionTokens": 0,
+                "cachedTokens": 0, "cost": 0.0, "byModel": {},
+            })
+            day["requests"] += max(0, reqs)
+            day["promptTokens"] += max(0, pt)
+            day["completionTokens"] += max(0, ct)
+            day["cachedTokens"] += max(0, cache_r)
+            day["cost"] += max(0.0, cost)
+            mk = f"{model}|{provider}" if provider else model
+            bm = day["byModel"].setdefault(mk, {
+                "requests": 0, "promptTokens": 0, "completionTokens": 0,
+                "cachedTokens": 0, "cost": 0.0, "rawModel": model,
+                "provider": provider or None,
+            })
+            bm["requests"] += max(0, reqs)
+            bm["promptTokens"] += max(0, pt)
+            bm["completionTokens"] += max(0, ct)
+            bm["cachedTokens"] += max(0, cache_r)
+            bm["cost"] += max(0.0, cost)
+
+# History tail (chronological)
+hist_rows = []
+raw_hist = _psql(
+    'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
+    "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
+    "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
+    "COALESCE(call_type,''), COALESCE(model_group,'') "
+    'FROM "LiteLLM_SpendLogs" '
+    'ORDER BY "startTime" DESC LIMIT 8000'
+)
+if raw_hist:
+    for line in reversed(raw_hist.splitlines()):
+        parts = line.split("\t")
+        if len(parts) < 7:
+            continue
+        rid = (parts[0] or "").strip()
+        ts = _to_iso_z(parts[1] or "")
+        model = (parts[2] or "").strip() or "mixed"
+        provider = (parts[3] or "").strip()
+        try:
+            pt = int(float(parts[4] or 0))
+            ct = int(float(parts[5] or 0))
+            cost = float(parts[6] or 0)
+        except Exception:
+            continue
+        status = (parts[7] if len(parts) > 7 else "") or ""
+        if pt + ct <= 0 and cost <= 0:
+            continue
+        if not ts:
+            continue
+        hist_rows.append({
+            "id": rid or f"ll-{ts}-{model}-{pt}-{ct}",
+            "timestamp": ts,
+            "model": model,
+            "provider": provider or None,
+            "promptTokens": pt,
+            "completionTokens": ct,
+            "cost": cost,
+            "status": status,
+            "tokens": {"prompt_tokens": pt, "completion_tokens": ct},
+        })
+
+if daily_ll or hist_rows:
+    Path("/tmp/xlab-mirror-litellm-usage-daily.json").write_text(
+        json.dumps(daily_ll, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    total_req = sum(int((d or {}).get("requests") or 0) for d in daily_ll.values())
+    total_pt = sum(int((d or {}).get("promptTokens") or 0) for d in daily_ll.values())
+    total_ct = sum(int((d or {}).get("completionTokens") or 0) for d in daily_ll.values())
+    total_cost = sum(float((d or {}).get("cost") or 0) for d in daily_ll.values())
+    print(
+        "EXPORTED_LITELLM_DAYS", len(daily_ll),
+        "lifetime_req", total_req, "pt", total_pt, "ct", total_ct,
+        "cost", round(total_cost, 6),
+    )
+    if daily_ll:
+        print("LITELLM_RANGE", min(daily_ll), max(daily_ll))
+    with open("/tmp/xlab-mirror-litellm-usage-history.jsonl", "w", encoding="utf-8") as f:
+        for row in hist_rows:
+            f.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    print("EXPORTED_LITELLM_HIST", len(hist_rows))
+    slim = {
+        "usageData": {
+            "dailySummary": daily_ll,
+            "history": hist_rows[-500:] if len(hist_rows) > 500 else hist_rows,
+            "totalRequestsLifetime": total_req,
+        }
+    }
+    Path("/tmp/xlab-mirror-litellm-db.json").write_text(
+        json.dumps(slim, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    print("COPIED litellm slim db.json")
+else:
+    print("MISS_LITELLM_SPEND")
 '''
 
 
@@ -409,6 +639,7 @@ def main() -> int:
     vps_dirs = {
         "9router": r"C:\Dev\VPS\my.bnix.one\9router\data",
         "xlabrouter": r"C:\Dev\VPS\my.bnix.one\xlabrouter\data",
+        "litellm": r"C:\Dev\VPS\my.bnix.one\litellm\data",
     }
     for d in vps_dirs.values():
         parent = os.path.dirname(d)
@@ -420,6 +651,7 @@ def main() -> int:
         os.makedirs(os.path.join(mirror_root, "xlabrouter"), exist_ok=True)
         # alias folder name for clarity (same content as xlabrouter)
         os.makedirs(os.path.join(mirror_root, "routerlab"), exist_ok=True)
+        os.makedirs(os.path.join(mirror_root, "litellm"), exist_ok=True)
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -445,6 +677,10 @@ def main() -> int:
         ("/tmp/xlab-mirror-xlabrouter-usageData.json", "xlabrouter", "usageData.json"),
         ("/tmp/xlab-mirror-xlabrouter-db.json", "xlabrouter", "db.json"),
         ("/tmp/xlab-mirror-xlabrouter-request-details.jsonl", "xlabrouter", "request-details.jsonl"),
+        # LiteLLM (agent id litellm)
+        ("/tmp/xlab-mirror-litellm-usage-daily.json", "litellm", "usage-daily.json"),
+        ("/tmp/xlab-mirror-litellm-usage-history.jsonl", "litellm", "usage-history.jsonl"),
+        ("/tmp/xlab-mirror-litellm-db.json", "litellm", "db.json"),
     ]
 
     for remote, agent, name in remote_files:

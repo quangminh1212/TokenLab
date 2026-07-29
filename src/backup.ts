@@ -645,7 +645,10 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
   for (const e of events) {
     if (!e || typeof e.id !== "string") continue;
     const isRouter =
-      e.agent === "9router" || e.agent === "xlabrouter" || e.agent === "routerlab";
+      e.agent === "9router" ||
+      e.agent === "xlabrouter" ||
+      e.agent === "routerlab" ||
+      e.agent === "litellm";
     if (!isRouter) {
       nonRouter.push(e);
       continue;
@@ -898,7 +901,10 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
     // Router twin exports / multi-root mirrors share content but differ by
     // sourcePath, cache fields, or 1ms timestamps — collapse on second+model+IO.
     const isRouter =
-      e.agent === "9router" || e.agent === "xlabrouter" || e.agent === "routerlab";
+      e.agent === "9router" ||
+      e.agent === "xlabrouter" ||
+      e.agent === "routerlab" ||
+      e.agent === "litellm";
     const key = isRouter
       ? [
           e.agent,

@@ -49,6 +49,7 @@ import { agent as ollama } from "./ollama/index.js";
 import { agent as devin } from "./devin/index.js";
 import { agent as nine_router } from "./9router/index.js";
 import { agent as xlab_router } from "./xlabrouter/index.js";
+import { agent as litellm } from "./litellm/index.js";
 import type { AgentModule, AgentPathSpec } from "./shared/types.js";
 
 export type { AgentModule, AgentPathSpec } from "./shared/types.js";
@@ -104,6 +105,7 @@ export const AGENTS: AgentModule[] = [
   amazon_q,
   nine_router,
   xlab_router,
+  litellm,
 ];
 
 export const PARSERS: Record<AgentId, AgentModule["parse"] | null> = {

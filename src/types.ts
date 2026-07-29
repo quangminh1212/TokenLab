@@ -50,6 +50,7 @@ export type AgentId =
   | "routerlab"
   /** @deprecated legacy id — normalized to routerlab on load */
   | "xlabrouter"
+  | "litellm"
   | "custom";
 
 export interface UsageEvent {

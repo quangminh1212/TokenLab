@@ -173,6 +173,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     "9router",
     "routerlab",
     "xlabrouter",
+    "litellm",
     "hermes",
     "cursor",
     "claude-code",
@@ -1157,9 +1158,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
 
   /**
-   * Pull remote 9router + RouterLab usage into local mirrors (like 9router daily).
+   * Pull remote 9router + RouterLab + LiteLLM usage into local mirrors (like 9router daily).
    * RouterLab source: VPS :1212 /dashboard/usage → DATA_DIR=/var/lib/xlabrouter
    * 9router source: VPS :20128 → /root/.9router
+   * LiteLLM source: VPS :4000 → Postgres LiteLLM_SpendLogs / DailyUserSpend
    * Coalesced — concurrent calls share one in-flight SSH/export.
    * Used on boot and every ~1 min so aggregate/dashboard stays near-live.
    */

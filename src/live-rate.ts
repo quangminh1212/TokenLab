@@ -1,7 +1,7 @@
 /**
  * Live request-rate helpers.
  *
- * Scan-cache often collapses 9router/RouterLab to estimated daily rollups for totals.
+ * Scan-cache often collapses 9router/RouterLab/LiteLLM to estimated daily rollups for totals.
  * RPM must still count real per-call rows — read them from hot VPS mirror history tails.
  */
 import { open, stat } from "node:fs/promises";
@@ -23,6 +23,7 @@ function hotHistoryFiles(): Array<{ agent: string; file: string }> {
     { agent: "routerlab", file: path.join(root, "mirrors", "routerlab", "usage-history.jsonl") },
     { agent: "routerlab", file: path.join(root, "mirrors", "xlabrouter", "request-details.jsonl") },
     { agent: "routerlab", file: path.join(root, "mirrors", "xlabrouter", "usage-history.jsonl") },
+    { agent: "litellm", file: path.join(root, "mirrors", "litellm", "usage-history.jsonl") },
   ];
 }
 

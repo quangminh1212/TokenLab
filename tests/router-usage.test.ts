@@ -5,6 +5,7 @@ import { pathExists } from "../src/util.js";
 import { parseRouterUsage } from "../src/agents/shared/router-usage.js";
 import { nineRouterRoots } from "../src/agents/9router/index.js";
 import { xlabRouterRoots } from "../src/agents/xlabrouter/index.js";
+import { liteLlmRoots } from "../src/agents/litellm/index.js";
 
 describe("router usage parsers", () => {
   it("discovers at least one 9router root with data on this machine (or skips)", async () => {
@@ -55,6 +56,35 @@ describe("router usage parsers", () => {
       )
     ) {
       assert.ok(events.length > 0, `expected routerlab events from ${existing.join(", ")}`);
+    }
+  });
+
+  it("litellm roots resolve and parse mirror when present", async () => {
+    const roots = liteLlmRoots().filter(Boolean);
+    assert.ok(roots.length >= 2);
+    assert.ok(roots.some((r) => r.includes("litellm")));
+    const existing: string[] = [];
+    for (const r of roots) {
+      if (await pathExists(r)) existing.push(r);
+    }
+    const events = await parseRouterUsage(existing, "litellm");
+    assert.ok(Array.isArray(events));
+    for (const e of events) {
+      assert.equal(e.agent, "litellm");
+    }
+    if (
+      existing.some(
+        (r) =>
+          r.includes("mirrors") ||
+          r.includes("litellm\\data") ||
+          r.includes("litellm/data"),
+      )
+    ) {
+      // After VPS sync, mirror should yield events
+      // (skip hard assert when mirror empty / machine never synced)
+      if (events.length > 0) {
+        assert.ok(events[0]!.inputTokens + events[0]!.outputTokens > 0);
+      }
     }
   });
 

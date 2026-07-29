@@ -28,6 +28,7 @@ export function agentDisplayName(agent: string | null | undefined): string {
     routerlab: "RouterLab",
     xlabrouter: "RouterLab",
     "9router": "9Router",
+    litellm: "LiteLLM",
     "claude-code": "Claude Code",
     codex: "OpenAI Codex",
     cursor: "Cursor",
