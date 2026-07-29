@@ -76,17 +76,19 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
   "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4, cacheReadPer1M: 0.025 },
 
-  // --- xAI (docs.x.ai / x.ai pricing) ---
-  "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.5 },
-  "grok-4.3": { inputPer1M: 1.25, outputPer1M: 2.5, cacheReadPer1M: 0.2 },
+  // --- xAI (docs.x.ai/developers/pricing — short context <200k prompt) ---
+  // Long context (≥200k) is 2× these rates; applied in priceCostParts via longContextThresholdTokens.
+  "grok-4.5": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.3, longContextThresholdTokens: 200_000 },
+  "grok-4.5-build": { inputPer1M: 2, outputPer1M: 6, cacheReadPer1M: 0.3, longContextThresholdTokens: 200_000 },
+  "grok-4.3": { inputPer1M: 1.25, outputPer1M: 2.5, cacheReadPer1M: 0.2, longContextThresholdTokens: 200_000 },
   "grok-4": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.75 },
   "grok-4-fast": { inputPer1M: 0.2, outputPer1M: 0.5, cacheReadPer1M: 0.05 },
   "grok-4-fast-reasoning": { inputPer1M: 0.2, outputPer1M: 0.5, cacheReadPer1M: 0.05 },
   "grok-3": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.75 },
   "grok-3-mini": { inputPer1M: 0.3, outputPer1M: 0.5, cacheReadPer1M: 0.075 },
-  // grok-build-0.1 aliases: $1 in / $2 out / $0.20 cache
-  "grok-build": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
-  "grok-build-0.1": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
+  // grok-build-0.1: $1 / $2 / cache $0.20; long ≥200k is 2×
+  "grok-build": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2, longContextThresholdTokens: 200_000 },
+  "grok-build-0.1": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2, longContextThresholdTokens: 200_000 },
   "grok-code-fast-1": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
   "grok-code-fast": { inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.2 },
 
@@ -235,6 +237,10 @@ export function resolveModelKey(model: string | null | undefined): string | null
   if (raw.includes("gemini") && raw.includes("flash")) return "gemini-2.5-flash";
   if (raw.includes("gemini")) return "gemini-2.5-pro";
   if (raw.includes("grok") && raw.includes("fast")) return "grok-4-fast";
+  // Prefer exact build / 4.5 keys before generic family fallback
+  if (raw.includes("grok-4.5-build") || raw === "grok-4.5-build") return "grok-4.5-build";
+  if (raw.includes("grok-4.5")) return "grok-4.5";
+  if (raw.includes("grok-build")) return "grok-build";
   if (raw.includes("grok")) return "grok-4.5";
   if (raw.includes("glm")) return "glm-5.1";
   if (raw.includes("minimax")) return "minimax-m3";
@@ -291,12 +297,22 @@ export function priceCostParts(
   actualTotal?: number | null,
 ): { inputCost: number; cacheCost: number; outputCost: number; tableTotal: number } {
   const { rate } = getRateForModel(model);
-  const inputCost = (inputTokens * rate.inputPer1M) / 1_000_000;
-  const outputCost = (outputTokens * rate.outputPer1M) / 1_000_000;
+  // xAI long-context: prompt (input + cache read) ≥ threshold → 2× all rates for the request
+  const promptTokens = (inputTokens || 0) + (cacheReadTokens || 0);
+  const longMult =
+    rate.longContextThresholdTokens != null &&
+    rate.longContextThresholdTokens > 0 &&
+    promptTokens >= rate.longContextThresholdTokens
+      ? 2
+      : 1;
+  const inRate = rate.inputPer1M * longMult;
+  const outRate = rate.outputPer1M * longMult;
+  const cacheReadRate = (rate.cacheReadPer1M ?? rate.inputPer1M * 0.1) * longMult;
+  const cacheWriteRate = (rate.cacheWritePer1M ?? rate.inputPer1M * 1.25) * longMult;
+  const inputCost = (inputTokens * inRate) / 1_000_000;
+  const outputCost = (outputTokens * outRate) / 1_000_000;
   const cacheCost =
-    (cacheReadTokens * (rate.cacheReadPer1M ?? rate.inputPer1M * 0.1) +
-      cacheWriteTokens * (rate.cacheWritePer1M ?? rate.inputPer1M * 1.25)) /
-    1_000_000;
+    (cacheReadTokens * cacheReadRate + cacheWriteTokens * cacheWriteRate) / 1_000_000;
   const tableTotal = inputCost + outputCost + cacheCost;
   if (
     actualTotal != null &&

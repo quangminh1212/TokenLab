@@ -117,6 +117,11 @@ export interface ModelRate {
   outputPer1M: number;
   cacheReadPer1M?: number;
   cacheWritePer1M?: number;
+  /**
+   * When prompt tokens (uncached input + cache read) reach this threshold,
+   * all token rates are billed at 2× (xAI long-context tier, docs.x.ai pricing).
+   */
+  longContextThresholdTokens?: number;
 }
 
 export type GroupBy = "agent" | "model" | "day" | "hour";

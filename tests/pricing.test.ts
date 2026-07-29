@@ -37,3 +37,14 @@ test("unknown model falls back to default rates", () => {
   assert.ok((r.estimatedCost || 0) > 0);
   assert.ok(r.estimatedCost != null && r.estimatedCost > 0);
 });
+
+test("grok-4.5 uses official short cache $0.30 and 2x long context ≥200k", () => {
+  // Short: uncached 20k @ $2 + out 2k @ $6 + cache 80k @ $0.30
+  const short = priceTokens("grok-4.5", 20_000, 2_000, 80_000, 0);
+  assert.ok(Math.abs((short.estimatedCost ?? 0) - (20_000 * 2 + 2_000 * 6 + 80_000 * 0.3) / 1e6) < 1e-12);
+
+  // Long: prompt 250k (50k uncached + 200k cache) → 2× rates
+  const long = priceTokens("grok-4.5", 50_000, 1_000, 200_000, 0);
+  const expected = (50_000 * 4 + 1_000 * 12 + 200_000 * 0.6) / 1e6;
+  assert.ok(Math.abs((long.estimatedCost ?? 0) - expected) < 1e-12);
+});

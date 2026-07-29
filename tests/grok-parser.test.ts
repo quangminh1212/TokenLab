@@ -21,7 +21,8 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
       }),
     );
 
-    // Real Grok shape: inputTokens is FULL prompt (includes cache)
+    // Real Grok shape: inputTokens is FULL prompt (includes cache);
+    // costUsdTicks = USD × 1e10 (official) — must win over table rates
     const usageLine = JSON.stringify({
       timestamp: 1784110894,
       method: "session/update",
@@ -38,6 +39,8 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
             cachedReadTokens: 80_000,
             reasoningTokens: 500,
             modelCalls: 3,
+            // $0.2991092 official (short rates cache $0.30)
+            costUsdTicks: 2_991_092_000,
             modelUsage: {
               "grok-4.5": {
                 inputTokens: 100_000,
@@ -87,13 +90,14 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
     assert.equal(e.totalTokens, 102_000);
     assert.equal(e.pricingStatus, "priced");
 
-    // Cost must use cache rate, not full input rate on cached portion
-    const correct = priceTokens("grok-4.5", 20_000, 2_000, 80_000, 0);
+    // Prefer official costUsdTicks over table
     assert.ok(e.estimatedCost != null);
-    assert.ok(Math.abs((e.estimatedCost ?? 0) - (correct.estimatedCost ?? 0)) < 1e-12);
+    assert.ok(Math.abs((e.estimatedCost ?? 0) - 0.2991092) < 1e-9);
 
+    // Table (no ticks) would still price cache cheaper than full input
+    const table = priceTokens("grok-4.5", 20_000, 2_000, 80_000, 0);
     const wrongAllInput = priceTokens("grok-4.5", 100_000, 2_000, 0, 0);
-    assert.ok((e.estimatedCost ?? 0) < (wrongAllInput.estimatedCost ?? 0));
+    assert.ok((table.estimatedCost ?? 0) < (wrongAllInput.estimatedCost ?? 0));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

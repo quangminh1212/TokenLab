@@ -98,13 +98,15 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
       if (!hadRealUsage && usage) {
         const buckets = bucketsFromUsage(usage);
         if (buckets) {
+          const { routerCost, ...tokenBuckets } = buckets;
           events.push(
             applyPricing({
               id: stableId("grok", sessionId, "usage"),
               agent: "grok",
               model,
               timestamp: ts,
-              ...buckets,
+              ...tokenBuckets,
+              ...(routerCost != null ? { routerCost } : {}),
               workspace,
               sourcePath: summaryPath,
             }),
@@ -333,13 +335,15 @@ async function parseUpdatesUsage(
           }
         }
 
+        const { routerCost, ...tokenBuckets } = buckets;
         events.push(
           applyPricing({
             id: stableId("grok", ctx.sessionId, "tc", promptId),
             agent: "grok",
             model,
             timestamp: ts,
-            ...buckets,
+            ...tokenBuckets,
+            ...(routerCost != null ? { routerCost } : {}),
             workspace: ctx.workspace,
             sourcePath: updatesPath,
             estimated: false,
@@ -375,9 +379,31 @@ async function parseUpdatesUsage(
     stream.destroy();
   }
 
-  // In-progress only: no turn_completed yet, but stream already reported tokens.
-  // Do NOT add residual on top of completed turns (peak context ≠ unbilled delta).
-  if (events.length === 0 && maxStreamTokens > 0) {
+  // Residual in-progress prompts: still streaming after prior completed turns.
+  // Bill each remaining prompt peak (not just session-level max) so live usage is not missing.
+  if (promptPeak.size > 0) {
+    let rIdx = 0;
+    for (const [promptId, peak] of promptPeak) {
+      if (peak <= 0) continue;
+      rIdx += 1;
+      events.push(
+        applyPricing({
+          id: stableId("grok", ctx.sessionId, "residual", promptId, String(peak)),
+          agent: "grok",
+          model: ctx.model,
+          timestamp: maxStreamTs,
+          inputTokens: peak,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          workspace: ctx.workspace,
+          sourcePath: updatesPath,
+          estimated: true,
+        }),
+      );
+    }
+  } else if (events.length === 0 && maxStreamTokens > 0) {
+    // No prompt ids in stream meta — session-level floor only
     events.push(
       applyPricing({
         id: stableId("grok", ctx.sessionId, "stream-floor", String(maxStreamTokens)),
@@ -402,12 +428,15 @@ async function parseUpdatesUsage(
  * - inputTokens = full prompt tokens (includes cache hits)
  * - cachedReadTokens = cache hit portion of input
  * - outputTokens includes reasoning
+ * - costUsdTicks = official USD × 1e10 (when present — prefer over table rates)
  */
 function bucketsFromUsage(usage: Record<string, unknown>): {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** Official cost from Grok CLI when present (USD). */
+  routerCost?: number;
 } | null {
   const fullInput = num(
     usage.inputTokens ?? usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokens,
@@ -444,11 +473,17 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
   const uncached = Math.max(0, fullInput - cacheRead);
 
   if (uncached + output + cacheRead + cacheWrite <= 0) return null;
+
+  // Grok CLI reports cost as integer ticks: USD = costUsdTicks / 1e10
+  const ticks = num(usage.costUsdTicks ?? usage.cost_usd_ticks);
+  const routerCost = ticks > 0 ? ticks / 1e10 : undefined;
+
   return {
     inputTokens: uncached,
     outputTokens: output,
     cacheReadTokens: cacheRead,
     cacheWriteTokens: cacheWrite,
+    ...(routerCost != null ? { routerCost } : {}),
   };
 }
 
