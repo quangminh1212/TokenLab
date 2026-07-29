@@ -56,6 +56,27 @@ function groupKey(e: UsageEvent, by: GroupBy): string {
   return `${d.toISOString().slice(0, 13)}:00`;
 }
 
+/** Map key for grouping — model names are case-insensitive (kimi-k3 ≡ Kimi-k3). */
+function groupMapKey(displayKey: string, by: GroupBy): string {
+  if (by === "model") return displayKey.toLowerCase();
+  return displayKey;
+}
+
+/**
+ * Prefer a display label when merging case variants of the same model.
+ * Majority vote first; on ties prefer more uppercase (brand casing like XLab).
+ */
+function preferModelDisplay(current: string, candidate: string, currentVotes: number, candidateVotes: number): string {
+  if (candidateVotes > currentVotes) return candidate;
+  if (candidateVotes < currentVotes) return current;
+  const upper = (s: string) => (s.match(/[A-Z]/g) || []).length;
+  const uc = upper(current);
+  const un = upper(candidate);
+  if (un !== uc) return un > uc ? candidate : current;
+  // Stable: prefer the earlier-seen form (current)
+  return current;
+}
+
 export function aggregate(
   events: UsageEvent[],
   groupBy: GroupBy = "agent",
@@ -65,16 +86,30 @@ export function aggregate(
 ): StatsResult {
   const totals = emptyTotals();
   const map = new Map<string, GroupRow>();
+  /** Case-variant vote counts per map key (model only). */
+  const displayVotes = new Map<string, Map<string, number>>();
 
   for (const e of events) {
     add(totals, e);
-    const key = groupKey(e, groupBy);
-    let row = map.get(key);
+    const displayKey = groupKey(e, groupBy);
+    const mapKey = groupMapKey(displayKey, groupBy);
+    let row = map.get(mapKey);
     if (!row) {
-      row = { key, ...emptyTotals() };
-      map.set(key, row);
+      row = { key: displayKey, ...emptyTotals() };
+      map.set(mapKey, row);
     }
     add(row, e);
+
+    if (groupBy === "model") {
+      let votes = displayVotes.get(mapKey);
+      if (!votes) {
+        votes = new Map();
+        displayVotes.set(mapKey, votes);
+      }
+      const n = (votes.get(displayKey) || 0) + 1;
+      votes.set(displayKey, n);
+      row.key = preferModelDisplay(row.key, displayKey, votes.get(row.key) || 0, n);
+    }
   }
 
   const groups = [...map.values()].sort((a, b) =>
