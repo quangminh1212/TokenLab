@@ -118,6 +118,12 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5 },
   "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41 },
   "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025 },
+  // Hermes / 9router gateway aliases for Kimi K3 family
+  "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  // Qwen max family (approx OpenRouter-class rates when Hermes/9router labels them)
+  "qwen3.7-max": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
+  "qwen3.8-max-preview": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
 
   // --- Agent / router house models (still approx) ---
   "cursor-small": { inputPer1M: 0.2, outputPer1M: 0.8 },
@@ -179,6 +185,9 @@ const ALIASES: Record<string, string> = {
   "chatgpt-4o-latest": "gpt-4o",
   "grok-4-latest": "grok-4",
   "grok-code-fast-1-0825": "grok-code-fast-1",
+  "kimi-k3": "kimi-k3",
+  "qwen3.7-max": "qwen3.7-max",
+  "qwen3.8-max-preview": "qwen3.8-max-preview",
   composer: "default",
   "deep-seek-v4-flash": "deepseek-v4-flash",
   "deep-seek-v4-pro": "deepseek-v4-pro",
