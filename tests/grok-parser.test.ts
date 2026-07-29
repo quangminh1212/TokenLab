@@ -86,8 +86,9 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
     // uncached = 100k - 80k
     assert.equal(e.inputTokens, 20_000);
     assert.equal(e.cacheReadTokens, 80_000);
-    assert.equal(e.outputTokens, 2_000);
-    assert.equal(e.totalTokens, 102_000);
+    // Policy thừa hơn thiếu: output 2000 + reasoning 500
+    assert.equal(e.outputTokens, 2_500);
+    assert.equal(e.totalTokens, 102_500);
     assert.equal(e.pricingStatus, "priced");
 
     // Prefer official costUsdTicks over table

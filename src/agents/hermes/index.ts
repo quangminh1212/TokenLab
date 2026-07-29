@@ -9,10 +9,11 @@ import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/u
 
 /**
  * Hermes Agent (`%LOCALAPPDATA%/hermes` / `~/.hermes`):
- * - Prefer session_model_usage (per-model, slightly more complete than sessions rollup)
- * - Fall back to sessions table
+ * Policy: prefer over-count over missing usage (thừa hơn thiếu).
+ * - session_model_usage (per-model) + gap-fill from sessions when session total is higher
+ * - Always bill reasoning_tokens on top of output (Hermes stores them separately)
+ * - Historical state-snapshots kept; same path never double-parsed
  * - JSONL only under sessions/ (skip node_modules / venv noise)
- * - Never double-parse the same DB; skip obvious backups when live DB exists
  */
 export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
@@ -158,24 +159,27 @@ async function parseHermesSqlite(dbPath: string): Promise<UsageEvent[]> {
       const has = (name: string) =>
         tableNames.some((n) => n.toLowerCase() === name.toLowerCase());
 
-      // 1) Prefer per-model rollups (real model ids: Kimi-k3, claude-opus-4.8, …)
-      if (has("session_model_usage")) {
-        const fromSmu = readSessionModelUsage(db, dbPath);
-        if (fromSmu.length > 0) {
-          events.push(...fromSmu);
-          return events;
-        }
-      }
-
-      // 2) Session-level rollups
       const sessionTable =
         tableNames.find((n) => n.toLowerCase() === "sessions") ||
         tableNames.find((n) => n.toLowerCase().includes("session"));
-      if (sessionTable) {
-        events.push(...readSessionsTable(db, dbPath, sessionTable));
+
+      // 1) Per-model rollups (real model ids: Kimi-k3, claude-opus-4.8, …)
+      let smuEvents: UsageEvent[] = [];
+      if (has("session_model_usage")) {
+        smuEvents = readSessionModelUsage(db, dbPath);
+        events.push(...smuEvents);
       }
 
-      // 3) Messages only when no session rollups (token_count alone is not billed usage)
+      // 2) Sessions: full rows when no SMU; gap-fill when session total > SMU sum
+      if (sessionTable) {
+        if (smuEvents.length === 0) {
+          events.push(...readSessionsTable(db, dbPath, sessionTable));
+        } else {
+          events.push(...gapFillSessionsOverSmu(db, dbPath, sessionTable, smuEvents));
+        }
+      }
+
+      // 3) Messages only as last resort floor (token_count alone is weak)
       if (events.length === 0) {
         const msgTable = tableNames.find((n) => /^messages?$/i.test(n));
         if (msgTable) {
@@ -189,6 +193,119 @@ async function parseHermesSqlite(dbPath: string): Promise<UsageEvent[]> {
     // node:sqlite unavailable or locked db — skip
   }
   return events;
+}
+
+/**
+ * When a session rollup is richer than the sum of its SMU rows, emit a gap event
+ * for the positive deltas only (over-count policy: never leave session tokens on the floor).
+ */
+function gapFillSessionsOverSmu(
+  db: { prepare: (sql: string) => { all: () => unknown[] } },
+  dbPath: string,
+  sessionTable: string,
+  smuEvents: UsageEvent[],
+): UsageEvent[] {
+  void smuEvents; // presence means SMU was scanned; gaps re-sum from SQL below
+  const smuBySession = new Map<
+    string,
+    { input: number; output: number; cacheRead: number; cacheWrite: number; reqs: number }
+  >();
+
+  try {
+    const sums = db
+      .prepare(
+        `SELECT session_id as sid,
+          SUM(COALESCE(input_tokens,0)) as input,
+          SUM(COALESCE(output_tokens,0)) as output,
+          SUM(COALESCE(cache_read_tokens,0)) as cache_read,
+          SUM(COALESCE(cache_write_tokens,0)) as cache_write,
+          SUM(COALESCE(reasoning_tokens,0)) as reasoning,
+          SUM(COALESCE(api_call_count,0)) as reqs
+         FROM session_model_usage
+         GROUP BY session_id`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    for (const r of sums) {
+      const sid = String(r.sid ?? "");
+      if (!sid) continue;
+      const out = num(r.output) + num(r.reasoning); // reasoning billed on top
+      smuBySession.set(sid, {
+        input: num(r.input),
+        output: out,
+        cacheRead: num(r.cache_read),
+        cacheWrite: num(r.cache_write),
+        reqs: num(r.reqs),
+      });
+    }
+  } catch {
+    /* no SMU table */
+  }
+
+  const gaps: UsageEvent[] = [];
+  try {
+    const rows = db.prepare(`SELECT * FROM ${quoteIdent(sessionTable)}`).all() as Array<
+      Record<string, unknown>
+    >;
+    for (const row of rows) {
+      const sid = String(row.id ?? row.session_id ?? "");
+      if (!sid) continue;
+      const sIn = num(row.input_tokens ?? row.total_input_tokens ?? row.prompt_tokens);
+      let sOut = num(row.output_tokens ?? row.total_output_tokens ?? row.completion_tokens);
+      const sCr = num(row.cache_read_tokens ?? row.cache_read_input_tokens);
+      const sCw = num(row.cache_write_tokens ?? row.cache_creation_input_tokens);
+      const sReason = num(row.reasoning_tokens);
+      // Over-count: always add reasoning to session output
+      if (sReason > 0) sOut += sReason;
+
+      const u = smuBySession.get(sid) ?? {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        reqs: 0,
+      };
+
+      const dIn = Math.max(0, sIn - u.input);
+      const dOut = Math.max(0, sOut - u.output);
+      const dCr = Math.max(0, sCr - u.cacheRead);
+      const dCw = Math.max(0, sCw - u.cacheWrite);
+      if (dIn + dOut + dCr + dCw <= 0) continue;
+
+      let model = typeof row.model === "string" ? row.model : null;
+      if (typeof row.model_config === "string") {
+        try {
+          const cfg = JSON.parse(String(row.model_config)) as Record<string, unknown>;
+          if (typeof cfg.model === "string" && (!model || isGatewayAlias(model))) model = cfg.model;
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const apiCalls = Math.max(0, num(row.api_call_count) - u.reqs);
+      const cost = pickHermesCost(row);
+      gaps.push(
+        applyPricing({
+          id: stableId("hermes", dbPath, "gap", sid, String(dIn), String(dOut), String(dCr)),
+          agent: "hermes",
+          model,
+          timestamp: extractTimestamp(row.ended_at ?? row.started_at, row),
+          inputTokens: dIn,
+          outputTokens: dOut,
+          cacheReadTokens: dCr,
+          cacheWriteTokens: dCw,
+          workspace: typeof row.cwd === "string" ? row.cwd : null,
+          sourcePath: dbPath,
+          estimated: true,
+          ...(apiCalls > 0 ? { requestCount: Math.floor(apiCalls) } : {}),
+          // Don't apply full session cost to a partial gap
+          ...(cost != null && u.input + u.output === 0 ? { routerCost: cost } : {}),
+        }),
+      );
+    }
+  } catch {
+    /* schema variance */
+  }
+  return gaps;
 }
 
 function readSessionModelUsage(
@@ -300,14 +417,8 @@ function readSessionsTable(
       const cacheReadTokens = crCol ? num(row[crCol]) : 0;
       const cacheWriteTokens = cwCol ? num(row[cwCol]) : 0;
       const reasoning = reasonCol ? num(row[reasonCol]) : 0;
-      // Hermes stores reasoning separately; bill as output when not already covered
-      if (reasoning > 0 && outputTokens > 0 && reasoning > outputTokens) {
-        outputTokens = reasoning;
-      } else if (reasoning > 0 && outputTokens === 0) {
-        outputTokens = reasoning;
-      } else if (reasoning > 0) {
-        // reasoning typically subset of generation — do not double-add when already in output
-      }
+      // Policy: thừa hơn thiếu — always add reasoning_tokens as output
+      if (reasoning > 0) outputTokens += reasoning;
 
       if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) continue;
 
@@ -405,9 +516,9 @@ function tokenBucketsFromHermesRow(row: Record<string, unknown>): {
   const cacheWriteTokens = num(
     row.cache_write_tokens ?? row.cache_creation_input_tokens ?? row.cacheWriteTokens,
   );
+  // Policy: thừa hơn thiếu — Hermes stores reasoning separately; always bill it as output.
   const reasoning = num(row.reasoning_tokens ?? row.reasoningTokens);
-  if (reasoning > 0 && outputTokens === 0) outputTokens = reasoning;
-  else if (reasoning > 0 && reasoning > outputTokens) outputTokens = reasoning;
+  if (reasoning > 0) outputTokens += reasoning;
 
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) return null;
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };

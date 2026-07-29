@@ -444,15 +444,15 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
   let output = num(
     usage.outputTokens ?? usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens,
   );
-  // If reasoning is reported separately and not already in output, add it (over-count safe)
+  // Policy: thừa hơn thiếu — if reasoning is reported separately, always bill it.
+  // (Grok often already folds reasoning into outputTokens; adding may slightly over-count.)
   const reasoning = num(
     usage.reasoningTokens ?? usage.reasoning_tokens ?? usage.thinking_tokens,
   );
-  if (reasoning > 0 && output > 0 && reasoning > output) {
-    // reasoning reported as larger than output — treat as total generation
-    output = reasoning;
-  } else if (reasoning > 0 && output === 0) {
-    output = reasoning;
+  if (reasoning > 0) {
+    if (output <= 0) output = reasoning;
+    else if (reasoning > output) output = reasoning;
+    else output += reasoning; // both present and reasoning ⊆ output still → prefer over-count
   }
 
   const cacheRead = num(
