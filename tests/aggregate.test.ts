@@ -202,7 +202,7 @@ test("aggregate by model merges names with provider parentheses", () => {
   assert.ok(Math.abs(gpt.estimatedCost - 1.8) < 1e-9);
 });
 
-test("aggregate by model merges case variants and keeps majority casing", () => {
+test("aggregate by model merges case variants into one lowercase key", () => {
   const events: UsageEvent[] = [
     {
       ...sample[0],
@@ -225,7 +225,7 @@ test("aggregate by model merges case variants and keeps majority casing", () => 
     {
       ...sample[0],
       id: "k3",
-      model: "kimi-k3",
+      model: "KIMI-K3",
       totalTokens: 30,
       estimatedCost: 0.3,
       inputTokens: 20,
@@ -251,17 +251,16 @@ test("aggregate by model merges case variants and keeps majority casing", () => 
     },
   ];
   const r = aggregate(events, "model", "cost");
-  const kimi = r.groups.find((g) => g.key.toLowerCase() === "kimi-k3");
+  const kimi = r.groups.find((g) => g.key === "kimi-k3");
   assert.ok(kimi, `expected single kimi-k3 group, got ${r.groups.map((g) => g.key).join(",")}`);
   assert.equal(kimi.eventCount, 3);
   assert.equal(kimi.totalTokens, 180);
-  // Majority casing is lowercase "kimi-k3" (2 vs 1)
   assert.equal(kimi.key, "kimi-k3");
-  // Tie: prefer brand casing with more uppercase
-  const xlab = r.groups.find((g) => g.key.toLowerCase() === "xlab");
-  assert.ok(xlab, `expected XLab group, got ${r.groups.map((g) => g.key).join(",")}`);
+  const xlab = r.groups.find((g) => g.key === "xlab");
+  assert.ok(xlab, `expected xlab group, got ${r.groups.map((g) => g.key).join(",")}`);
   assert.equal(xlab.eventCount, 2);
-  assert.equal(xlab.key, "XLab");
+  assert.equal(xlab.key, "xlab");
   // No duplicate case-split rows
   assert.equal(r.groups.filter((g) => g.key.toLowerCase() === "kimi-k3").length, 1);
+  assert.equal(r.groups.filter((g) => g.key.toLowerCase() === "xlab").length, 1);
 });

@@ -1835,7 +1835,9 @@ export function buildGistRestoreRollups(
     if (isGistRollupEvent(e)) continue;
     const ts = new Date(e.timestamp).getTime();
     if (Number.isNaN(ts)) continue;
-    const model = normalizeModelName(e.model);
+    // Lowercase so case variants of the same model collapse into one rollup
+    const modelRaw = normalizeModelName(e.model);
+    const model = modelRaw ? modelRaw.toLowerCase() : modelRaw;
     const useHour = ts >= hourCutoff;
     const bucket = useHour
       ? new Date(ts).toISOString().slice(0, 13) // YYYY-MM-DDTHH
@@ -1875,10 +1877,10 @@ export function isGistRollupEvent(e: UsageEvent): boolean {
   return typeof e.sourcePath === "string" && e.sourcePath.startsWith("backup:gist");
 }
 
-/** day|agent|model key for collapse / anti-double-count */
+/** day|agent|model key for collapse / anti-double-count (model case-insensitive) */
 export function gistCoverageKey(e: UsageEvent): string {
   const day = (e.timestamp || "").slice(0, 10);
-  const model = normalizeModelName(e.model) || "";
+  const model = (normalizeModelName(e.model) || "").toLowerCase();
   return `${day}|${e.agent}|${model}`;
 }
 
