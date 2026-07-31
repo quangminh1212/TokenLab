@@ -516,11 +516,11 @@ raw_logs_day = _psql(
     "GROUP BY 1 ORDER BY 1"
 )
 if not raw_logs_day:
-    # Older schemas without cache_* columns
+    # Older schemas without cache_* columns on SpendLogs
     raw_logs_day = _psql(
         'SELECT ("startTime"::date)::text, COUNT(*), '
         "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-        "COALESCE(SUM(spend),0), 0, 0 "
+        "COALESCE(SUM(spend),0), 0::bigint, 0::bigint "
         'FROM "LiteLLM_SpendLogs" '
         'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
         "GROUP BY 1 ORDER BY 1"
@@ -561,7 +561,7 @@ if not raw_by_model:
         'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
         "COALESCE(custom_llm_provider,''), COUNT(*), "
         "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-        "COALESCE(SUM(spend),0), 0, 0 "
+        "COALESCE(SUM(spend),0), 0::bigint, 0::bigint "
         'FROM "LiteLLM_SpendLogs" '
         'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
         "GROUP BY 1,2,3 ORDER BY 1"
@@ -685,23 +685,25 @@ raw_hist = _psql(
     'ORDER BY "startTime" DESC LIMIT 8000'
 )
 if not raw_hist:
+    # No native cache_* columns on SpendLogs — still export history with empty cache fields.
+    # Note: use "''" (SQL empty string), not Python empty string which drops the token.
     raw_hist = _psql(
         'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
         "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
         "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
         "COALESCE(call_type,''), COALESCE(model_group,''), "
-        "0, 0, COALESCE "
+        "0, 0, '' "
         'FROM "LiteLLM_SpendLogs" '
         'ORDER BY "startTime" DESC LIMIT 8000'
     )
 if not raw_hist:
-    # metadata-only fallback (no cache columns)
+    # Last resort: try metadata JSON for cache (column may be jsonb/text)
     raw_hist = _psql(
         'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
         "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
         "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
         "COALESCE(call_type,''), COALESCE(model_group,''), "
-        "0, 0, COALESCE "
+        "0, 0, COALESCE(metadata::text, '') "
         'FROM "LiteLLM_SpendLogs" '
         'ORDER BY "startTime" DESC LIMIT 8000'
     )
