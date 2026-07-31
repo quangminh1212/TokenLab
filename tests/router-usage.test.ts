@@ -573,6 +573,60 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("gap-fills cache when history has full prompt but daily has cachedTokens", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cache-gap-"));
+    try {
+      const day = "2026-07-20";
+      // History covers I/O + requests but reports 0 cache
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        JSON.stringify({
+          id: "h1",
+          timestamp: `${day}T10:00:00.000Z`,
+          model: "gpt-5.6-sol",
+          provider: "openai",
+          promptTokens: 100_000,
+          completionTokens: 200,
+          cost: 1.0,
+          tokens: { prompt_tokens: 100_000, completion_tokens: 200 },
+        }) + "\n",
+        "utf8",
+      );
+      // Daily byModel has the cache hit that history omitted
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [day]: {
+            requests: 1,
+            promptTokens: 100_000,
+            completionTokens: 200,
+            cachedTokens: 80_000,
+            cost: 1.0,
+            byModel: {
+              "gpt-5.6-sol|openai": {
+                requests: 1,
+                promptTokens: 100_000,
+                completionTokens: 200,
+                cachedTokens: 80_000,
+                cost: 1.0,
+                rawModel: "gpt-5.6-sol",
+                provider: "openai",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "litellm");
+      const totalCache = events.reduce((a, e) => a + (e.cacheReadTokens || 0), 0);
+      assert.ok(totalCache >= 80_000, `expected cache gap-fill ≥80000, got ${totalCache}`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("parses a synthetic history row via export file", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");

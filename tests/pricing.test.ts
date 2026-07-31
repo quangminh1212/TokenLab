@@ -49,6 +49,15 @@ test("grok-4.5 uses official short cache $0.30 and 2x long context ≥200k", () 
   assert.ok(Math.abs((long.estimatedCost ?? 0) - expected) < 1e-12);
 });
 
+test("gemini-3.6 flash labels and kimi-k3 resolve with cache rates", () => {
+  assert.equal(resolveModelKey("gemini-3.6-flash-tiered"), "gemini-3.6-flash-tiered");
+  assert.equal(resolveModelKey("gemini-3.6-flash-high"), "gemini-3.6-flash-high");
+  assert.equal(resolveModelKey("kimi-k3"), "kimi-k3");
+  const p = priceCostParts("kimi-k3", 1_000_000, 0, 1_000_000, 0);
+  assert.equal(p.inputCost, 0.6);
+  assert.equal(p.cacheCost, 0.06);
+});
+
 test("router models qwen3-coder-next / step-3.7-flash / laguna-s-2.1 resolve with OR rates", () => {
   assert.equal(resolveModelKey("qwen3-coder-next"), "qwen3-coder-next");
   assert.equal(resolveModelKey("qwen/qwen3-coder-next"), "qwen3-coder-next");

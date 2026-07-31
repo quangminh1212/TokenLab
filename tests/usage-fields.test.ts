@@ -42,3 +42,23 @@ test("extractTokenBuckets reads Devin-style metadata.metrics", () => {
   assert.equal(b?.outputTokens, 20);
   assert.equal(b?.cacheReadTokens, 50);
 });
+
+test("extractTokenBuckets reads cached_tokens and prompt_tokens_details", () => {
+  const flat = extractTokenBuckets({
+    prompt_tokens: 1000,
+    completion_tokens: 20,
+    cached_tokens: 800,
+  });
+  assert.equal(flat?.cacheReadTokens, 800);
+  assert.equal(flat?.inputTokens, 1000);
+
+  const nested = extractTokenBuckets({
+    usage: {
+      prompt_tokens: 500,
+      completion_tokens: 10,
+      prompt_tokens_details: { cached_tokens: 400 },
+    },
+  });
+  assert.equal(nested?.inputTokens, 500);
+  assert.equal(nested?.cacheReadTokens, 400);
+});
