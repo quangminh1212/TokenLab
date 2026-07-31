@@ -88,8 +88,13 @@ function extractModelFromText(...parts: string[]): string | null {
     blob.match(/\b(kimi-[\w.-]+)\b/i)?.[1] ||
     blob.match(/\b(qwen[\w.-]+)\b/i)?.[1];
   if (id) return id;
-  // UI label: "Model Selection` from None to Gemini 3.6 Flash (High)"
-  const ui = blob.match(/Model Selection[^.\n]{0,80}?to\s+([^\n.<]{3,60})/i)?.[1];
+  // UI labels: "Gemini 3.6 Flash (High)" / Model Selection … to …
+  const ui =
+    blob.match(/Model Selection[^.\n]{0,80}?to\s+([^\n.<]{3,60})/i)?.[1] ||
+    blob.match(/\b(Gemini\s*3\.?\d*\s*Flash\s*\(?\s*High\s*\)?)/i)?.[1] ||
+    blob.match(/\b(Gemini\s*3\.?\d*\s*Flash\s*\(?\s*Tiered\s*\)?)/i)?.[1] ||
+    blob.match(/\b(Gemini\s*3\.?\d*\s*Flash)\b/i)?.[1] ||
+    blob.match(/\b(Gemini\s*3\.?\d*\s*Pro)\b/i)?.[1];
   if (ui) {
     const cleaned = ui.trim().replace(/\s+/g, "-").toLowerCase();
     if (cleaned.includes("gemini")) {

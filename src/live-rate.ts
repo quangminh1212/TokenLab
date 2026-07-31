@@ -111,15 +111,34 @@ function rowToLiveEvent(row: Record<string, unknown>, agent: string, source: str
 }
 
 /**
- * True for real per-call rows suitable for RECENT EVENTS / live RPM.
+ * True for per-call rows suitable for RECENT EVENTS.
  * False for estimated daily/model rollups (e.g. 298M tokens · 3946 requests).
+ *
+ * Allows estimated *single-turn* rows (Antigravity brain transcripts, Grok
+ * chat text estimates) so local agents without proxy counters still appear
+ * in history next to real proxy/router rows.
  */
 export function isLiveRequestEvent(e: UsageEvent | null | undefined): boolean {
   if (!e || typeof e.timestamp !== "string") return false;
-  if (e.estimated) return false;
   const rc = e.requestCount;
   // Fat multi-request packs are rollups, not a single API call
   if (typeof rc === "number" && Number.isFinite(rc) && rc > 5) return false;
+
+  if (e.estimated) {
+    // Estimated day/model blobs: either multi-RQ or absurd token totals
+    if (typeof rc === "number" && Number.isFinite(rc) && rc > 1) return false;
+    const total =
+      (Number(e.totalTokens) || 0) ||
+      (Number(e.inputTokens) || 0) +
+        (Number(e.outputTokens) || 0) +
+        (Number(e.cacheReadTokens) || 0) +
+        (Number(e.cacheWriteTokens) || 0);
+    // Single-turn estimates stay well below this; daily floors do not
+    if (total > 2_000_000) return false;
+    // Zero-token estimated shells are noise
+    if (total <= 0 && !(Number(e.estimatedCost) > 0)) return false;
+    return true;
+  }
   return true;
 }
 
@@ -237,7 +256,9 @@ export async function computeDashboardLiveRate(
 
   let lastMs = 0;
   const consider = (e: UsageEvent) => {
-    if (!e || e.estimated) return;
+    // Include single-turn estimates (Antigravity IDE) so "last request" updates
+    // when traffic is not proxied; still skip fat daily rollups.
+    if (!isLiveRequestEvent(e)) return;
     const t = Date.parse(e.timestamp);
     if (!Number.isFinite(t) || t > nowMs + 5_000) return;
     if (t > lastMs) lastMs = t;

@@ -533,9 +533,10 @@
           ${events.map((e) => {
             const model = normalizeModelName(e.model) || agentLabel(e.agent) || '\u2014';
             const agent = e.agent && e.model ? agentLabel(e.agent) : '';
+            const estHint = e.estimated ? ' <span class="recent-est" title="Estimated from local logs">~</span>' : '';
             return `<li class="recent-item">
               <div class="recent-item-main">
-                <span class="recent-model" title="${escapeHtml(model)}">${escapeHtml(model)}</span>
+                <span class="recent-model" title="${escapeHtml(model)}${e.estimated ? ' (estimated)' : ''}">${escapeHtml(model)}${estHint}</span>
                 ${agent ? `<span class="recent-agent">${escapeHtml(agent)}</span>` : ''}
               </div>
               <div class="recent-item-meta">
@@ -759,12 +760,23 @@
             return !Number.isNaN(t) && t >= t0;
           });
         }
-        // Never show estimated daily/model rollups in RECENT (e.g. 298M input · 3k RQ)
+        // RECENT: keep real + single-turn estimates (Antigravity transcripts / Grok text).
+        // Drop estimated daily/model rollups only (multi-RQ or multi-million token blobs).
         recent = recent.filter((e) => {
           if (!e) return false;
-          if (e.estimated) return false;
           const rc = e.requestCount;
           if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
+          if (e.estimated) {
+            if (typeof rc === 'number' && Number.isFinite(rc) && rc > 1) return false;
+            const total =
+              (Number(e.totalTokens) || 0) ||
+              (Number(e.inputTokens) || 0) +
+                (Number(e.outputTokens) || 0) +
+                (Number(e.cacheReadTokens) || 0) +
+                (Number(e.cacheWriteTokens) || 0);
+            if (total > 2e6) return false;
+            if (total <= 0 && !(Number(e.estimatedCost) > 0)) return false;
+          }
           return true;
         });
         // Ensure newest-first even if response order varies
