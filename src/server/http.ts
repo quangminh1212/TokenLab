@@ -208,7 +208,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       fresh[0]?.agent === "routerlab" ||
       fresh[0]?.agent === "xlabrouter" ||
       fresh[0]?.agent === "litellm";
-    if (routerAgent && fresh.length >= 5) {
+    // Antigravity: full re-parse is authoritative (model ids get refined; union would
+    // keep stale bare "gemini" rows forever because tokens/cost stay the same).
+    const antigravityAgent = fresh[0]?.agent === "antigravity";
+    if ((routerAgent || antigravityAgent) && fresh.length >= 5) {
       return fresh;
     }
     // Union by id; keep higher token/cost row when same id reappears.
