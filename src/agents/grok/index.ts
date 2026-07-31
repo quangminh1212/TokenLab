@@ -238,18 +238,37 @@ async function mtimeIso(file: string): Promise<string | null> {
   }
 }
 
-/** Track peak stream totalTokens per prompt_id from chunk _meta (for turns without usage). */
-function notePromptPeak(line: string, promptPeak: Map<string, number>): void {
-  if (!line.includes("totalTokens")) return;
-  const m = line.match(/"totalTokens"\s*:\s*(\d+)/);
-  if (!m) return;
-  const tt = Number(m[1]);
-  if (!Number.isFinite(tt) || tt <= 0) return;
+/** Peak stream totals + cache reads per prompt_id (for turns without turn_completed.usage). */
+type PromptPeak = { total: number; cached: number };
+
+function notePromptPeak(line: string, promptPeak: Map<string, PromptPeak>): void {
+  if (!line.includes("totalTokens") && !line.includes("cachedReadTokens")) return;
   const pm = line.match(/"promptId"\s*:\s*"([^"]+)"/) ?? line.match(/"prompt_id"\s*:\s*"([^"]+)"/);
   const promptId = pm?.[1];
   if (!promptId) return;
-  const prev = promptPeak.get(promptId) ?? 0;
-  if (tt > prev) promptPeak.set(promptId, tt);
+  const prev = promptPeak.get(promptId) ?? { total: 0, cached: 0 };
+  let changed = false;
+  const tm = line.match(/"totalTokens"\s*:\s*(\d+)/);
+  if (tm) {
+    const tt = Number(tm[1]);
+    if (Number.isFinite(tt) && tt > prev.total) {
+      prev.total = tt;
+      changed = true;
+    }
+  }
+  // Stream meta sometimes reports cache hits before turn_completed.usage
+  const cm =
+    line.match(/"cachedReadTokens"\s*:\s*(\d+)/) ??
+    line.match(/"cached_tokens"\s*:\s*(\d+)/) ??
+    line.match(/"cache_read_tokens"\s*:\s*(\d+)/);
+  if (cm) {
+    const cr = Number(cm[1]);
+    if (Number.isFinite(cr) && cr > prev.cached) {
+      prev.cached = cr;
+      changed = true;
+    }
+  }
+  if (changed) promptPeak.set(promptId, prev);
 }
 
 /** Stream updates.jsonl and emit one event per turn_completed with usage. */
@@ -265,8 +284,9 @@ async function parseUpdatesUsage(
   const events: UsageEvent[] = [];
   let idx = 0;
   let maxStreamTokens = 0;
+  let maxStreamCached = 0;
   let maxStreamTs = ctx.fallbackTs;
-  const promptPeak = new Map<string, number>();
+  const promptPeak = new Map<string, PromptPeak>();
 
   const stream = createReadStream(updatesPath, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
@@ -282,6 +302,15 @@ async function parseUpdatesUsage(
           if (m) {
             const tt = Number(m[1]);
             if (Number.isFinite(tt) && tt > maxStreamTokens) maxStreamTokens = tt;
+          }
+        }
+        if (line.includes("cachedReadTokens") || line.includes("cached_tokens")) {
+          const cm =
+            line.match(/"cachedReadTokens"\s*:\s*(\d+)/) ??
+            line.match(/"cached_tokens"\s*:\s*(\d+)/);
+          if (cm) {
+            const cr = Number(cm[1]);
+            if (Number.isFinite(cr) && cr > maxStreamCached) maxStreamCached = cr;
           }
         }
         continue;
@@ -353,9 +382,11 @@ async function parseUpdatesUsage(
         continue;
       }
 
-      // Newer Grok CLI: turn_completed without usage — bill peak stream tokens for prompt
-      const peak = promptPeak.get(promptId) ?? 0;
-      if (peak <= 0) continue;
+      // Newer Grok CLI: turn_completed without usage — bill peak stream tokens + cache
+      const peak = promptPeak.get(promptId) ?? { total: 0, cached: 0 };
+      if (peak.total <= 0 && peak.cached <= 0) continue;
+      const cacheRead = Math.min(peak.cached, peak.total || peak.cached);
+      const uncached = Math.max(0, (peak.total || cacheRead) - cacheRead);
 
       events.push(
         applyPricing({
@@ -363,9 +394,9 @@ async function parseUpdatesUsage(
           agent: "grok",
           model: ctx.model,
           timestamp: ts,
-          inputTokens: peak,
+          inputTokens: uncached,
           outputTokens: 0,
-          cacheReadTokens: 0,
+          cacheReadTokens: cacheRead,
           cacheWriteTokens: 0,
           workspace: ctx.workspace,
           sourcePath: updatesPath,
@@ -382,19 +413,19 @@ async function parseUpdatesUsage(
   // Residual in-progress prompts: still streaming after prior completed turns.
   // Bill each remaining prompt peak (not just session-level max) so live usage is not missing.
   if (promptPeak.size > 0) {
-    let rIdx = 0;
     for (const [promptId, peak] of promptPeak) {
-      if (peak <= 0) continue;
-      rIdx += 1;
+      if (peak.total <= 0 && peak.cached <= 0) continue;
+      const cacheRead = Math.min(peak.cached, peak.total || peak.cached);
+      const uncached = Math.max(0, (peak.total || cacheRead) - cacheRead);
       events.push(
         applyPricing({
-          id: stableId("grok", ctx.sessionId, "residual", promptId, String(peak)),
+          id: stableId("grok", ctx.sessionId, "residual", promptId, String(peak.total), String(cacheRead)),
           agent: "grok",
           model: ctx.model,
           timestamp: maxStreamTs,
-          inputTokens: peak,
+          inputTokens: uncached,
           outputTokens: 0,
-          cacheReadTokens: 0,
+          cacheReadTokens: cacheRead,
           cacheWriteTokens: 0,
           workspace: ctx.workspace,
           sourcePath: updatesPath,
@@ -402,17 +433,19 @@ async function parseUpdatesUsage(
         }),
       );
     }
-  } else if (events.length === 0 && maxStreamTokens > 0) {
+  } else if (events.length === 0 && (maxStreamTokens > 0 || maxStreamCached > 0)) {
     // No prompt ids in stream meta — session-level floor only
+    const cacheRead = Math.min(maxStreamCached, maxStreamTokens || maxStreamCached);
+    const uncached = Math.max(0, (maxStreamTokens || cacheRead) - cacheRead);
     events.push(
       applyPricing({
-        id: stableId("grok", ctx.sessionId, "stream-floor", String(maxStreamTokens)),
+        id: stableId("grok", ctx.sessionId, "stream-floor", String(maxStreamTokens), String(cacheRead)),
         agent: "grok",
         model: ctx.model,
         timestamp: maxStreamTs,
-        inputTokens: maxStreamTokens,
+        inputTokens: uncached,
         outputTokens: 0,
-        cacheReadTokens: 0,
+        cacheReadTokens: cacheRead,
         cacheWriteTokens: 0,
         workspace: ctx.workspace,
         sourcePath: updatesPath,

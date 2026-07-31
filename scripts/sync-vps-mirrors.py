@@ -450,6 +450,25 @@ def _to_iso_z(ts: str) -> str:
 
 daily_ll = {}
 
+# Cache lives in SpendLogs.metadata JSON (not cache_read_input_tokens columns):
+#   metadata.usage_object.prompt_tokens_details.cached_tokens
+#   metadata.additional_usage_values.prompt_tokens_details.cached_tokens
+_SQL_CACHE_READ = (
+    "COALESCE("
+    "(NULLIF(metadata #>> '{usage_object,prompt_tokens_details,cached_tokens}', ''))::bigint, "
+    "(NULLIF(metadata #>> '{additional_usage_values,prompt_tokens_details,cached_tokens}', ''))::bigint, "
+    "(NULLIF(metadata #>> '{usage,prompt_tokens_details,cached_tokens}', ''))::bigint, "
+    "0)"
+)
+_SQL_CACHE_WRITE = (
+    "COALESCE("
+    "(NULLIF(metadata #>> '{usage_object,prompt_tokens_details,cache_write_tokens}', ''))::bigint, "
+    "(NULLIF(metadata #>> '{usage_object,prompt_tokens_details,cache_creation_input_tokens}', ''))::bigint, "
+    "(NULLIF(metadata #>> '{additional_usage_values,prompt_tokens_details,cache_write_tokens}', ''))::bigint, "
+    "0)"
+)
+
+
 def _cache_from_metadata_text(meta_text: str) -> tuple[int, int]:
     """Best-effort cache read/write from LiteLLM SpendLogs metadata JSON."""
     if not meta_text or meta_text in ("", "{}", "null"):
@@ -460,67 +479,78 @@ def _cache_from_metadata_text(meta_text: str) -> tuple[int, int]:
         return 0, 0
     if not isinstance(meta, dict):
         return 0, 0
-    usage = meta.get("usage") or meta.get("usage_object") or meta.get("additional_usage_values") or {}
-    if not isinstance(usage, dict):
-        usage = {}
-    details = (
-        usage.get("prompt_tokens_details")
-        or usage.get("promptTokensDetails")
-        or usage.get("input_tokens_details")
-        or meta.get("prompt_tokens_details")
-        or {}
-    )
-    if not isinstance(details, dict):
-        details = {}
-    def _n(*keys, src=None):
-        bag = src if src is not None else {}
+
+    def _n(src, *keys):
+        if not isinstance(src, dict):
+            return 0
         for k in keys:
-            if k in bag and bag[k] is not None:
+            if k in src and src[k] is not None:
                 try:
-                    return int(float(bag[k]))
+                    return int(float(src[k]))
                 except Exception:
                     pass
         return 0
-    cr = _n(
-        "cache_read_input_tokens", "cached_tokens", "cache_read_tokens",
-        "cachedTokens", "cacheReadTokens",
-        src=usage,
-    ) or _n(
-        "cached_tokens", "cache_read_tokens", "cache_read_input_tokens", "cachedTokens",
-        src=details,
-    ) or _n(
-        "cache_read_input_tokens", "cached_tokens", "cache_read_tokens",
-        src=meta,
-    )
-    cw = _n(
-        "cache_creation_input_tokens", "cache_write_tokens", "cacheWriteTokens",
-        src=usage,
-    ) or _n(
-        "cache_write_tokens", "cache_creation_input_tokens",
-        src=details,
-    ) or _n(
-        "cache_creation_input_tokens", "cache_write_tokens",
-        src=meta,
-    )
+
+    def _details(usage_obj):
+        if not isinstance(usage_obj, dict):
+            return {}
+        d = (
+            usage_obj.get("prompt_tokens_details")
+            or usage_obj.get("promptTokensDetails")
+            or usage_obj.get("input_tokens_details")
+            or {}
+        )
+        return d if isinstance(d, dict) else {}
+
+    # Walk known nesting (usage_object is the real SoT on this VPS)
+    bags = []
+    for key in ("usage_object", "usage", "additional_usage_values", "token_usage"):
+        u = meta.get(key)
+        if isinstance(u, dict):
+            bags.append(u)
+            bags.append(_details(u))
+    bags.append(_details(meta))
+    bags.append(meta)
+
+    cr = cw = 0
+    for bag in bags:
+        if not cr:
+            cr = _n(
+                bag,
+                "cached_tokens",
+                "cache_read_tokens",
+                "cache_read_input_tokens",
+                "cachedTokens",
+                "cacheReadTokens",
+            )
+        if not cw:
+            cw = _n(
+                bag,
+                "cache_write_tokens",
+                "cache_creation_input_tokens",
+                "cacheWriteTokens",
+                "cache_creation_tokens",
+            )
+        if cr and cw:
+            break
     return max(0, cr), max(0, cw)
 
-# SpendLogs is request-level SoT (DailyUserSpend can over-count across keys).
-# Prefer native cache columns when present; else 0 (overlay from DailyUserSpend below).
+
+# SpendLogs day totals — cache from metadata JSON path (authoritative per-request cache)
 raw_logs_day = _psql(
     'SELECT ("startTime"::date)::text, COUNT(*), '
     "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-    "COALESCE(SUM(spend),0), "
-    "COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(cache_creation_input_tokens),0) "
+    f"COALESCE(SUM(spend),0), COALESCE(SUM({_SQL_CACHE_READ}),0) "
     'FROM "LiteLLM_SpendLogs" '
     'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
     "GROUP BY 1 ORDER BY 1"
 )
 if not raw_logs_day:
-    # Older schemas without cache_* columns on SpendLogs
+    # Fallback without JSON cache extraction
     raw_logs_day = _psql(
         'SELECT ("startTime"::date)::text, COUNT(*), '
         "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-        "COALESCE(SUM(spend),0), 0::bigint, 0::bigint "
+        "COALESCE(SUM(spend),0), 0::bigint "
         'FROM "LiteLLM_SpendLogs" '
         'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
         "GROUP BY 1 ORDER BY 1"
@@ -550,8 +580,7 @@ raw_by_model = _psql(
     'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
     "COALESCE(custom_llm_provider,''), COUNT(*), "
     "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-    "COALESCE(SUM(spend),0), "
-    "COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(cache_creation_input_tokens),0) "
+    f"COALESCE(SUM(spend),0), COALESCE(SUM({_SQL_CACHE_READ}),0) "
     'FROM "LiteLLM_SpendLogs" '
     'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
     "GROUP BY 1,2,3 ORDER BY 1"
@@ -561,7 +590,7 @@ if not raw_by_model:
         'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
         "COALESCE(custom_llm_provider,''), COUNT(*), "
         "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-        "COALESCE(SUM(spend),0), 0::bigint, 0::bigint "
+        "COALESCE(SUM(spend),0), 0::bigint "
         'FROM "LiteLLM_SpendLogs" '
         'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
         "GROUP BY 1,2,3 ORDER BY 1"
@@ -599,7 +628,7 @@ if raw_by_model:
             "provider": provider or None,
         }
 
-# Always overlay cache (and fill empty days) from DailyUserSpend — authoritative for cache hits.
+# Overlay DailyUserSpend cache only when SpendLogs metadata path under-counts
 raw_daily = _psql(
     'SELECT date, COALESCE(model, \'\'), COALESCE(custom_llm_provider, \'\'), '
     "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
@@ -641,8 +670,7 @@ if raw_daily:
         if not isinstance(bm, dict):
             bm = {}
             day["byModel"] = bm
-        if not daily_ll or (day.get("requests") or 0) <= 0:
-            # SpendLogs empty for this day — use DailyUserSpend as full SoT
+        if (day.get("requests") or 0) <= 0:
             day["requests"] = int(day.get("requests") or 0) + max(0, reqs)
             day["promptTokens"] = int(day.get("promptTokens") or 0) + max(0, pt)
             day["completionTokens"] = int(day.get("completionTokens") or 0) + max(0, ct)
@@ -656,54 +684,53 @@ if raw_daily:
             row["promptTokens"] = int(row.get("promptTokens") or 0) + max(0, pt)
             row["completionTokens"] = int(row.get("completionTokens") or 0) + max(0, ct)
             row["cost"] = float(row.get("cost") or 0) + max(0.0, cost)
-        # Cache: prefer max(SpendLogs, DailyUserSpend) so we never drop hits
         row = bm.setdefault(mk, {
             "requests": max(0, reqs), "promptTokens": max(0, pt), "completionTokens": max(0, ct),
             "cachedTokens": 0, "cost": max(0.0, cost), "rawModel": model,
             "provider": provider or None,
         })
         prev_c = int(row.get("cachedTokens") or 0)
+        # Prefer SpendLogs metadata sum; only raise if DailyUserSpend reports more
         row["cachedTokens"] = max(prev_c, max(0, cache_r))
-    # Recompute day-level cachedTokens from byModel after overlay
     for _dk, day in daily_ll.items():
         if not isinstance(day, dict):
             continue
         bm = day.get("byModel") or {}
         if isinstance(bm, dict) and bm:
-            day["cachedTokens"] = sum(int((m or {}).get("cachedTokens") or 0) for m in bm.values() if isinstance(m, dict))
+            day["cachedTokens"] = sum(
+                int((m or {}).get("cachedTokens") or 0) for m in bm.values() if isinstance(m, dict)
+            )
 
-# History tail (chronological) — include cache when columns or metadata provide it
+# History: always pull SQL-extracted cache + metadata text (for nested fallback parse)
 hist_rows = []
 raw_hist = _psql(
     'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
     "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
     "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
     "COALESCE(call_type,''), COALESCE(model_group,''), "
-    "COALESCE(cache_read_input_tokens,0), COALESCE(cache_creation_input_tokens,0), "
+    f"{_SQL_CACHE_READ}, {_SQL_CACHE_WRITE}, "
     "COALESCE(metadata::text,'') "
     'FROM "LiteLLM_SpendLogs" '
     'ORDER BY "startTime" DESC LIMIT 8000'
 )
 if not raw_hist:
-    # No native cache_* columns on SpendLogs — still export history with empty cache fields.
-    # Note: use "''" (SQL empty string), not Python empty string which drops the token.
-    raw_hist = _psql(
-        'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
-        "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
-        "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
-        "COALESCE(call_type,''), COALESCE(model_group,''), "
-        "0, 0, '' "
-        'FROM "LiteLLM_SpendLogs" '
-        'ORDER BY "startTime" DESC LIMIT 8000'
-    )
-if not raw_hist:
-    # Last resort: try metadata JSON for cache (column may be jsonb/text)
+    # metadata only (no JSON path support)
     raw_hist = _psql(
         'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
         "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
         "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
         "COALESCE(call_type,''), COALESCE(model_group,''), "
         "0, 0, COALESCE(metadata::text, '') "
+        'FROM "LiteLLM_SpendLogs" '
+        'ORDER BY "startTime" DESC LIMIT 8000'
+    )
+if not raw_hist:
+    raw_hist = _psql(
+        'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
+        "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
+        "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
+        "COALESCE(call_type,''), COALESCE(model_group,''), "
+        "0, 0, '' "
         'FROM "LiteLLM_SpendLogs" '
         'ORDER BY "startTime" DESC LIMIT 8000'
     )
