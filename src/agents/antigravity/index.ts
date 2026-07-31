@@ -374,7 +374,7 @@ export async function parseAntigravityTranscripts(
       const r = row as Record<string, unknown>;
       const type = String(r.type || "");
       const source = String(r.source || "");
-      const ts =
+      const ts: string =
         (typeof r.created_at === "string" && r.created_at) ||
         (typeof r.timestamp === "string" && r.timestamp) ||
         lastUserTs ||
