@@ -157,7 +157,7 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | Cline | `cline` | VS Code globalStorage | Yes |
 | Roo Code | `roocode` | VS Code globalStorage | Yes |
 | Kilo Code | `kilocode` | kilo data / globalStorage | Yes |
-| Antigravity | `antigravity` | `~/.antigravity/data/proxy.db` (antigravity-proxy) + `~/.gemini/antigravity` | Yes |
+| Antigravity | `antigravity` | proxy.db (real) + `~/.gemini/antigravity` brain transcripts + conversation DBs (estimate) | Yes |
 | Warp AI | `warp` | Warp app data | Yes |
 | Trae | `trae` | Trae app data | Yes |
 | Zed Agent | `zed` | Zed threads data | Yes |

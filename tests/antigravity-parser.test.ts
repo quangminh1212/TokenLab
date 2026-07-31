@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   parseAntigravity,
   parseAntigravityProxyDb,
+  parseAntigravityTranscripts,
 } from "../src/agents/antigravity/index.ts";
 
 function seedProxyDb(dbPath: string): void {
@@ -37,7 +38,6 @@ function seedProxyDb(dbPath: string): void {
        prompt_tokens, output_tokens, cost)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  // Successful routed request
   ins.run(
     "req_ok_1",
     "2026-07-31T04:57:41.579Z",
@@ -50,7 +50,6 @@ function seedProxyDb(dbPath: string): void {
     88,
     0.012299,
   );
-  // Error with no tokens — should be skipped
   ins.run(
     "req_err_1",
     "2026-07-31T04:59:23.664Z",
@@ -63,7 +62,6 @@ function seedProxyDb(dbPath: string): void {
     0,
     0,
   );
-  // Short brand resolved_model → keep Antigravity alias
   ins.run(
     "req_ok_2",
     "2026-07-31T05:00:00.000Z",
@@ -93,31 +91,118 @@ test("parseAntigravityProxyDb reads requests and skips empty errors", async () =
     const first = events.find((e) => e.inputTokens === 24334);
     assert.ok(first);
     assert.equal(first!.agent, "antigravity");
-    assert.equal(first!.model, "kimi-k3"); // real resolved id preferred
+    assert.equal(first!.model, "kimi-k3");
     assert.equal(first!.outputTokens, 88);
-    assert.ok((first!.estimatedCost ?? 0) > 0, "uses router cost");
+    assert.ok((first!.estimatedCost ?? 0) > 0);
     assert.equal(first!.requestCount, 1);
 
     const second = events.find((e) => e.inputTokens === 1000);
     assert.ok(second);
-    // Short brand "XLab" → keep gemini alias
     assert.equal(second!.model, "gemini-3.6-flash-high");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("parseAntigravity discovers ~/.antigravity-style data/proxy.db", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "tokenlab-ag-root-"));
+test("parseAntigravityTranscripts estimates tokens from brain logs", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tokenlab-ag-tr-"));
   try {
+    const logDir = path.join(
+      root,
+      "brain",
+      "conv-abc",
+      ".system_generated",
+      "logs",
+    );
+    await mkdir(logDir, { recursive: true });
+    const lines = [
+      {
+        step_index: 0,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        created_at: "2026-07-31T04:57:29Z",
+        content:
+          "hello world check chapters\nModel Selection from None to Gemini 3.6 Flash (High).",
+      },
+      {
+        step_index: 1,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-07-31T04:57:40Z",
+        thinking: "I will inspect the directory and list files carefully.",
+        tool_calls: [{ name: "list_dir", args: { DirectoryPath: "C:\\\\tmp" } }],
+      },
+      {
+        step_index: 2,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: "2026-07-31T04:58:00Z",
+        content: "Done listing. Found 3 files.",
+      },
+    ];
+    await writeFile(
+      path.join(logDir, "transcript_full.jsonl"),
+      lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const events = await parseAntigravityTranscripts(root, new Map());
+    assert.ok(events.length >= 2, "at least two model turns");
+    assert.ok(events.every((e) => e.estimated === true));
+    assert.ok(events.every((e) => e.agent === "antigravity"));
+    assert.ok(
+      events.some((e) => (e.model || "").includes("gemini")),
+      "model from UI settings text",
+    );
+    const total = events.reduce((a, e) => a + e.inputTokens + e.outputTokens, 0);
+    assert.ok(total > 20, "non-trivial estimated tokens");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseAntigravity merges proxy + local IDE transcripts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tokenlab-ag-all-"));
+  try {
+    // proxy
     const dataDir = path.join(root, "data");
     await mkdir(dataDir, { recursive: true });
     seedProxyDb(path.join(dataDir, "proxy.db"));
 
+    // IDE layout under same root (portable)
+    const logDir = path.join(root, "brain", "c1", ".system_generated", "logs");
+    await mkdir(logDir, { recursive: true });
+    await writeFile(
+      path.join(logDir, "transcript.jsonl"),
+      [
+        JSON.stringify({
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          created_at: "2026-07-30T10:00:00Z",
+          content: "write a poem about cats " + "x".repeat(200),
+        }),
+        JSON.stringify({
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          created_at: "2026-07-30T10:00:05Z",
+          thinking: "Sure, here is a poem. " + "y".repeat(400),
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
     const events = await parseAntigravity([root]);
-    assert.equal(events.length, 2);
-    const totalIn = events.reduce((a, e) => a + e.inputTokens, 0);
-    assert.equal(totalIn, 24334 + 1000);
+    const proxy = events.filter((e) => !e.estimated);
+    const estimated = events.filter((e) => e.estimated);
+    assert.equal(proxy.length, 2, "proxy real rows");
+    assert.ok(estimated.length >= 1, "transcript estimates");
+    assert.ok(
+      events.reduce((a, e) => a + e.inputTokens, 0) > 24334,
+      "total includes more than proxy alone",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
