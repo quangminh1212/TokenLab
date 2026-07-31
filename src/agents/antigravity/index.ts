@@ -76,37 +76,116 @@ function extractPrintableStrings(buf: Buffer): string[] {
   return strs;
 }
 
-/** Pull model aliases from free text / protobuf strings. */
-function extractModelFromText(...parts: string[]): string | null {
+/**
+ * Rank model ids so "gemini-3.6-flash-high" wins over bare "gemini" / gemini-api.
+ * Higher = better (more specific).
+ */
+function modelSpecificity(id: string): number {
+  const s = id.toLowerCase();
+  if (!s || s === "gemini" || s === "gemini-api") return 1;
+  if (s.includes("flash-high") || s.includes("flash_high")) return 100;
+  if (s.includes("flash-tiered") || s.includes("flash_tiered")) return 90;
+  if (s.includes("flash")) return 80;
+  if (s.includes("pro")) return 70;
+  if (s.startsWith("gemini-")) return 60;
+  if (s.startsWith("claude-")) return 55;
+  if (s.startsWith("gpt-") || s.startsWith("kimi-") || s.startsWith("qwen")) return 50;
+  return 10;
+}
+
+function pickBestModelId(candidates: Iterable<string>): string | null {
+  let best: string | null = null;
+  let bestScore = -1;
+  for (const raw of candidates) {
+    if (!raw || typeof raw !== "string") continue;
+    const id = raw.trim().toLowerCase();
+    if (!id || id.length < 3) continue;
+    // Skip path noise / flags
+    if (id.includes("\\") || id.includes("/") || id.includes(" ")) continue;
+    if (id.includes("placeholder") || id.includes("used_")) continue;
+    if (id === "gemini-api") continue;
+    const score = modelSpecificity(id);
+    if (score > bestScore || (score === bestScore && id.length > (best?.length || 0))) {
+      best = id;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+/** Map Antigravity MODEL_PLACEHOLDER_M* enums seen in local DBs. */
+function mapModelPlaceholder(ph: string): string | null {
+  const m = ph.toUpperCase().match(/MODEL_PLACEHOLDER_M(\d+)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  // Observed on this install: M71 ≈ Flash (High), M196 ≈ Flash (Tiered)
+  if (n === 71) return "gemini-3.6-flash-high";
+  if (n === 196) return "gemini-3.6-flash-tiered";
+  return null;
+}
+
+/** Normalize UI label → stable model id. */
+function uiLabelToModelId(label: string): string | null {
+  const cleaned = label.trim().replace(/\s+/g, "-").toLowerCase();
+  if (!cleaned) return null;
+  if (cleaned.includes("gemini") || cleaned.includes("flash") || cleaned.includes("pro")) {
+    if ((cleaned.includes("flash") || cleaned.includes("gemini")) && cleaned.includes("high")) {
+      return "gemini-3.6-flash-high";
+    }
+    if (cleaned.includes("tiered")) return "gemini-3.6-flash-tiered";
+    if (cleaned.includes("flash")) return "gemini-3.6-flash";
+    if (cleaned.includes("pro")) return "gemini-3.6-pro";
+  }
+  if (cleaned.includes("claude") && cleaned.includes("sonnet")) return "claude-sonnet";
+  if (cleaned.includes("claude") && cleaned.includes("opus")) return "claude-opus";
+  return null;
+}
+
+/**
+ * Pull the most specific model id from free text / protobuf strings.
+ * Prefer gemini-3.6-flash-high / -tiered over bare "gemini".
+ */
+export function extractModelFromText(...parts: string[]): string | null {
   const blob = parts.filter(Boolean).join("\n");
   if (!blob) return null;
-  // Explicit Antigravity model ids
-  const id =
-    blob.match(/\b(gemini-[\w.-]+)\b/i)?.[1] ||
-    blob.match(/\b(claude-[\w.-]+)\b/i)?.[1] ||
-    blob.match(/\b(gpt-[\w.-]+)\b/i)?.[1] ||
-    blob.match(/\b(kimi-[\w.-]+)\b/i)?.[1] ||
-    blob.match(/\b(qwen[\w.-]+)\b/i)?.[1];
-  if (id) return id;
-  // UI labels: "Gemini 3.6 Flash (High)" / Model Selection … to …
-  const ui =
-    blob.match(/Model Selection[^.\n]{0,80}?to\s+([^\n.<]{3,60})/i)?.[1] ||
-    blob.match(/\b(Gemini\s*3\.?\d*\s*Flash\s*\(?\s*High\s*\)?)/i)?.[1] ||
-    blob.match(/\b(Gemini\s*3\.?\d*\s*Flash\s*\(?\s*Tiered\s*\)?)/i)?.[1] ||
-    blob.match(/\b(Gemini\s*3\.?\d*\s*Flash)\b/i)?.[1] ||
-    blob.match(/\b(Gemini\s*3\.?\d*\s*Pro)\b/i)?.[1];
-  if (ui) {
-    const cleaned = ui.trim().replace(/\s+/g, "-").toLowerCase();
-    if (cleaned.includes("gemini")) {
-      if (cleaned.includes("flash") && cleaned.includes("high")) return "gemini-3.6-flash-high";
-      if (cleaned.includes("flash") && cleaned.includes("tiered")) return "gemini-3.6-flash-tiered";
-      if (cleaned.includes("flash")) return "gemini-3.6-flash";
-      if (cleaned.includes("pro")) return "gemini-3.6-pro";
-      return "gemini";
+
+  const candidates: string[] = [];
+
+  // Explicit vendor ids (collect all, then rank)
+  for (const re of [
+    /\b(gemini-[\w.-]+)\b/gi,
+    /\b(claude-[\w.-]+)\b/gi,
+    /\b(gpt-[\w.-]+)\b/gi,
+    /\b(kimi-[\w.-]+)\b/gi,
+    /\b(qwen[\w.-]+)\b/gi,
+  ]) {
+    for (const m of blob.matchAll(re)) {
+      if (m[1]) candidates.push(m[1]);
     }
-    return cleaned.slice(0, 64);
   }
-  return null;
+
+  // MODEL_PLACEHOLDER_M71 / M196
+  for (const m of blob.matchAll(/\b(MODEL_PLACEHOLDER_M\d+)\b/g)) {
+    const mapped = mapModelPlaceholder(m[1]!);
+    if (mapped) candidates.push(mapped);
+  }
+
+  // UI labels: "Gemini 3.6 Flash (High)" / Model Selection … to …
+  const uiMatches = [
+    ...blob.matchAll(/Model\s*Selection[`'"]?\s*from\s+[^\n]{0,40}?\s+to\s+([^\n.<]{3,80})/gi),
+    ...blob.matchAll(/\b(Gemini\s*3\.?\d*\s*Flash\s*\(\s*High\s*\))/gi),
+    ...blob.matchAll(/\b(Gemini\s*3\.?\d*\s*Flash\s*\(\s*Tiered\s*\))/gi),
+    ...blob.matchAll(/\b(Gemini\s*3\.?\d*\s*Flash\s+High)\b/gi),
+    ...blob.matchAll(/\b(Gemini\s*3\.?\d*\s*Flash\s+Tiered)\b/gi),
+    ...blob.matchAll(/\b(Gemini\s*3\.?\d*\s*Flash)\b/gi),
+    ...blob.matchAll(/\b(Gemini\s*3\.?\d*\s*Pro)\b/gi),
+  ];
+  for (const m of uiMatches) {
+    const mapped = uiLabelToModelId(m[1] || "");
+    if (mapped) candidates.push(mapped);
+  }
+
+  return pickBestModelId(candidates);
 }
 
 function textFromUnknown(v: unknown): string {
@@ -285,7 +364,7 @@ function ideDataCandidates(root: string): string[] {
   return unique(out);
 }
 
-/** Model map conversationId → model from conversations/*.db gen_metadata. */
+/** Model map conversationId → most specific model from conversations/*.db. */
 async function loadConversationModels(ideRoot: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const convDir = path.join(ideRoot, "conversations");
@@ -300,16 +379,43 @@ async function loadConversationModels(ideRoot: string): Promise<Map<string, stri
       try {
         const db = new DatabaseSync(dbPath, { readOnly: true });
         try {
-          const rows = db.prepare(`SELECT data FROM gen_metadata LIMIT 20`).all() as Array<{
-            data: Buffer | string;
-          }>;
-          let model: string | null = null;
-          for (const r of rows) {
-            const buf = Buffer.isBuffer(r.data) ? r.data : Buffer.from(String(r.data));
-            const strs = extractPrintableStrings(buf);
-            model = extractModelFromText(...strs);
-            if (model) break;
+          const candidates: string[] = [];
+          // Prefer scanning all gen_metadata rows (model id often appears mid-blob)
+          try {
+            const rows = db.prepare(`SELECT data FROM gen_metadata`).all() as Array<{
+              data: Buffer | string;
+            }>;
+            for (const r of rows) {
+              const buf = Buffer.isBuffer(r.data) ? r.data : Buffer.from(String(r.data));
+              // latin1 keeps ascii model ids even when mixed with binary
+              const latin = buf.toString("latin1");
+              const fromText = extractModelFromText(latin, ...extractPrintableStrings(buf));
+              if (fromText) candidates.push(fromText);
+              for (const m of latin.matchAll(/\b(gemini-[\w.-]+)\b/gi)) {
+                if (m[1]) candidates.push(m[1]);
+              }
+              for (const m of latin.matchAll(/\b(MODEL_PLACEHOLDER_M\d+)\b/g)) {
+                const mapped = mapModelPlaceholder(m[1]!);
+                if (mapped) candidates.push(mapped);
+              }
+            }
+          } catch {
+            // no gen_metadata
           }
+          try {
+            const tb = db.prepare(`SELECT data FROM trajectory_metadata_blob LIMIT 1`).get() as
+              | { data: Buffer | string }
+              | undefined;
+            if (tb?.data) {
+              const buf = Buffer.isBuffer(tb.data) ? tb.data : Buffer.from(String(tb.data));
+              const latin = buf.toString("latin1");
+              const fromText = extractModelFromText(latin);
+              if (fromText) candidates.push(fromText);
+            }
+          } catch {
+            // optional
+          }
+          const model = pickBestModelId(candidates);
           if (model) map.set(convId, model);
         } finally {
           db.close();
@@ -365,9 +471,15 @@ export async function parseAntigravityTranscripts(
     const text = await readText(file);
     if (!text) continue;
 
+    // Resolve specific model: conversation DB → transcript (head+tail) → generic
+    const fromTranscript = extractModelFromText(
+      text.slice(0, 100_000),
+      text.length > 100_000 ? text.slice(-80_000) : "",
+    );
     let model =
+      pickBestModelId([modelByConv.get(convId) || "", fromTranscript || ""]) ||
       modelByConv.get(convId) ||
-      extractModelFromText(text.slice(0, 50_000)) ||
+      fromTranscript ||
       "gemini";
 
     let contextChars = 0;
@@ -385,14 +497,19 @@ export async function parseAntigravityTranscripts(
         lastUserTs ||
         new Date().toISOString();
 
-      // Model switch in user metadata
-      if (type === "USER_INPUT" || source === "USER_EXPLICIT") {
+      // Model switch in user metadata / settings — always prefer more specific id
+      if (type === "USER_INPUT" || source === "USER_EXPLICIT" || type === "SYSTEM_MESSAGE") {
         const content = textFromUnknown(r.content);
         const m = extractModelFromText(content);
-        if (m) model = m;
-        contextChars += content.length;
-        lastUserTs = ts;
-        continue;
+        if (m) {
+          const ranked = pickBestModelId([model, m]);
+          model = ranked || m;
+        }
+        if (type === "USER_INPUT" || source === "USER_EXPLICIT") {
+          contextChars += content.length;
+          lastUserTs = ts;
+          continue;
+        }
       }
 
       // System / history / tool results expand context for later model turns

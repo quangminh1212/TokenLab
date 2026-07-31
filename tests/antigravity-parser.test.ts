@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import {
+  extractModelFromText,
   parseAntigravity,
   parseAntigravityProxyDb,
   parseAntigravityTranscripts,
@@ -104,6 +105,23 @@ test("parseAntigravityProxyDb reads requests and skips empty errors", async () =
   }
 });
 
+test("extractModelFromText prefers specific Gemini Flash variants", () => {
+  assert.equal(
+    extractModelFromText("Model Selection` from None to Gemini 3.6 Flash (High)."),
+    "gemini-3.6-flash-high",
+  );
+  assert.equal(
+    extractModelFromText("noise gemini-3.6-flash-tiered and MODEL_PLACEHOLDER_M196"),
+    "gemini-3.6-flash-tiered",
+  );
+  assert.equal(
+    extractModelFromText("gemini-3.6-flash-high gemini-3.6-flash-tiered"),
+    "gemini-3.6-flash-high",
+  );
+  assert.equal(extractModelFromText("MODEL_PLACEHOLDER_M71"), "gemini-3.6-flash-high");
+  assert.notEqual(extractModelFromText("C:\\\\Users\\\\.gemini\\\\antigravity\\\\brain"), "gemini");
+});
+
 test("parseAntigravityTranscripts estimates tokens from brain logs", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tokenlab-ag-tr-"));
   try {
@@ -154,8 +172,8 @@ test("parseAntigravityTranscripts estimates tokens from brain logs", async () =>
     assert.ok(events.every((e) => e.estimated === true));
     assert.ok(events.every((e) => e.agent === "antigravity"));
     assert.ok(
-      events.some((e) => (e.model || "").includes("gemini")),
-      "model from UI settings text",
+      events.every((e) => e.model === "gemini-3.6-flash-high"),
+      "specific model from UI settings text",
     );
     const total = events.reduce((a, e) => a + e.inputTokens + e.outputTokens, 0);
     assert.ok(total > 20, "non-trivial estimated tokens");
