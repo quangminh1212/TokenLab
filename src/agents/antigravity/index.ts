@@ -278,13 +278,38 @@ export async function parseAntigravityProxyDb(dbPath: string): Promise<UsageEven
       }
 
       for (const [nativeId, row] of byId) {
-        const inputTokens = num(row.prompt_tokens ?? row.promptTokens);
-        const outputTokens = num(row.output_tokens ?? row.outputTokens);
+        // Prefer structured usage when proxy stores OpenAI/Gemini-style buckets
+        const buckets = extractTokenBuckets(row) || extractTokenBuckets(row.usage) || extractTokenBuckets(row.tokens);
+        let inputTokens = buckets?.inputTokens ?? num(row.prompt_tokens ?? row.promptTokens);
+        let outputTokens = buckets?.outputTokens ?? num(row.output_tokens ?? row.outputTokens);
+        let cacheReadTokens =
+          buckets?.cacheReadTokens ??
+          num(
+            row.cached_tokens ??
+              row.cache_read_tokens ??
+              row.cache_read_input_tokens ??
+              row.cacheReadTokens ??
+              row.cachedTokens ??
+              row.cached_content_token_count,
+          );
+        let cacheWriteTokens =
+          buckets?.cacheWriteTokens ??
+          num(
+            row.cache_write_tokens ??
+              row.cache_creation_input_tokens ??
+              row.cacheWriteTokens,
+          );
+        // prompt_tokens often includes cache hits — uncached for cost split when cache known
+        if (cacheReadTokens > 0 && inputTokens >= cacheReadTokens && !buckets) {
+          inputTokens = Math.max(0, inputTokens - cacheReadTokens);
+        }
         const routerCost = num(row.cost);
-        if (inputTokens + outputTokens <= 0 && routerCost <= 0) continue;
+        if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 && routerCost <= 0) {
+          continue;
+        }
 
         if (String(row.direction || "") === "incoming" && routerCost <= 0 && outputTokens <= 0) {
-          if (inputTokens <= 0) continue;
+          if (inputTokens + cacheReadTokens <= 0) continue;
         }
 
         const model = pickModel(row.model, row.resolved_model ?? row.resolvedModel);
@@ -292,14 +317,22 @@ export async function parseAntigravityProxyDb(dbPath: string): Promise<UsageEven
 
         events.push(
           applyPricing({
-            id: stableId("antigravity", "proxy", dbPath, nativeId, String(inputTokens), String(outputTokens)),
+            id: stableId(
+              "antigravity",
+              "proxy",
+              dbPath,
+              nativeId,
+              String(inputTokens),
+              String(outputTokens),
+              String(cacheReadTokens),
+            ),
             agent: "antigravity",
             model,
             timestamp: ts,
             inputTokens,
             outputTokens,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
+            cacheReadTokens,
+            cacheWriteTokens,
             workspace: null,
             sourcePath: dbPath,
             requestCount: 1,

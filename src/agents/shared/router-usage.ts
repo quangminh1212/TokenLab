@@ -457,10 +457,18 @@ function gapFillDailyDeficits(
     const remCache = Math.max(0, dailyCache - hist.cache);
     const remCost = Math.max(0, dailyCost - hist.cost);
 
-    // Nothing left to attribute
+    // Nothing left to attribute (include cache — history often has full prompt but 0 cache)
     if (remReq <= 0 && remIn + remOut + remCache <= 0 && remCost <= 0) continue;
-    // History already at/over daily totals for this model
-    if (hist.n >= dailyReq && hist.in + hist.out >= dailyIn + dailyOut && dailyReq > 0) continue;
+    // History already covers req/I/O AND cache — skip only when cache deficit is also 0
+    if (
+      hist.n >= dailyReq &&
+      hist.in + hist.out >= dailyIn + dailyOut &&
+      remCache <= 0 &&
+      remCost <= 0 &&
+      dailyReq > 0
+    ) {
+      continue;
+    }
 
     deficitByModel[modelKey] = {
       requests: remReq > 0 ? remReq : hist.n === 0 ? Math.max(1, dailyReq) : 0,
@@ -795,6 +803,7 @@ function expandOneDay(
 ): UsageEvent[] {
   const dayInput = num(day.promptTokens ?? day.prompt_tokens);
   const dayOutput = num(day.completionTokens ?? day.completion_tokens);
+  const dayCache = num(day.cachedTokens ?? day.cached_tokens ?? day.cacheReadTokens);
   const dayCost = num(day.cost);
   const dayFallbackTs = syntheticDailyTimestamp(dateKey, latestTimestamp(dayEvents));
 
@@ -803,6 +812,7 @@ function expandOneDay(
     const out: UsageEvent[] = [];
     let modelCost = 0;
     let modelTokens = 0;
+    let modelCache = 0;
     for (const [modelKey, mraw] of Object.entries(byModel as Record<string, unknown>)) {
       if (!mraw || typeof mraw !== "object") continue;
       const m = mraw as Record<string, unknown>;
@@ -815,7 +825,9 @@ function expandOneDay(
       const provider = typeof m.provider === "string" ? m.provider : null;
       const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
       const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
-      const cacheReadTokens = num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens);
+      const cacheReadTokens = num(
+        m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens ?? m.cache_read_input_tokens,
+      );
       const cost = num(m.cost);
       const modelRequests = num(m.requests);
       if (inputTokens + outputTokens + cacheReadTokens <= 0 && cost <= 0 && modelRequests <= 0) {
@@ -823,6 +835,7 @@ function expandOneDay(
       }
       modelCost += cost;
       modelTokens += inputTokens + outputTokens;
+      modelCache += cacheReadTokens;
       const ts = syntheticDailyTimestamp(
         dateKey,
         latestTimestampForModel(dayEvents, model) || dayFallbackTs,
@@ -835,6 +848,7 @@ function expandOneDay(
           provider,
           promptTokens: inputTokens,
           completionTokens: outputTokens,
+          cachedTokens: cacheReadTokens,
           cost,
           requests: modelRequests > 0 ? modelRequests : 1,
           tokens: {
@@ -857,14 +871,15 @@ function expandOneDay(
       }
     }
     // byModel is often incomplete vs day totals — only keep it when it covers ≥98%
-    const dayTok = dayInput + dayOutput;
+    // Include cache so a complete byModel with cache is not discarded for missing top-level cache.
+    const dayTok = dayInput + dayOutput + dayCache;
     const costOk = dayCost <= 0 || modelCost >= dayCost * 0.98;
-    const tokOk = dayTok <= 0 || modelTokens >= dayTok * 0.98;
+    const tokOk = dayTok <= 0 || modelTokens + modelCache >= dayTok * 0.98;
     if (out.length && costOk && tokOk) return out;
   }
 
-  // Authoritative day rollup (full prompt/completion/cost for the calendar day)
-  if (dayInput + dayOutput <= 0 && dayCost <= 0) return [];
+  // Authoritative day rollup (full prompt/completion/cache/cost for the calendar day)
+  if (dayInput + dayOutput + dayCache <= 0 && dayCost <= 0) return [];
   const dayRequests = num(day.requests);
   const e = rowToEvent(
     {
@@ -873,9 +888,14 @@ function expandOneDay(
       model: "mixed",
       promptTokens: dayInput,
       completionTokens: dayOutput,
+      cachedTokens: dayCache,
       cost: dayCost,
       requests: dayRequests > 0 ? dayRequests : 1,
-      tokens: { prompt_tokens: dayInput, completion_tokens: dayOutput },
+      tokens: {
+        prompt_tokens: dayInput,
+        completion_tokens: dayOutput,
+        cached_tokens: dayCache,
+      },
     },
     agent,
     source,
@@ -1016,15 +1036,44 @@ function rowToEvent(
       r.outputTokens ??
       r.output_tokens,
   );
+  const promptDetails =
+    (tokensObj.prompt_tokens_details && typeof tokensObj.prompt_tokens_details === "object"
+      ? (tokensObj.prompt_tokens_details as Record<string, unknown>)
+      : null) ||
+    (tokensObj.promptTokensDetails && typeof tokensObj.promptTokensDetails === "object"
+      ? (tokensObj.promptTokensDetails as Record<string, unknown>)
+      : null) ||
+    (tokensObj.input_tokens_details && typeof tokensObj.input_tokens_details === "object"
+      ? (tokensObj.input_tokens_details as Record<string, unknown>)
+      : null);
+
   const cacheReadTokens = num(
     tokensObj.cached_tokens ??
       tokensObj.cache_read_tokens ??
+      tokensObj.cache_read_input_tokens ??
       tokensObj.cacheReadTokens ??
+      tokensObj.cachedReadTokens ??
+      tokensObj.cached_content_token_count ??
+      promptDetails?.cached_tokens ??
+      promptDetails?.cache_read_tokens ??
+      promptDetails?.cachedTokens ??
+      promptDetails?.cache_read_input_tokens ??
       r.cachedTokens ??
-      r.cacheReadTokens,
+      r.cached_tokens ??
+      r.cacheReadTokens ??
+      r.cache_read_input_tokens ??
+      r.cache_read_tokens,
   );
   const cacheWriteTokens = num(
-    tokensObj.cache_write_tokens ?? tokensObj.cacheWriteTokens ?? r.cacheWriteTokens,
+    tokensObj.cache_write_tokens ??
+      tokensObj.cache_creation_input_tokens ??
+      tokensObj.cacheWriteTokens ??
+      tokensObj.cache_creation_tokens ??
+      promptDetails?.cache_write_tokens ??
+      promptDetails?.cache_creation_input_tokens ??
+      r.cacheWriteTokens ??
+      r.cache_write_tokens ??
+      r.cache_creation_input_tokens,
   );
 
   const requestHint = num(r.requests ?? r.requestCount ?? r.request_count);

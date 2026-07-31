@@ -511,10 +511,18 @@ function tokenBucketsFromHermesRow(row: Record<string, unknown>): {
     row.output_tokens ?? row.total_output_tokens ?? row.completion_tokens ?? row.outputTokens,
   );
   const cacheReadTokens = num(
-    row.cache_read_tokens ?? row.cache_read_input_tokens ?? row.cacheReadTokens,
+    row.cache_read_tokens ??
+      row.cache_read_input_tokens ??
+      row.cacheReadTokens ??
+      row.cached_tokens ??
+      row.cachedTokens ??
+      row.cached_content_token_count,
   );
   const cacheWriteTokens = num(
-    row.cache_write_tokens ?? row.cache_creation_input_tokens ?? row.cacheWriteTokens,
+    row.cache_write_tokens ??
+      row.cache_creation_input_tokens ??
+      row.cacheWriteTokens ??
+      row.cache_creation_tokens,
   );
   // Policy: thừa hơn thiếu — Hermes stores reasoning separately; always bill it as output.
   const reasoning = num(row.reasoning_tokens ?? row.reasoningTokens);

@@ -45,6 +45,18 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       nested.total_output_tokens ??
       nested.completion,
   );
+  // Nested OpenAI / LiteLLM shapes: prompt_tokens_details.cached_tokens
+  const promptDetails =
+    (nested.prompt_tokens_details && typeof nested.prompt_tokens_details === "object"
+      ? (nested.prompt_tokens_details as Record<string, unknown>)
+      : null) ||
+    (nested.promptTokensDetails && typeof nested.promptTokensDetails === "object"
+      ? (nested.promptTokensDetails as Record<string, unknown>)
+      : null) ||
+    (nested.input_tokens_details && typeof nested.input_tokens_details === "object"
+      ? (nested.input_tokens_details as Record<string, unknown>)
+      : null);
+
   const cacheReadTokens = num(
     nested.cache_read_input_tokens ??
       nested.cache_read_tokens ??
@@ -52,18 +64,29 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       nested.cachedReadTokens ??
       nested.cacheReadInputTokens ??
       nested.cache_read ??
+      nested.cached_tokens ??
+      nested.cachedTokens ??
       nested.cached_content_token_count ??
+      nested.cachedContentTokenCount ??
       nested.cached ??
       nested.input_cache_read ??
-      nested.total_cache_read_tokens,
+      nested.total_cache_read_tokens ??
+      promptDetails?.cached_tokens ??
+      promptDetails?.cache_read_tokens ??
+      promptDetails?.cachedTokens ??
+      promptDetails?.cache_read_input_tokens,
   );
   const cacheWriteTokens = num(
     nested.cache_creation_input_tokens ??
       nested.cache_write_tokens ??
       nested.cacheWriteTokens ??
       nested.cache_write ??
+      nested.cache_creation_tokens ??
+      nested.cachedWriteTokens ??
       nested.input_cache_creation ??
-      nested.total_cache_write_tokens,
+      nested.total_cache_write_tokens ??
+      promptDetails?.cache_write_tokens ??
+      promptDetails?.cache_creation_input_tokens,
   );
 
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) return null;
