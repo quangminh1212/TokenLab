@@ -62,6 +62,16 @@ function requestTimestamp(ts: unknown): string {
   return new Date().toISOString();
 }
 
+/** node:sqlite often returns BLOB as Uint8Array (not Buffer). */
+function toBuffer(data: unknown): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  if (typeof data === "string") return Buffer.from(data);
+  if (data == null) return Buffer.alloc(0);
+  // Never String(uint8Array) — that becomes "1,2,3,…" and drops model ids
+  return Buffer.from(data as ArrayBuffer);
+}
+
 function extractPrintableStrings(buf: Buffer): string[] {
   const strs: string[] = [];
   let cur = "";
@@ -364,8 +374,40 @@ function ideDataCandidates(root: string): string[] {
   return unique(out);
 }
 
+/** Single-conversation model lookup from conversations/<id>.db. */
+async function lookupConversationModel(ideRoot: string, convId: string): Promise<string | null> {
+  if (!convId) return null;
+  const dbPath = path.join(ideRoot, "conversations", `${convId}.db`);
+  if (!(await pathExists(dbPath))) return null;
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const candidates: string[] = [];
+      const rows = db.prepare(`SELECT data FROM gen_metadata`).all() as Array<{ data: unknown }>;
+      for (const r of rows) {
+        const latin = toBuffer(r.data).toString("latin1");
+        const fromText = extractModelFromText(latin);
+        if (fromText) candidates.push(fromText);
+        for (const m of latin.matchAll(/\b(gemini-[\w.-]+)\b/gi)) {
+          if (m[1]) candidates.push(m[1]);
+        }
+        for (const m of latin.matchAll(/\b(MODEL_PLACEHOLDER_M\d+)\b/g)) {
+          const mapped = mapModelPlaceholder(m[1]!);
+          if (mapped) candidates.push(mapped);
+        }
+      }
+      return pickBestModelId(candidates);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** Model map conversationId → most specific model from conversations/*.db. */
-async function loadConversationModels(ideRoot: string): Promise<Map<string, string>> {
+export async function loadConversationModels(ideRoot: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const convDir = path.join(ideRoot, "conversations");
   if (!(await pathExists(convDir))) return map;
@@ -383,13 +425,12 @@ async function loadConversationModels(ideRoot: string): Promise<Map<string, stri
           // Prefer scanning all gen_metadata rows (model id often appears mid-blob)
           try {
             const rows = db.prepare(`SELECT data FROM gen_metadata`).all() as Array<{
-              data: Buffer | string;
+              data: unknown;
             }>;
             for (const r of rows) {
-              const buf = Buffer.isBuffer(r.data) ? r.data : Buffer.from(String(r.data));
-              // latin1 keeps ascii model ids even when mixed with binary
-              const latin = buf.toString("latin1");
-              const fromText = extractModelFromText(latin, ...extractPrintableStrings(buf));
+              // latin1 keeps ascii model ids even when mixed with binary.
+              const latin = toBuffer(r.data).toString("latin1");
+              const fromText = extractModelFromText(latin);
               if (fromText) candidates.push(fromText);
               for (const m of latin.matchAll(/\b(gemini-[\w.-]+)\b/gi)) {
                 if (m[1]) candidates.push(m[1]);
@@ -404,11 +445,10 @@ async function loadConversationModels(ideRoot: string): Promise<Map<string, stri
           }
           try {
             const tb = db.prepare(`SELECT data FROM trajectory_metadata_blob LIMIT 1`).get() as
-              | { data: Buffer | string }
+              | { data: unknown }
               | undefined;
             if (tb?.data) {
-              const buf = Buffer.isBuffer(tb.data) ? tb.data : Buffer.from(String(tb.data));
-              const latin = buf.toString("latin1");
+              const latin = toBuffer(tb.data).toString("latin1");
               const fromText = extractModelFromText(latin);
               if (fromText) candidates.push(fromText);
             }
@@ -464,6 +504,9 @@ export async function parseAntigravityTranscripts(
     selected.push(full || list[0]!);
   }
 
+  // Parent of brain is IDE data root (…/antigravity) — conversation DBs live next to brain/
+  const ideDataRoot = path.dirname(brain);
+
   for (const file of selected) {
     // conversation id = first path segment under brain/
     const rel = path.relative(brain, file);
@@ -476,9 +519,20 @@ export async function parseAntigravityTranscripts(
       text.slice(0, 100_000),
       text.length > 100_000 ? text.slice(-80_000) : "",
     );
+    // Lazy DB lookup if map miss (map may be empty when ide root differed)
+    let fromDb = modelByConv.get(convId) || null;
+    if (!fromDb || modelSpecificity(fromDb) < 60) {
+      const looked =
+        (await lookupConversationModel(ideRoot, convId)) ||
+        (await lookupConversationModel(ideDataRoot, convId));
+      if (looked) {
+        fromDb = looked;
+        modelByConv.set(convId, looked);
+      }
+    }
     let model =
-      pickBestModelId([modelByConv.get(convId) || "", fromTranscript || ""]) ||
-      modelByConv.get(convId) ||
+      pickBestModelId([fromDb || "", fromTranscript || ""]) ||
+      fromDb ||
       fromTranscript ||
       "gemini";
 
@@ -624,9 +678,9 @@ export async function parseAntigravityConversationDbs(
             }>;
             genCount = gens.length;
             for (const g of gens) {
-              const buf = Buffer.isBuffer(g.data) ? g.data : Buffer.from(String(g.data));
+              const buf = toBuffer(g.data);
               genBytes += buf.length;
-              if (!model) model = extractModelFromText(...extractPrintableStrings(buf));
+              if (!model) model = extractModelFromText(buf.toString("latin1"));
             }
           } catch {
             // no gen_metadata
@@ -641,9 +695,7 @@ export async function parseAntigravityConversationDbs(
             stepCount = steps.length;
             for (const s of steps) {
               if (s.step_payload == null) continue;
-              const buf = Buffer.isBuffer(s.step_payload)
-                ? s.step_payload
-                : Buffer.from(String(s.step_payload));
+              const buf = toBuffer(s.step_payload);
               payloadBytes += buf.length;
             }
           } catch {
