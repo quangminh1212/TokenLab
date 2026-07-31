@@ -279,6 +279,13 @@ if merged_daily or live_j:
                         "cost": row.get("cost"),
                         "promptTokens": tokens.get("prompt_tokens") if tokens else row.get("promptTokens"),
                         "completionTokens": tokens.get("completion_tokens") if tokens else row.get("completionTokens"),
+                        "cachedTokens": (
+                            tokens.get("cached_tokens")
+                            or tokens.get("cache_read_tokens")
+                            or tokens.get("cache_read_input_tokens")
+                            or row.get("cachedTokens")
+                            or 0
+                        ),
                     }
                     f.write(json.dumps(slim_row, ensure_ascii=False, separators=(",", ":")) + "\n")
                     rd_rows.append(slim_row)
@@ -293,7 +300,8 @@ if merged_daily or live_j:
         """Aggregate only rows with real token usage (skip empty stream probes)."""
         from collections import defaultdict
         by_day = defaultdict(lambda: {
-            "requests": 0, "promptTokens": 0, "completionTokens": 0, "cost": 0.0, "byModel": {}
+            "requests": 0, "promptTokens": 0, "completionTokens": 0,
+            "cachedTokens": 0, "cost": 0.0, "byModel": {}
         })
         for row in rows:
             if not isinstance(row, dict):
@@ -303,12 +311,26 @@ if merged_daily or live_j:
             if len(day) != 10:
                 continue
             tok = row.get("tokens") if isinstance(row.get("tokens"), dict) else {}
+            if isinstance(row.get("tokens"), str) and row.get("tokens").strip():
+                try:
+                    parsed = json.loads(row["tokens"])
+                    if isinstance(parsed, dict):
+                        tok = parsed
+                except Exception:
+                    tok = {}
             pt = int(float(tok.get("prompt_tokens") or row.get("promptTokens") or 0))
             ct = int(float(tok.get("completion_tokens") or row.get("completionTokens") or 0))
+            cr = int(float(
+                tok.get("cached_tokens")
+                or tok.get("cache_read_tokens")
+                or tok.get("cache_read_input_tokens")
+                or row.get("cachedTokens")
+                or 0
+            ))
             cost = float(row.get("cost") or 0)
             # Empty "say test" / zero-token stream success must NOT inflate request count
             # (VPS dailySummary also ignores them → dashboard shows 1 RQ not 35).
-            if pt + ct <= 0 and cost <= 0:
+            if pt + ct + cr <= 0 and cost <= 0:
                 continue
             model = str(row.get("model") or "mixed")
             provider = str(row.get("provider") or "")
@@ -316,15 +338,18 @@ if merged_daily or live_j:
             d["requests"] += 1
             d["promptTokens"] += pt
             d["completionTokens"] += ct
+            d["cachedTokens"] += max(0, cr)
             d["cost"] += cost
             mk = f"{model}|{provider}" if provider else model
             bm = d["byModel"].setdefault(mk, {
-                "requests": 0, "promptTokens": 0, "completionTokens": 0, "cost": 0.0,
+                "requests": 0, "promptTokens": 0, "completionTokens": 0,
+                "cachedTokens": 0, "cost": 0.0,
                 "rawModel": model, "provider": provider or None,
             })
             bm["requests"] += 1
             bm["promptTokens"] += pt
             bm["completionTokens"] += ct
+            bm["cachedTokens"] = int(bm.get("cachedTokens") or 0) + max(0, cr)
             bm["cost"] += cost
         return by_day
 
@@ -424,15 +449,82 @@ def _to_iso_z(ts: str) -> str:
     return s
 
 daily_ll = {}
+
+def _cache_from_metadata_text(meta_text: str) -> tuple[int, int]:
+    """Best-effort cache read/write from LiteLLM SpendLogs metadata JSON."""
+    if not meta_text or meta_text in ("", "{}", "null"):
+        return 0, 0
+    try:
+        meta = json.loads(meta_text)
+    except Exception:
+        return 0, 0
+    if not isinstance(meta, dict):
+        return 0, 0
+    usage = meta.get("usage") or meta.get("usage_object") or meta.get("additional_usage_values") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    details = (
+        usage.get("prompt_tokens_details")
+        or usage.get("promptTokensDetails")
+        or usage.get("input_tokens_details")
+        or meta.get("prompt_tokens_details")
+        or {}
+    )
+    if not isinstance(details, dict):
+        details = {}
+    def _n(*keys, src=None):
+        bag = src if src is not None else {}
+        for k in keys:
+            if k in bag and bag[k] is not None:
+                try:
+                    return int(float(bag[k]))
+                except Exception:
+                    pass
+        return 0
+    cr = _n(
+        "cache_read_input_tokens", "cached_tokens", "cache_read_tokens",
+        "cachedTokens", "cacheReadTokens",
+        src=usage,
+    ) or _n(
+        "cached_tokens", "cache_read_tokens", "cache_read_input_tokens", "cachedTokens",
+        src=details,
+    ) or _n(
+        "cache_read_input_tokens", "cached_tokens", "cache_read_tokens",
+        src=meta,
+    )
+    cw = _n(
+        "cache_creation_input_tokens", "cache_write_tokens", "cacheWriteTokens",
+        src=usage,
+    ) or _n(
+        "cache_write_tokens", "cache_creation_input_tokens",
+        src=details,
+    ) or _n(
+        "cache_creation_input_tokens", "cache_write_tokens",
+        src=meta,
+    )
+    return max(0, cr), max(0, cw)
+
 # SpendLogs is request-level SoT (DailyUserSpend can over-count across keys).
+# Prefer native cache columns when present; else 0 (overlay from DailyUserSpend below).
 raw_logs_day = _psql(
     'SELECT ("startTime"::date)::text, COUNT(*), '
     "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-    "COALESCE(SUM(spend),0) "
+    "COALESCE(SUM(spend),0), "
+    "COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(cache_creation_input_tokens),0) "
     'FROM "LiteLLM_SpendLogs" '
     'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
     "GROUP BY 1 ORDER BY 1"
 )
+if not raw_logs_day:
+    # Older schemas without cache_* columns
+    raw_logs_day = _psql(
+        'SELECT ("startTime"::date)::text, COUNT(*), '
+        "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+        "COALESCE(SUM(spend),0), 0, 0 "
+        'FROM "LiteLLM_SpendLogs" '
+        'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
+        "GROUP BY 1 ORDER BY 1"
+    )
 if raw_logs_day:
     for line in raw_logs_day.splitlines():
         parts = line.split("\t")
@@ -446,22 +538,34 @@ if raw_logs_day:
             pt = int(float(parts[2] or 0))
             ct = int(float(parts[3] or 0))
             cost = float(parts[4] or 0)
+            cache_r = int(float(parts[5] or 0)) if len(parts) > 5 else 0
         except Exception:
             continue
         daily_ll[date_key] = {
             "requests": reqs, "promptTokens": pt, "completionTokens": ct,
-            "cachedTokens": 0, "cost": cost, "byModel": {},
+            "cachedTokens": max(0, cache_r), "cost": cost, "byModel": {},
         }
 
 raw_by_model = _psql(
     'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
     "COALESCE(custom_llm_provider,''), COUNT(*), "
     "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-    "COALESCE(SUM(spend),0) "
+    "COALESCE(SUM(spend),0), "
+    "COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(cache_creation_input_tokens),0) "
     'FROM "LiteLLM_SpendLogs" '
     'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
     "GROUP BY 1,2,3 ORDER BY 1"
 )
+if not raw_by_model:
+    raw_by_model = _psql(
+        'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
+        "COALESCE(custom_llm_provider,''), COUNT(*), "
+        "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+        "COALESCE(SUM(spend),0), 0, 0 "
+        'FROM "LiteLLM_SpendLogs" '
+        'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
+        "GROUP BY 1,2,3 ORDER BY 1"
+    )
 if raw_by_model:
     for line in raw_by_model.splitlines():
         parts = line.split("\t")
@@ -477,6 +581,7 @@ if raw_by_model:
             pt = int(float(parts[4] or 0))
             ct = int(float(parts[5] or 0))
             cost = float(parts[6] or 0)
+            cache_r = int(float(parts[7] or 0)) if len(parts) > 7 else 0
         except Exception:
             continue
         day = daily_ll.setdefault(date_key, {
@@ -490,75 +595,116 @@ if raw_by_model:
         mk = f"{model}|{provider}" if provider else model
         bm[mk] = {
             "requests": reqs, "promptTokens": pt, "completionTokens": ct,
-            "cachedTokens": 0, "cost": cost, "rawModel": model,
+            "cachedTokens": max(0, cache_r), "cost": cost, "rawModel": model,
             "provider": provider or None,
         }
 
-# Fallback only when SpendLogs empty: DailyUserSpend (may over-count keys)
-if not daily_ll:
-    raw_daily = _psql(
-        'SELECT date, COALESCE(model, \'\'), COALESCE(custom_llm_provider, \'\'), '
-        "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
-        "COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(cache_creation_input_tokens),0), "
-        "COALESCE(SUM(spend),0), COALESCE(SUM(api_requests),0), "
-        "COALESCE(SUM(successful_requests),0) "
-        'FROM "LiteLLM_DailyUserSpend" '
-        "GROUP BY date, model, custom_llm_provider ORDER BY date"
-    )
-    if raw_daily:
-        for line in raw_daily.splitlines():
-            parts = line.split("\t")
-            if len(parts) < 10:
-                continue
-            date_key = (parts[0] or "").strip()[:10]
-            if len(date_key) != 10:
-                continue
-            model = (parts[1] or "").strip() or "mixed"
-            provider = (parts[2] or "").strip()
-            try:
-                pt = int(float(parts[3] or 0))
-                ct = int(float(parts[4] or 0))
-                cache_r = int(float(parts[5] or 0))
-                cost = float(parts[7] or 0)
-                reqs = int(float(parts[8] or 0))
-                ok = int(float(parts[9] or 0))
-            except Exception:
-                continue
-            if reqs <= 0 and ok > 0:
-                reqs = ok
-            if pt + ct + cache_r <= 0 and cost <= 0 and reqs <= 0:
-                continue
-            day = daily_ll.setdefault(date_key, {
-                "requests": 0, "promptTokens": 0, "completionTokens": 0,
-                "cachedTokens": 0, "cost": 0.0, "byModel": {},
-            })
-            day["requests"] += max(0, reqs)
-            day["promptTokens"] += max(0, pt)
-            day["completionTokens"] += max(0, ct)
-            day["cachedTokens"] += max(0, cache_r)
-            day["cost"] += max(0.0, cost)
-            mk = f"{model}|{provider}" if provider else model
-            bm = day["byModel"].setdefault(mk, {
+# Always overlay cache (and fill empty days) from DailyUserSpend — authoritative for cache hits.
+raw_daily = _psql(
+    'SELECT date, COALESCE(model, \'\'), COALESCE(custom_llm_provider, \'\'), '
+    "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+    "COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(cache_creation_input_tokens),0), "
+    "COALESCE(SUM(spend),0), COALESCE(SUM(api_requests),0), "
+    "COALESCE(SUM(successful_requests),0) "
+    'FROM "LiteLLM_DailyUserSpend" '
+    "GROUP BY date, model, custom_llm_provider ORDER BY date"
+)
+if raw_daily:
+    for line in raw_daily.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 10:
+            continue
+        date_key = (parts[0] or "").strip()[:10]
+        if len(date_key) != 10:
+            continue
+        model = (parts[1] or "").strip() or "mixed"
+        provider = (parts[2] or "").strip()
+        try:
+            pt = int(float(parts[3] or 0))
+            ct = int(float(parts[4] or 0))
+            cache_r = int(float(parts[5] or 0))
+            cost = float(parts[7] or 0)
+            reqs = int(float(parts[8] or 0))
+            ok = int(float(parts[9] or 0))
+        except Exception:
+            continue
+        if reqs <= 0 and ok > 0:
+            reqs = ok
+        if pt + ct + cache_r <= 0 and cost <= 0 and reqs <= 0:
+            continue
+        day = daily_ll.setdefault(date_key, {
+            "requests": 0, "promptTokens": 0, "completionTokens": 0,
+            "cachedTokens": 0, "cost": 0.0, "byModel": {},
+        })
+        mk = f"{model}|{provider}" if provider else model
+        bm = day.setdefault("byModel", {})
+        if not isinstance(bm, dict):
+            bm = {}
+            day["byModel"] = bm
+        if not daily_ll or (day.get("requests") or 0) <= 0:
+            # SpendLogs empty for this day — use DailyUserSpend as full SoT
+            day["requests"] = int(day.get("requests") or 0) + max(0, reqs)
+            day["promptTokens"] = int(day.get("promptTokens") or 0) + max(0, pt)
+            day["completionTokens"] = int(day.get("completionTokens") or 0) + max(0, ct)
+            day["cost"] = float(day.get("cost") or 0) + max(0.0, cost)
+            row = bm.setdefault(mk, {
                 "requests": 0, "promptTokens": 0, "completionTokens": 0,
                 "cachedTokens": 0, "cost": 0.0, "rawModel": model,
                 "provider": provider or None,
             })
-            bm["requests"] += max(0, reqs)
-            bm["promptTokens"] += max(0, pt)
-            bm["completionTokens"] += max(0, ct)
-            bm["cachedTokens"] += max(0, cache_r)
-            bm["cost"] += max(0.0, cost)
+            row["requests"] = int(row.get("requests") or 0) + max(0, reqs)
+            row["promptTokens"] = int(row.get("promptTokens") or 0) + max(0, pt)
+            row["completionTokens"] = int(row.get("completionTokens") or 0) + max(0, ct)
+            row["cost"] = float(row.get("cost") or 0) + max(0.0, cost)
+        # Cache: prefer max(SpendLogs, DailyUserSpend) so we never drop hits
+        row = bm.setdefault(mk, {
+            "requests": max(0, reqs), "promptTokens": max(0, pt), "completionTokens": max(0, ct),
+            "cachedTokens": 0, "cost": max(0.0, cost), "rawModel": model,
+            "provider": provider or None,
+        })
+        prev_c = int(row.get("cachedTokens") or 0)
+        row["cachedTokens"] = max(prev_c, max(0, cache_r))
+    # Recompute day-level cachedTokens from byModel after overlay
+    for _dk, day in daily_ll.items():
+        if not isinstance(day, dict):
+            continue
+        bm = day.get("byModel") or {}
+        if isinstance(bm, dict) and bm:
+            day["cachedTokens"] = sum(int((m or {}).get("cachedTokens") or 0) for m in bm.values() if isinstance(m, dict))
 
-# History tail (chronological)
+# History tail (chronological) — include cache when columns or metadata provide it
 hist_rows = []
 raw_hist = _psql(
     'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
     "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
     "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
-    "COALESCE(call_type,''), COALESCE(model_group,'') "
+    "COALESCE(call_type,''), COALESCE(model_group,''), "
+    "COALESCE(cache_read_input_tokens,0), COALESCE(cache_creation_input_tokens,0), "
+    "COALESCE(metadata::text,'') "
     'FROM "LiteLLM_SpendLogs" '
     'ORDER BY "startTime" DESC LIMIT 8000'
 )
+if not raw_hist:
+    raw_hist = _psql(
+        'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
+        "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
+        "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
+        "COALESCE(call_type,''), COALESCE(model_group,''), "
+        "0, 0, COALESCE "
+        'FROM "LiteLLM_SpendLogs" '
+        'ORDER BY "startTime" DESC LIMIT 8000'
+    )
+if not raw_hist:
+    # metadata-only fallback (no cache columns)
+    raw_hist = _psql(
+        'SELECT request_id, "startTime"::text, COALESCE(model,\'\'), '
+        "COALESCE(custom_llm_provider,''), COALESCE(prompt_tokens,0), "
+        "COALESCE(completion_tokens,0), COALESCE(spend,0), COALESCE(status,''), "
+        "COALESCE(call_type,''), COALESCE(model_group,''), "
+        "0, 0, COALESCE "
+        'FROM "LiteLLM_SpendLogs" '
+        'ORDER BY "startTime" DESC LIMIT 8000'
+    )
 if raw_hist:
     for line in reversed(raw_hist.splitlines()):
         parts = line.split("\t")
@@ -575,10 +721,28 @@ if raw_hist:
         except Exception:
             continue
         status = (parts[7] if len(parts) > 7 else "") or ""
-        if pt + ct <= 0 and cost <= 0:
+        try:
+            cache_r = int(float(parts[10] or 0)) if len(parts) > 10 else 0
+            cache_w = int(float(parts[11] or 0)) if len(parts) > 11 else 0
+        except Exception:
+            cache_r, cache_w = 0, 0
+        meta_text = parts[12] if len(parts) > 12 else ""
+        # psql -A may leave tabs inside JSON; rejoin remainder as metadata
+        if len(parts) > 13:
+            meta_text = "\t".join(parts[12:])
+        m_cr, m_cw = _cache_from_metadata_text(meta_text)
+        cache_r = max(cache_r, m_cr)
+        cache_w = max(cache_w, m_cw)
+        if pt + ct + cache_r + cache_w <= 0 and cost <= 0:
             continue
         if not ts:
             continue
+        tok = {"prompt_tokens": pt, "completion_tokens": ct}
+        if cache_r > 0:
+            tok["cached_tokens"] = cache_r
+        if cache_w > 0:
+            tok["cache_creation_input_tokens"] = cache_w
+            tok["cache_write_tokens"] = cache_w
         hist_rows.append({
             "id": rid or f"ll-{ts}-{model}-{pt}-{ct}",
             "timestamp": ts,
@@ -586,9 +750,10 @@ if raw_hist:
             "provider": provider or None,
             "promptTokens": pt,
             "completionTokens": ct,
+            "cachedTokens": cache_r,
             "cost": cost,
             "status": status,
-            "tokens": {"prompt_tokens": pt, "completion_tokens": ct},
+            "tokens": tok,
         })
 
 if daily_ll or hist_rows:
