@@ -38,6 +38,7 @@ export function agentDisplayName(agent: string | null | undefined): string {
     copilot: "GitHub Copilot",
     devin: "Devin",
     opencode: "OpenCode",
+    antigravity: "Antigravity",
   };
   return labels[id] || labels[String(agent || "")] || String(agent || "unknown");
 }
