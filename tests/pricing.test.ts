@@ -49,15 +49,6 @@ test("grok-4.5 uses official short cache $0.30 and 2x long context ≥200k", () 
   assert.ok(Math.abs((long.estimatedCost ?? 0) - expected) < 1e-12);
 });
 
-test("gemini-3.6 flash labels and kimi-k3 resolve with cache rates", () => {
-  assert.equal(resolveModelKey("gemini-3.6-flash-tiered"), "gemini-3.6-flash-tiered");
-  assert.equal(resolveModelKey("gemini-3.6-flash-high"), "gemini-3.6-flash-high");
-  assert.equal(resolveModelKey("kimi-k3"), "kimi-k3");
-  const p = priceCostParts("kimi-k3", 1_000_000, 0, 1_000_000, 0);
-  assert.equal(p.inputCost, 0.6);
-  assert.equal(p.cacheCost, 0.06);
-});
-
 test("router models qwen3-coder-next / step-3.7-flash / laguna-s-2.1 resolve with OR rates", () => {
   assert.equal(resolveModelKey("qwen3-coder-next"), "qwen3-coder-next");
   assert.equal(resolveModelKey("qwen/qwen3-coder-next"), "qwen3-coder-next");
@@ -74,4 +65,40 @@ test("router models qwen3-coder-next / step-3.7-flash / laguna-s-2.1 resolve wit
   assert.equal(priceTokens("laguna-s-2.1", 1_000_000, 1_000_000).estimatedCost, 0.1 + 0.2);
   assert.equal(priceTokens("minimax-m3", 1_000_000, 1_000_000).estimatedCost, 0.3 + 1.2);
   assert.equal(priceTokens("deepseek-v4-flash", 1_000_000, 1_000_000).estimatedCost, 0.14 + 0.28);
+});
+
+test("getRateForModel prefers OpenRouter over bundled Gemini family fallback", async () => {
+  const { loadOpenRouterCacheFromDisk, lookupOpenRouterRate } = await import(
+    "../src/openrouter-models.js"
+  );
+  const { getRateForModel } = await import("../src/pricing.js");
+  await loadOpenRouterCacheFromDisk();
+
+  // Skip if catalog not on disk (CI without cache)
+  const orFlash = lookupOpenRouterRate("google/gemini-3.6-flash");
+  if (!orFlash) return;
+
+  const high = getRateForModel("gemini-3.6-flash-high");
+  assert.equal(high.source, "openrouter");
+  assert.ok(high.key?.includes("gemini-3.6-flash"));
+  assert.equal(high.rate.inputPer1M, orFlash.rate.inputPer1M);
+  assert.equal(high.rate.outputPer1M, orFlash.rate.outputPer1M);
+
+  const tiered = getRateForModel("gemini-3.6-flash-tiered");
+  assert.equal(tiered.source, "openrouter");
+  assert.equal(tiered.rate.inputPer1M, orFlash.rate.inputPer1M);
+
+  const lite = getRateForModel("gemini-3.1-flash-lite");
+  const orLite = lookupOpenRouterRate("google/gemini-3.1-flash-lite");
+  if (orLite) {
+    assert.equal(lite.source, "openrouter");
+    assert.equal(lite.rate.inputPer1M, orLite.rate.inputPer1M);
+  }
+
+  const proLow = getRateForModel("gemini-3.1-pro-low");
+  const orPro = lookupOpenRouterRate("google/gemini-3.1-pro-preview");
+  if (orPro) {
+    assert.equal(proLow.source, "openrouter");
+    assert.equal(proLow.rate.inputPer1M, orPro.rate.inputPer1M);
+  }
 });

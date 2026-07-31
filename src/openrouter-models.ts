@@ -200,9 +200,110 @@ function rateFromEntry(e: OpenRouterModelEntry): ModelRate {
   };
 }
 
+/** Rank OpenRouter catalog rows: paid > non-batch > non-image (unless asked) > google for gemini. */
+function openRouterEntryScore(
+  e: OpenRouterModelEntry,
+  opts: { preferGoogle?: boolean; wantImage?: boolean; wantPreview?: boolean } = {},
+): number {
+  const id = e.id.toLowerCase();
+  const slug = e.slug.toLowerCase();
+  let s = 0;
+  if (!e.free) s += 200;
+  if (!id.includes(":batch") && !slug.includes(":batch")) s += 80;
+  const isImage = id.includes("image") || slug.includes("image");
+  if (opts.wantImage) {
+    if (isImage) s += 40;
+  } else if (!isImage) {
+    s += 40;
+  }
+  const isPreview = id.includes("preview") || slug.includes("preview");
+  if (opts.wantPreview) {
+    if (isPreview) s += 30;
+  } else if (!isPreview) {
+    // Prefer stable non-preview when both google/gemini-2.5-pro and …-preview match
+    s += 30;
+  }
+  if (opts.preferGoogle && e.provider.toLowerCase() === "google") s += 50;
+  // Slight preference for longer (more specific) slug, capped
+  s += Math.min(slug.length, 80);
+  return s;
+}
+
+function betterOpenRouterEntry(
+  a: OpenRouterModelEntry,
+  b: OpenRouterModelEntry,
+  opts: { preferGoogle?: boolean; wantImage?: boolean; wantPreview?: boolean } = {},
+): boolean {
+  const sa = openRouterEntryScore(a, opts);
+  const sb = openRouterEntryScore(b, opts);
+  if (sa !== sb) return sa > sb;
+  return a.slug.length > b.slug.length;
+}
+
+/**
+ * Expand Antigravity / IDE model aliases into OpenRouter lookup keys.
+ * e.g. gemini-3.6-flash-high → gemini-3.6-flash, google/gemini-3.6-flash
+ *      gemini-3.1-pro-low → gemini-3.1-pro → gemini-3.1-pro-preview
+ */
+export function openRouterLookupCandidates(model: string): string[] {
+  const raw = String(model).trim().toLowerCase().replace(/_/g, "-");
+  if (!raw) return [];
+  const out: string[] = [];
+  const add = (s: string) => {
+    const t = s.trim().toLowerCase().replace(/_/g, "-");
+    if (t && !out.includes(t)) out.push(t);
+  };
+  add(raw);
+  const bare = raw.includes("/") ? raw.slice(raw.lastIndexOf("/") + 1) : raw;
+  add(bare);
+
+  // Strip UI / Antigravity tier suffixes (not core "flash" / "pro" / "lite")
+  const STRIP_END = [
+    ":batch",
+    ":free",
+    "-high",
+    "-tiered",
+    "-low",
+    "-medium",
+    "-xhigh",
+    "-fast",
+    "-exp",
+    "-latest",
+    "-preview",
+  ];
+  let cur = bare;
+  // Peel suffixes repeatedly
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const suf of STRIP_END) {
+      if (cur.endsWith(suf) && cur.length > suf.length + 3) {
+        cur = cur.slice(0, -suf.length);
+        add(cur);
+        changed = true;
+      }
+    }
+  }
+
+  // gemini-3.1-pro-low → gemini-3.1-pro → gemini-3.1-pro-preview (OR naming)
+  // Only for *-pro bases so gemini-2.5-flash is not rewritten to a preview slug.
+  if (cur.includes("gemini") && /(^|-)pro$/.test(cur)) {
+    add(`${cur}-preview`);
+  }
+
+  // Provider-qualified forms
+  for (const c of [...out]) {
+    if (!c.includes("/")) {
+      if (c.startsWith("gemini")) add(`google/${c}`);
+    }
+  }
+  return out;
+}
+
 /**
  * Match usage model names against OpenRouter ids/slugs.
- * Prefer exact id, then slug, then longest slug contained in the name.
+ * Prefer exact id, then slug (with Antigravity alias expand), then longest slug contained.
+ * Prefer paid, non-batch, non-image (unless model asks image), google/* for gemini.
  */
 export function lookupOpenRouterRate(
   model: string | null | undefined,
@@ -212,29 +313,48 @@ export function lookupOpenRouterRate(
   const raw = String(model).trim().toLowerCase();
   if (!raw) return null;
 
-  // Exact full id
-  for (const e of models) {
-    if (e.id.toLowerCase() === raw) return { key: e.id, rate: rateFromEntry(e), entry: e };
-  }
+  const preferGoogle = raw.includes("gemini") || raw.startsWith("google/");
+  const wantImage = raw.includes("image");
+  const wantPreview = raw.includes("preview");
+  const rankOpts = { preferGoogle, wantImage, wantPreview };
+  const candidates = openRouterLookupCandidates(raw);
 
-  // Bare slug or provider/slug without exact case
-  const bare = raw.includes("/") ? raw.slice(raw.lastIndexOf("/") + 1) : raw;
-  // Prefer non-free paid variant when multiple match slug
-  let slugHit: OpenRouterModelEntry | null = null;
-  for (const e of models) {
-    if (e.slug.toLowerCase() === bare || e.slug.toLowerCase() === raw) {
-      if (!slugHit || (slugHit.free && !e.free)) slugHit = e;
+  // Exact full id (any candidate)
+  let best: OpenRouterModelEntry | null = null;
+  for (const cand of candidates) {
+    for (const e of models) {
+      if (e.id.toLowerCase() === cand) {
+        if (!best || betterOpenRouterEntry(e, best, rankOpts)) best = e;
+      }
     }
   }
-  if (slugHit) return { key: slugHit.id, rate: rateFromEntry(slugHit), entry: slugHit };
+  if (best) return { key: best.id, rate: rateFromEntry(best), entry: best };
 
-  // Longest slug contained in raw (min 6 chars)
-  let best: OpenRouterModelEntry | null = null;
-  for (const e of models) {
-    const s = e.slug.toLowerCase();
-    if (s.length < 6) continue;
-    if (raw.includes(s) || raw.replace(/_/g, "-").includes(s)) {
-      if (!best || e.slug.length > best.slug.length || (best.free && !e.free)) best = e;
+  // Exact slug match (prefer ranked)
+  best = null;
+  for (const cand of candidates) {
+    const bare = cand.includes("/") ? cand.slice(cand.lastIndexOf("/") + 1) : cand;
+    for (const e of models) {
+      const slug = e.slug.toLowerCase();
+      const idBare = e.id.includes("/") ? e.id.slice(e.id.lastIndexOf("/") + 1).toLowerCase() : e.id.toLowerCase();
+      if (slug === bare || slug === cand || idBare === bare) {
+        if (!best || betterOpenRouterEntry(e, best, rankOpts)) best = e;
+      }
+    }
+  }
+  if (best) return { key: best.id, rate: rateFromEntry(best), entry: best };
+
+  // Longest slug contained in any candidate (min 6 chars; skip :batch when not asked)
+  best = null;
+  for (const cand of candidates) {
+    const norm = cand.replace(/_/g, "-");
+    for (const e of models) {
+      const s = e.slug.toLowerCase();
+      if (s.length < 6) continue;
+      if (s.includes(":batch") && !norm.includes("batch")) continue;
+      if (norm.includes(s) || raw.replace(/_/g, "-").includes(s)) {
+        if (!best || betterOpenRouterEntry(e, best, rankOpts)) best = e;
+      }
     }
   }
   if (best) return { key: best.id, rate: rateFromEntry(best), entry: best };

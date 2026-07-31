@@ -75,10 +75,6 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10, cacheReadPer1M: 0.125 },
   "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
   "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4, cacheReadPer1M: 0.025 },
-  // Gemini 3.x flash (Antigravity / proxy labels) — cache read ≈ 10% input when reported
-  "gemini-3.6-flash": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
-  "gemini-3.6-flash-tiered": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
-  "gemini-3.6-flash-high": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
 
   // --- xAI (docs.x.ai/developers/pricing — short context <200k prompt) ---
   // Long context (≥200k) is 2× these rates; applied in priceCostParts via longContextThresholdTokens.
@@ -119,17 +115,12 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   // MiniMax paygo (≤512k, 50% promo): $0.30 / $1.20 / cache $0.06
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06 },
   "minimax-m2.7": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06 },
-  "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.1 },
-  "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41, cacheReadPer1M: 0.11 },
-  "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025, cacheReadPer1M: 0.075 },
-  // Hermes / 9router gateway aliases for Kimi K3 family (cache hit ≈10% of input rate)
-  "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
-  "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
-  // House gateway label (Hermes XLab) — treat like default mid-tier with cache
-  xlab: { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3 },
-  // Router “sol/luna” GPT-5.6 labels (cache read 10% of input when reported)
-  "gpt-5.6-sol": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
-  "gpt-5.6-luna": { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+  "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41 },
+  "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025 },
+  // Hermes / 9router gateway aliases for Kimi K3 family
+  "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5 },
   // Qwen max family (approx OpenRouter-class rates when Hermes/9router labels them)
   "qwen3.7-max": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
   "qwen3.8-max-preview": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
@@ -271,15 +262,6 @@ export function resolveModelKey(model: string | null | undefined): string | null
     if (raw.includes("v3")) return "deepseek-v3.2";
     return "deepseek-v3";
   }
-  if (raw.includes("gemini") && raw.includes("3.6") && raw.includes("high")) {
-    return "gemini-3.6-flash-high";
-  }
-  if (raw.includes("gemini") && raw.includes("3.6") && raw.includes("tiered")) {
-    return "gemini-3.6-flash-tiered";
-  }
-  if (raw.includes("gemini") && raw.includes("3.6") && raw.includes("flash")) {
-    return "gemini-3.6-flash";
-  }
   if (raw.includes("gemini") && raw.includes("flash")) return "gemini-2.5-flash";
   if (raw.includes("gemini")) return "gemini-2.5-pro";
   if (raw.includes("grok") && raw.includes("fast")) return "grok-4-fast";
@@ -316,11 +298,13 @@ export function getRateForModel(model: string | null | undefined): {
   if (key && custom[key.toLowerCase()]) {
     return { key, rate: custom[key.toLowerCase()], source: "custom" };
   }
-  if (key && BUNDLED_RATES[key]) {
-    return { key, rate: BUNDLED_RATES[key], source: "bundled" };
-  }
-  // OpenRouter live catalog (full id / slug match)
-  const or = lookupOpenRouterRate(model) || (raw ? lookupOpenRouterRate(raw) : null);
+
+  // OpenRouter live catalog BEFORE bundled — Antigravity Gemini 3.x etc. must not
+  // be forced onto gemini-2.5-* family heuristics when OR has the real rate.
+  const or =
+    lookupOpenRouterRate(model) ||
+    (raw ? lookupOpenRouterRate(raw) : null) ||
+    (key ? lookupOpenRouterRate(key) : null);
   if (or) {
     if (custom[or.key.toLowerCase()]) {
       return { key: or.key, rate: custom[or.key.toLowerCase()], source: "custom" };
@@ -329,6 +313,10 @@ export function getRateForModel(model: string | null | undefined): {
       return { key: or.entry.slug, rate: custom[or.entry.slug.toLowerCase()], source: "custom" };
     }
     return { key: or.key, rate: or.rate, source: "openrouter" };
+  }
+
+  if (key && BUNDLED_RATES[key]) {
+    return { key, rate: BUNDLED_RATES[key], source: "bundled" };
   }
   return { key: key || "default", rate: BUNDLED_RATES.default, source: "default" };
 }
