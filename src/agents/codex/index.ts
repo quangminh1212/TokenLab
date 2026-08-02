@@ -584,6 +584,10 @@ function attributeProxyUsage(
       if (winModel && row.modelKey && !modelsCompatible(winModel, row.modelKey)) continue;
 
       claimedProxyIds.add(row.id);
+      // Tag so dashboard shows Codex as client of TokenRouter path (LiteLLM/9Router).
+      const viaWs = workspace
+        ? `${workspace} · via:tokenrouter`
+        : "via:tokenrouter";
       events.push(
         applyPricing({
           id: stableId("codex", file, "proxy", row.id),
@@ -594,7 +598,7 @@ function attributeProxyUsage(
           outputTokens: row.outputTokens,
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
-          workspace,
+          workspace: viaWs,
           sourcePath: `${file} ← ${row.sourcePath}`,
           routerCost: row.cost > 0 ? row.cost : null,
         }),
@@ -910,7 +914,7 @@ function pickString(obj: unknown, keys: string[]): string | null {
 
 export const agent: AgentModule = {
   id: "codex",
-  label: "OpenAI Codex",
+  label: "OpenAI Codex (App)",
   roots() {
     const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
     return unique([

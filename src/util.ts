@@ -30,7 +30,7 @@ export function agentDisplayName(agent: string | null | undefined): string {
     "9router": "9Router",
     litellm: "LiteLLM",
     "claude-code": "Claude Code",
-    codex: "OpenAI Codex",
+    codex: "OpenAI Codex (App)",
     cursor: "Cursor",
     windsurf: "Windsurf",
     grok: "Grok (xAI)",
