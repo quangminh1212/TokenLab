@@ -37,7 +37,8 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
             outputTokens: 2_000,
             totalTokens: 102_000,
             cachedReadTokens: 80_000,
-            reasoningTokens: 500,
+            cacheCreationTokens: 1_200,
+            reasoningTokens: 500, // already folded into outputTokens
             modelCalls: 3,
             // $0.2991092 official (short rates cache $0.30)
             costUsdTicks: 2_991_092_000,
@@ -47,6 +48,7 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
                 outputTokens: 2_000,
                 totalTokens: 102_000,
                 cachedReadTokens: 80_000,
+                cacheCreationTokens: 1_200,
               },
             },
           },
@@ -86,9 +88,10 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
     // uncached = 100k - 80k
     assert.equal(e.inputTokens, 20_000);
     assert.equal(e.cacheReadTokens, 80_000);
-    // Policy thừa hơn thiếu: output 2000 + reasoning 500
-    assert.equal(e.outputTokens, 2_500);
-    assert.equal(e.totalTokens, 102_500);
+    assert.equal(e.cacheWriteTokens, 1_200);
+    // reasoning already in output — do not double-count
+    assert.equal(e.outputTokens, 2_000);
+    assert.equal(e.totalTokens, 103_200); // uncached + out + cacheRead + cacheWrite
     assert.equal(e.pricingStatus, "priced");
 
     // Prefer official costUsdTicks over table
@@ -96,7 +99,7 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
     assert.ok(Math.abs((e.estimatedCost ?? 0) - 0.2991092) < 1e-9);
 
     // Table (no ticks) would still price cache cheaper than full input
-    const table = priceTokens("grok-4.5", 20_000, 2_000, 80_000, 0);
+    const table = priceTokens("grok-4.5", 20_000, 2_000, 80_000, 1_200);
     const wrongAllInput = priceTokens("grok-4.5", 100_000, 2_000, 0, 0);
     assert.ok((table.estimatedCost ?? 0) < (wrongAllInput.estimatedCost ?? 0));
   } finally {
@@ -125,7 +128,7 @@ test("parseGrok bills turn_completed without usage via prompt peak totalTokens",
       params: {
         sessionId: "sess-nou",
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } },
-        _meta: { totalTokens: 50_000, promptId },
+        _meta: { totalTokens: 50_000, cachedReadTokens: 40_000, promptId },
       },
     });
     const done = JSON.stringify({
@@ -145,8 +148,55 @@ test("parseGrok bills turn_completed without usage via prompt peak totalTokens",
     const events = await parseGrok([root]);
     assert.equal(events.length, 1);
     assert.equal(events[0]!.estimated, true);
-    assert.equal(events[0]!.inputTokens, 50_000);
+    // peak total 50k with 40k cache → uncached 10k + cache 40k
+    assert.equal(events[0]!.inputTokens, 10_000);
+    assert.equal(events[0]!.cacheReadTokens, 40_000);
+    assert.equal(events[0]!.outputTokens, 0);
     assert.equal(events[0]!.totalTokens, 50_000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGrok maps cacheCreationTokens and fills output from reasoning only when needed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-cc-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-cc");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-cc", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.5-build",
+        updated_at: "2026-08-03T01:00:00.000Z",
+      }),
+    );
+    const withReasoningOnly = JSON.stringify({
+      timestamp: 1785700000,
+      method: "session/update",
+      params: {
+        sessionId: "sess-cc",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: "p-reason",
+          usage: {
+            inputTokens: 10_000,
+            outputTokens: 0,
+            totalTokens: 10_000,
+            cachedReadTokens: 0,
+            cacheCreationTokens: 500,
+            reasoningTokens: 800,
+          },
+        },
+      },
+    });
+    await writeFile(path.join(sessionDir, "updates.jsonl"), `${withReasoningOnly}\n`);
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.inputTokens, 10_000);
+    assert.equal(events[0]!.outputTokens, 800); // fill from reasoning when output empty
+    assert.equal(events[0]!.cacheReadTokens, 0);
+    assert.equal(events[0]!.cacheWriteTokens, 500);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

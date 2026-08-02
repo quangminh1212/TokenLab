@@ -457,11 +457,13 @@ async function parseUpdatesUsage(
 }
 
 /**
- * Grok turn_completed.usage:
- * - inputTokens = full prompt tokens (includes cache hits)
+ * Grok turn_completed.usage (real CLI shape):
+ * - inputTokens = FULL prompt (includes cache hits)
  * - cachedReadTokens = cache hit portion of input
- * - outputTokens includes reasoning
- * - costUsdTicks = official USD × 1e10 (when present — prefer over table rates)
+ * - cacheCreationTokens = cache write / creation tokens
+ * - outputTokens already includes reasoningTokens when both present
+ *   (totalTokens ≈ inputTokens + outputTokens)
+ * - costUsdTicks = official USD × 1e10 (prefer over table rates)
  */
 function bucketsFromUsage(usage: Record<string, unknown>): {
   inputTokens: number;
@@ -477,15 +479,15 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
   let output = num(
     usage.outputTokens ?? usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens,
   );
-  // Policy: thừa hơn thiếu — if reasoning is reported separately, always bill it.
-  // (Grok often already folds reasoning into outputTokens; adding may slightly over-count.)
+  // Reasoning is usually already folded into outputTokens (total = input + output).
+  // Only fill from reasoning when output is missing or clearly smaller than reasoning alone.
   const reasoning = num(
     usage.reasoningTokens ?? usage.reasoning_tokens ?? usage.thinking_tokens,
   );
   if (reasoning > 0) {
     if (output <= 0) output = reasoning;
     else if (reasoning > output) output = reasoning;
-    else output += reasoning; // both present and reasoning ⊆ output still → prefer over-count
+    // else: reasoning ⊆ output — do NOT double-count
   }
 
   const cacheRead = num(
@@ -496,8 +498,11 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
       usage.cacheReadTokens ??
       usage.cached_tokens,
   );
+  // Grok CLI field is cacheCreationTokens (not cache_creation_input_tokens)
   const cacheWrite = num(
-    usage.cache_creation_input_tokens ??
+    usage.cacheCreationTokens ??
+      usage.cache_creation_tokens ??
+      usage.cache_creation_input_tokens ??
       usage.cacheWriteTokens ??
       usage.cache_write_tokens ??
       usage.cachedWriteTokens,
