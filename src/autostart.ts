@@ -265,7 +265,7 @@ async function writeWindowsLauncher(): Promise<string> {
     "  Set startup = wmi.Get(\"Win32_ProcessStartup\").SpawnInstance_()",
     "  startup.ShowWindow = 0",
     "  Set proc = wmi.Get(\"Win32_Process\")",
-    "  ret = proc.Create(\"\"\"\" & nodePath & \"\"\" \"\"\" & cliPath & \"\"\" serve\", Null, startup, pid)",
+    "  ret = proc.Create(\"\"\"\" & nodePath & \"\"\" --expose-gc \"\"\"\" & cliPath & \"\"\" serve\", Null, startup, pid)",
     "  If ret = 0 And pid > 0 Then StartServe = pid",
     "  On Error Goto 0",
     "End Function",

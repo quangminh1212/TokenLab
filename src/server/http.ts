@@ -334,6 +334,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           onAgentDone: ({ agent, events, durationMs, error }) => {
             // Long agent parsers can block the event loop; refresh hang watchdog.
             writeHeartbeat();
+            // 2026-08-03: force GC after each agent to keep heap <200MB
+            // (avoids zombie watchdog orphan kills for large scan datasets)
+            try { globalThis.gc?.(); } catch { /* gc not exposed */ }
             agentsDone += 1;
             const prevForAgent = byAgent.get(agent) ?? [];
             if (error && events.length === 0) {

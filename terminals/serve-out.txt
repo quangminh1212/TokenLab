@@ -1,0 +1,10 @@
+[tokenlab] loaded 48475 cached scan events
+[tokenlab] loaded 31249 imported events
+[tokenlab] warm cache ready: 48475 events (scan + import)
+TokenLab v1.0.6  (win32/x64)
+API  http://127.0.0.1:3737/api/health
+UI   http://127.0.0.1:3737/
+Scanning agents in background…
+Press Ctrl+C to stop
+[tokenlab] OpenRouter models ready: 326
+Tray icon enabled (double-click or menu → Open Dashboard)

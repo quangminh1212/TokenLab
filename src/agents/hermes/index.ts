@@ -341,10 +341,22 @@ function readSessionModelUsage(
       if (!buckets) continue;
 
       const sessionId = String(row.session_id ?? i);
-      const model =
+      let model =
         (typeof row.model === "string" && row.model.trim()) ||
         extractModel(row) ||
         null;
+      // 2026-08-03: prefer concrete model from model_config when rollup label
+      // is a gateway alias (default/XLab/hermes/auto) — prevents double-counting
+      // with gap-fill which already does this check.
+      if (typeof row.model_config === "string") {
+        try {
+          const cfg = JSON.parse(String(row.model_config)) as Record<string, unknown>;
+          const cfgModel = typeof cfg.model === "string" ? cfg.model : null;
+          if (cfgModel && (!model || isGatewayAlias(model))) model = cfgModel;
+        } catch {
+          /* ignore */
+        }
+      }
       const ts =
         extractTimestamp(row.last_seen, row.first_seen, row) ||
         sessionTs.get(sessionId) ||
