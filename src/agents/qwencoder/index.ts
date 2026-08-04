@@ -188,6 +188,7 @@ async function parseModelsApi(file: string): Promise<UsageEvent[]> {
     return [];
   }
   const root = unwrapData(data);
+  if (!root) return [];
   const list = extractModelList(root);
   if (!list.length) return [];
 
