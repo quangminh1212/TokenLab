@@ -12,22 +12,38 @@ import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/u
  * Policy: prefer over-count over missing usage (thừa hơn thiếu).
  * - session_model_usage (per-model) + gap-fill from sessions when session total is higher
  * - Always bill reasoning_tokens on top of output (Hermes stores them separately)
- * - Historical state-snapshots kept; same path never double-parsed
+ * - state-snapshots: only sessions NOT already covered by live state.db (no double-count)
  * - JSONL only under sessions/ (skip node_modules / venv noise)
  */
 export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   const seenDb = new Set<string>();
+  /** Session ids already counted from a preferred (live) DB — snapshots must skip these. */
+  const coveredSessions = new Set<string>();
 
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
-    const dbPaths = await discoverHermesDbPaths(root);
-    for (const dbPath of dbPaths) {
+    const { primary, snapshots } = await discoverHermesDbPaths(root);
+
+    // 1) Live / primary DBs first (full read)
+    for (const dbPath of primary) {
       const key = path.resolve(dbPath).toLowerCase();
       if (seenDb.has(key)) continue;
       seenDb.add(key);
-      events.push(...(await parseHermesSqlite(dbPath)));
+      const { events: ev, sessionIds } = await parseHermesSqlite(dbPath, null);
+      events.push(...ev);
+      for (const sid of sessionIds) coveredSessions.add(sid);
+    }
+
+    // 2) Snapshots only for sessions missing from live (history after prune / migrate)
+    for (const dbPath of snapshots) {
+      const key = path.resolve(dbPath).toLowerCase();
+      if (seenDb.has(key)) continue;
+      seenDb.add(key);
+      const { events: ev, sessionIds } = await parseHermesSqlite(dbPath, coveredSessions);
+      events.push(...ev);
+      for (const sid of sessionIds) coveredSessions.add(sid);
     }
 
     // JSONL / session JSON under sessions/ only (not hermes-agent source trees)
@@ -46,40 +62,53 @@ export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
   return events;
 }
 
-/** Discover SQLite DBs that hold Hermes usage (live + unique historical snapshots). */
-async function discoverHermesDbPaths(root: string): Promise<string[]> {
-  const out: string[] = [];
+function isSnapshotDbPath(dbPath: string): boolean {
+  const p = dbPath.toLowerCase().replace(/\\/g, "/");
+  return p.includes("/state-snapshots/") || p.includes("/snapshots/") || p.includes("/state-snapshot/");
+}
+
+/** Discover SQLite DBs: primary (live) first, then historical snapshots. */
+async function discoverHermesDbPaths(root: string): Promise<{ primary: string[]; snapshots: string[] }> {
   const preferNames = ["state.db", "hermes.db", "sessions.db"];
+  const primary: string[] = [];
+  const snapshots: string[] = [];
 
   for (const name of preferNames) {
     const p = path.join(root, name);
-    if (await pathExists(p)) out.push(p);
+    if (await pathExists(p)) primary.push(p);
   }
 
-  // Nested DBs (maxDepth small): include state-snapshots for history not in live DB
+  // Nested DBs: state-snapshots for history not in live DB
   const nested = await walkFiles(root, {
     maxDepth: 5,
     match: (n) => n === "state.db" || n === "hermes.db" || n === "sessions.db",
   });
   for (const p of nested) {
     const base = path.basename(p).toLowerCase();
-    // Skip WAL/SHM companions (not matched) and kanban/projects/verification DBs
     if (!preferNames.map((n) => n.toLowerCase()).includes(base)) continue;
-    // Skip .bak copies next to live files
+    // Skip .bak / emergency pre-update copies
     if (p.toLowerCase().includes(".bak")) continue;
-    out.push(p);
+    if (p.toLowerCase().includes("pre-update-emergency")) continue;
+    if (isSnapshotDbPath(p)) snapshots.push(p);
+    else {
+      // Nested non-snapshot (e.g. profiles/*/state.db) — treat as primary only if not already listed
+      primary.push(p);
+    }
   }
 
-  // Unique by resolved path
-  const seen = new Set<string>();
-  const uniq: string[] = [];
-  for (const p of out) {
-    const k = path.resolve(p).toLowerCase();
-    if (seen.has(k)) continue;
-    seen.add(k);
-    uniq.push(p);
-  }
-  return uniq;
+  const dedupe = (list: string[]) => {
+    const seen = new Set<string>();
+    const uniq: string[] = [];
+    for (const p of list) {
+      const k = path.resolve(p).toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push(p);
+    }
+    return uniq;
+  };
+
+  return { primary: dedupe(primary), snapshots: dedupe(snapshots) };
 }
 
 async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
@@ -146,8 +175,16 @@ async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
   return events;
 }
 
-async function parseHermesSqlite(dbPath: string): Promise<UsageEvent[]> {
+async function parseHermesSqlite(
+  dbPath: string,
+  /** When set (snapshots), skip any session already counted in a preferred DB. */
+  skipSessionIds: Set<string> | null,
+): Promise<{ events: UsageEvent[]; sessionIds: string[] }> {
   const events: UsageEvent[] = [];
+  const sessionIds: string[] = [];
+  const noteSession = (sid: string) => {
+    if (sid) sessionIds.push(sid);
+  };
   try {
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -161,26 +198,33 @@ async function parseHermesSqlite(dbPath: string): Promise<UsageEvent[]> {
 
       const sessionTable =
         tableNames.find((n) => n.toLowerCase() === "sessions") ||
-        tableNames.find((n) => n.toLowerCase().includes("session"));
+        tableNames.find((n) => n.toLowerCase().includes("session") && !n.toLowerCase().includes("model"));
 
       // 1) Per-model rollups (real model ids: Kimi-k3, claude-opus-4.8, …)
       let smuEvents: UsageEvent[] = [];
       if (has("session_model_usage")) {
-        smuEvents = readSessionModelUsage(db, dbPath);
+        smuEvents = readSessionModelUsage(db, dbPath, skipSessionIds, noteSession);
         events.push(...smuEvents);
       }
 
       // 2) Sessions: full rows when no SMU; gap-fill when session total > SMU sum
       if (sessionTable) {
-        if (smuEvents.length === 0) {
-          events.push(...readSessionsTable(db, dbPath, sessionTable));
+        if (smuEvents.length === 0 && !has("session_model_usage")) {
+          events.push(...readSessionsTable(db, dbPath, sessionTable, skipSessionIds, noteSession));
+        } else if (smuEvents.length === 0 && has("session_model_usage") && skipSessionIds) {
+          // Snapshot: SMU all skipped as overlap → still try sessions-only for unknown sids
+          events.push(...readSessionsTable(db, dbPath, sessionTable, skipSessionIds, noteSession));
+        } else if (smuEvents.length > 0) {
+          events.push(
+            ...gapFillSessionsOverSmu(db, dbPath, sessionTable, smuEvents, skipSessionIds, noteSession),
+          );
         } else {
-          events.push(...gapFillSessionsOverSmu(db, dbPath, sessionTable, smuEvents));
+          events.push(...readSessionsTable(db, dbPath, sessionTable, skipSessionIds, noteSession));
         }
       }
 
       // 3) Messages only as last resort floor (token_count alone is weak)
-      if (events.length === 0) {
+      if (events.length === 0 && !skipSessionIds) {
         const msgTable = tableNames.find((n) => /^messages?$/i.test(n));
         if (msgTable) {
           events.push(...readMessagesUsage(db, dbPath, msgTable));
@@ -192,7 +236,7 @@ async function parseHermesSqlite(dbPath: string): Promise<UsageEvent[]> {
   } catch {
     // node:sqlite unavailable or locked db — skip
   }
-  return events;
+  return { events, sessionIds };
 }
 
 /**
@@ -204,6 +248,8 @@ function gapFillSessionsOverSmu(
   dbPath: string,
   sessionTable: string,
   smuEvents: UsageEvent[],
+  skipSessionIds: Set<string> | null,
+  noteSession: (sid: string) => void,
 ): UsageEvent[] {
   void smuEvents; // presence means SMU was scanned; gaps re-sum from SQL below
   const smuBySession = new Map<
@@ -249,6 +295,8 @@ function gapFillSessionsOverSmu(
     for (const row of rows) {
       const sid = String(row.id ?? row.session_id ?? "");
       if (!sid) continue;
+      if (skipSessionIds?.has(sid)) continue;
+      noteSession(sid);
       const sIn = num(row.input_tokens ?? row.total_input_tokens ?? row.prompt_tokens);
       let sOut = num(row.output_tokens ?? row.total_output_tokens ?? row.completion_tokens);
       const sCr = num(row.cache_read_tokens ?? row.cache_read_input_tokens);
@@ -311,6 +359,8 @@ function gapFillSessionsOverSmu(
 function readSessionModelUsage(
   db: { prepare: (sql: string) => { all: () => unknown[] } },
   dbPath: string,
+  skipSessionIds: Set<string> | null,
+  noteSession: (sid: string) => void,
 ): UsageEvent[] {
   const events: UsageEvent[] = [];
   try {
@@ -341,13 +391,13 @@ function readSessionModelUsage(
       if (!buckets) continue;
 
       const sessionId = String(row.session_id ?? i);
+      if (skipSessionIds?.has(sessionId)) continue;
+      noteSession(sessionId);
       let model =
         (typeof row.model === "string" && row.model.trim()) ||
         extractModel(row) ||
         null;
-      // 2026-08-03: prefer concrete model from model_config when rollup label
-      // is a gateway alias (default/XLab/hermes/auto) — prevents double-counting
-      // with gap-fill which already does this check.
+      // Prefer concrete model from model_config when rollup label is a gateway alias
       if (typeof row.model_config === "string") {
         try {
           const cfg = JSON.parse(String(row.model_config)) as Record<string, unknown>;
@@ -395,6 +445,8 @@ function readSessionsTable(
   db: { prepare: (sql: string) => { all: () => unknown[] } },
   dbPath: string,
   sessionTable: string,
+  skipSessionIds: Set<string> | null,
+  noteSession: (sid: string) => void,
 ): UsageEvent[] {
   const events: UsageEvent[] = [];
   try {
@@ -424,6 +476,9 @@ function readSessionsTable(
     let i = 0;
     for (const row of rows) {
       i += 1;
+      const sid = idCol ? String(row[idCol] ?? i) : String(i);
+      if (skipSessionIds?.has(sid)) continue;
+
       const inputTokens = inCol ? num(row[inCol]) : 0;
       let outputTokens = outCol ? num(row[outCol]) : 0;
       const cacheReadTokens = crCol ? num(row[crCol]) : 0;
@@ -433,6 +488,7 @@ function readSessionsTable(
       if (reasoning > 0) outputTokens += reasoning;
 
       if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) continue;
+      noteSession(sid);
 
       let model =
         modelCol && typeof row[modelCol] === "string" ? String(row[modelCol]) : null;
@@ -450,7 +506,6 @@ function readSessionsTable(
       const tsRaw = tsCol ? row[tsCol] : null;
       const timestamp = extractTimestamp(tsRaw, row);
       const workspace = cwdCol && typeof row[cwdCol] === "string" ? String(row[cwdCol]) : null;
-      const sid = idCol ? String(row[idCol] ?? i) : String(i);
       const cost = pickHermesCost(row);
       const apiCalls = apiCol ? num(row[apiCol]) : 0;
 

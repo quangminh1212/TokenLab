@@ -119,8 +119,12 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41 },
   "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025 },
   // Hermes / 9router gateway aliases for Kimi K3 family
-  "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5 },
-  "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
+  "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
+  // Hermes gateway profile name (routes via 9router/RouterLab) — NOT Claude default $3/$15.
+  // Approx blended route cost (kimi-class); real backend model often hidden behind the alias.
+  xlab: { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
+  "vip-kimi": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
   // Qwen max family (approx OpenRouter-class rates when Hermes/9router labels them)
   "qwen3.7-max": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
   "qwen3.8-max-preview": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
@@ -199,6 +203,8 @@ const ALIASES: Record<string, string> = {
   "grok-4-latest": "grok-4",
   "grok-code-fast-1-0825": "grok-code-fast-1",
   "kimi-k3": "kimi-k3",
+  xlab: "xlab",
+  "vip-kimi": "vip-kimi",
   "qwen3.7-max": "qwen3.7-max",
   "qwen3.8-max-preview": "qwen3.8-max-preview",
   "qwen3-coder-next": "qwen3-coder-next",

@@ -135,6 +135,78 @@ test("parseHermes gap-fills when session rollup exceeds SMU (prefer over-count)"
   }
 });
 
+test("parseHermes skips snapshot sessions already covered by live state.db", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-hermes-snap-"));
+  try {
+    // Live DB
+    const liveDb = path.join(root, "state.db");
+    const live = new DatabaseSync(liveDb);
+    live.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, model TEXT, started_at TEXT, ended_at TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER, reasoning_tokens INTEGER, cwd TEXT,
+        estimated_cost_usd REAL, actual_cost_usd REAL, api_call_count INTEGER
+      );
+      CREATE TABLE session_model_usage (
+        session_id TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+        cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+        estimated_cost_usd REAL, actual_cost_usd REAL, api_call_count INTEGER,
+        first_seen TEXT, last_seen TEXT
+      );
+      INSERT INTO sessions VALUES (
+        'shared-sess', 'kimi-k3', '2026-07-20T10:00:00Z', '2026-07-20T11:00:00Z',
+        1000, 100, 0, 0, 0, NULL, 0, 0, 1
+      );
+      INSERT INTO session_model_usage VALUES (
+        'shared-sess', 'kimi-k3', 1000, 100, 0, 0, 0,
+        NULL, NULL, 1, '2026-07-20T10:00:00Z', '2026-07-20T11:00:00Z'
+      );
+    `);
+    live.close();
+
+    // Snapshot with overlapping session (must NOT double-count) + unique history
+    const snapDir = path.join(root, "state-snapshots", "20260701-old");
+    await mkdir(snapDir, { recursive: true });
+    const snap = new DatabaseSync(path.join(snapDir, "state.db"));
+    snap.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, model TEXT, started_at TEXT, ended_at TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER, reasoning_tokens INTEGER, cwd TEXT,
+        estimated_cost_usd REAL, actual_cost_usd REAL, api_call_count INTEGER
+      );
+      CREATE TABLE session_model_usage (
+        session_id TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+        cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+        estimated_cost_usd REAL, actual_cost_usd REAL, api_call_count INTEGER,
+        first_seen TEXT, last_seen TEXT
+      );
+      INSERT INTO session_model_usage VALUES (
+        'shared-sess', 'kimi-k3', 9999, 999, 0, 0, 0,
+        NULL, NULL, 9, '2026-07-01T10:00:00Z', '2026-07-01T11:00:00Z'
+      );
+      INSERT INTO session_model_usage VALUES (
+        'only-in-snap', 'grok-4.5', 500, 50, 0, 0, 0,
+        NULL, NULL, 1, '2026-07-01T12:00:00Z', '2026-07-01T12:30:00Z'
+      );
+    `);
+    snap.close();
+
+    const events = await parseHermes([root]);
+    const shared = events.filter((e) => e.inputTokens === 1000 || e.inputTokens === 9999);
+    assert.equal(shared.length, 1, "shared session must appear once (live wins)");
+    assert.equal(shared[0]!.inputTokens, 1000);
+    const hist = events.find((e) => e.model === "grok-4.5");
+    assert.ok(hist, "unique snapshot session kept");
+    assert.equal(hist!.inputTokens, 500);
+    const totalIn = events.reduce((s, e) => s + e.inputTokens, 0);
+    assert.equal(totalIn, 1500);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("parseHermes falls back to sessions when SMU empty", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-hermes-sess-"));
   try {
