@@ -76,7 +76,7 @@
 
       <section class="u-card recent-card">
         <div class="u-card-head">
-          <span class="u-card-title">Recent events</span>
+          <span class="u-card-title">Recent requests</span>
         </div>
         <div class="recent-scroll" id="recentBody">
           <div class="chart-empty">Loading&hellip;</div>
@@ -503,8 +503,8 @@
       const t = new Date(iso).getTime();
       if (Number.isNaN(t)) return '\u2014';
       const mins = Math.floor((Date.now() - t) / 60000);
-      // Future stamps (e.g. old daily noon-UTC) must not stick on "Just now"
-      if (mins < 0) return 'Today';
+      // Future / rollup stamps are filtered out of the list — never label them "Today"
+      if (mins < 0) return '\u2014';
       if (mins < 1) return 'Just now';
       if (mins < 60) return mins + 'm ago';
       if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
@@ -520,7 +520,7 @@
       }
       if (kind === 'chart') return 'No data for this period';
       if (kind === 'table') return 'Chưa có usage. Dùng AI agents rồi bấm Refresh.';
-      return 'No events yet.';
+      return 'No requests yet.';
     }
 
     function renderRecent(events) {
@@ -760,10 +760,15 @@
             return !Number.isNaN(t) && t >= t0;
           });
         }
-        // RECENT: keep real + single-turn estimates (Antigravity transcripts / Grok text).
-        // Drop estimated daily/model rollups only (multi-RQ or multi-million token blobs).
+        // RECENT REQUESTS: real per-call rows + single-turn estimates only.
+        // Drop daily/model rollups and future-stamped rows (UI used to show them as "Today").
+        const nowMs = Date.now();
         recent = recent.filter((e) => {
           if (!e) return false;
+          const t = new Date(e.timestamp).getTime();
+          if (Number.isNaN(t)) return false;
+          // Future timestamps = day rollups / noon-UTC fakes — hide from Recent requests
+          if (t > nowMs + 5_000) return false;
           const rc = e.requestCount;
           if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
           if (e.estimated) {
