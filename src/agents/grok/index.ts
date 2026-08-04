@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import {
+  estimateTokensFromChars,
   estimateTokensFromText,
   num,
   parseJsonl,
@@ -42,175 +43,189 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
     });
     const sessionDirs = unique(markers.map((m) => path.dirname(m)));
 
-    for (const dir of sessionDirs) {
-      const summaryPath = path.join(dir, "summary.json");
-      let summary: Record<string, unknown> = {};
-      if (await pathExists(summaryPath)) {
-        const summaryText = await readText(summaryPath);
-        if (summaryText) {
-          try {
-            summary = JSON.parse(summaryText) as Record<string, unknown>;
-          } catch {
-            summary = {};
-          }
-        }
-      }
-
-      const info = (summary.info ?? {}) as Record<string, unknown>;
-      const model =
-        (typeof summary.current_model_id === "string" && summary.current_model_id) ||
-        (typeof summary.model === "string" && summary.model) ||
-        "grok-4.5";
-      const workspace =
-        (typeof info.cwd === "string" && info.cwd) ||
-        (typeof summary.git_root_dir === "string" && summary.git_root_dir) ||
-        decodeWorkspaceFromSessionPath(dir) ||
-        null;
-      const ts =
-        (typeof summary.updated_at === "string" && summary.updated_at) ||
-        (typeof summary.last_active_at === "string" && summary.last_active_at) ||
-        (typeof summary.created_at === "string" && summary.created_at) ||
-        (await mtimeIso(path.join(dir, "updates.jsonl"))) ||
-        (await mtimeIso(path.join(dir, "chat_history.jsonl"))) ||
-        (await mtimeIso(summaryPath)) ||
-        new Date().toISOString();
-      const sessionId =
-        (typeof info.id === "string" && info.id) || path.basename(dir);
-
-      // 1) Real usage from updates.jsonl
-      let hadRealUsage = false;
-      const updatesPath = path.join(dir, "updates.jsonl");
-      if (await pathExists(updatesPath)) {
-        const fromUpdates = await parseUpdatesUsage(updatesPath, {
-          sessionId,
-          model,
-          workspace,
-          fallbackTs: ts,
-        });
-        if (fromUpdates.length > 0) {
-          events.push(...fromUpdates);
-          hadRealUsage = true;
-        }
-      }
-
-      // 2) Explicit usage on summary
-      const usage = (summary.usage ?? summary.token_usage) as Record<string, unknown> | undefined;
-      if (!hadRealUsage && usage) {
-        const buckets = bucketsFromUsage(usage);
-        if (buckets) {
-          const { routerCost, ...tokenBuckets } = buckets;
-          events.push(
-            applyPricing({
-              id: stableId("grok", sessionId, "usage"),
-              agent: "grok",
-              model,
-              timestamp: ts,
-              ...tokenBuckets,
-              ...(routerCost != null ? { routerCost } : {}),
-              workspace,
-              sourcePath: summaryPath,
-            }),
-          );
-          hadRealUsage = true;
-        }
-      }
-
-      // 3) Chat text estimate only when no real counters
-      if (hadRealUsage) continue;
-
-      const chatPath = path.join(dir, "chat_history.jsonl");
-      const chatText = await readText(chatPath);
-      if (!chatText) continue;
-
-      // Cumulative context chars → each assistant turn prices full history (over-count friendly)
-      let contextChars = 0;
-      let turn = 0;
-      let emitted = 0;
-      for (const row of parseJsonl(chatText)) {
-        if (!row || typeof row !== "object") continue;
-        const r = row as Record<string, unknown>;
-        const type = String(r.type ?? r.role ?? "");
-        // Count ALL text including synthetic injects / system / tool results when stored as text
-        const content = extractText(r.content);
-        if (!content) continue;
-        if (
-          type === "user" ||
-          type === "human" ||
-          type === "system" ||
-          type === "tool_result" ||
-          type === "tool"
-        ) {
-          contextChars += content.length;
-          continue;
-        }
-        if (type === "assistant" || type === "ai" || type === "model" || type === "reasoning") {
-          turn += 1;
-          const inputTokens = estimateTokensFromText(
-            contextChars > 0 ? "x".repeat(contextChars) : "",
-          );
-          const outputTokens = estimateTokensFromText(content);
-          contextChars += content.length; // stays in context for later turns
-          if (inputTokens + outputTokens <= 0) continue;
-          const rowTs =
-            (typeof r.timestamp === "string" && r.timestamp) ||
-            (typeof r.created_at === "string" && r.created_at) ||
-            (typeof r.ts === "string" && r.ts) ||
-            ts;
-          events.push(
-            applyPricing({
-              id: stableId("grok", sessionId, "turn", String(turn), String(inputTokens), String(outputTokens)),
-              agent: "grok",
-              model,
-              timestamp: rowTs,
-              inputTokens,
-              outputTokens,
-              cacheReadTokens: 0,
-              cacheWriteTokens: 0,
-              workspace,
-              sourcePath: chatPath,
-              estimated: true,
-            }),
-          );
-          emitted += 1;
-        }
-      }
-
-      if (emitted === 0) {
-        let userChars = 0;
-        let assistantChars = 0;
-        for (const row of parseJsonl(chatText)) {
-          if (!row || typeof row !== "object") continue;
-          const r = row as Record<string, unknown>;
-          const type = String(r.type ?? r.role ?? "");
-          const content = extractText(r.content);
-          if (!content) continue;
-          if (type === "user" || type === "human" || type === "system") userChars += content.length;
-          if (type === "assistant" || type === "ai" || type === "model" || type === "reasoning") {
-            assistantChars += content.length;
-          }
-        }
-        if (userChars + assistantChars === 0) continue;
-        const inputTokens = estimateTokensFromText("x".repeat(userChars));
-        const outputTokens = estimateTokensFromText("x".repeat(assistantChars));
-        events.push(
-          applyPricing({
-            id: stableId("grok", sessionId, "est", String(inputTokens), String(outputTokens)),
-            agent: "grok",
-            model,
-            timestamp: ts,
-            inputTokens,
-            outputTokens,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            workspace,
-            sourcePath: chatPath,
-            estimated: true,
-          }),
-        );
+    // Parse several sessions at once — sequential I/O was the main Grok scan cost.
+    const SESSION_CONC = 4;
+    for (let i = 0; i < sessionDirs.length; i += SESSION_CONC) {
+      const chunk = sessionDirs.slice(i, i + SESSION_CONC);
+      const batches = await Promise.all(chunk.map((dir) => parseGrokSession(dir)));
+      for (const batch of batches) {
+        for (const e of batch) events.push(e);
       }
     }
   }
 
+  return events;
+}
+
+async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
+  const events: UsageEvent[] = [];
+  const summaryPath = path.join(dir, "summary.json");
+  let summary: Record<string, unknown> = {};
+  // readText already returns null when missing — skip extra pathExists
+  const summaryText = await readText(summaryPath);
+  if (summaryText) {
+    try {
+      summary = JSON.parse(summaryText) as Record<string, unknown>;
+    } catch {
+      summary = {};
+    }
+  }
+
+  const info = (summary.info ?? {}) as Record<string, unknown>;
+  const model =
+    (typeof summary.current_model_id === "string" && summary.current_model_id) ||
+    (typeof summary.model === "string" && summary.model) ||
+    "grok-4.5";
+  const workspace =
+    (typeof info.cwd === "string" && info.cwd) ||
+    (typeof summary.git_root_dir === "string" && summary.git_root_dir) ||
+    decodeWorkspaceFromSessionPath(dir) ||
+    null;
+  let ts =
+    (typeof summary.updated_at === "string" && summary.updated_at) ||
+    (typeof summary.last_active_at === "string" && summary.last_active_at) ||
+    (typeof summary.created_at === "string" && summary.created_at) ||
+    "";
+  if (!ts) {
+    ts =
+      (await mtimeIso(path.join(dir, "updates.jsonl"))) ||
+      (await mtimeIso(path.join(dir, "chat_history.jsonl"))) ||
+      (await mtimeIso(summaryPath)) ||
+      new Date().toISOString();
+  }
+  const sessionId =
+    (typeof info.id === "string" && info.id) || path.basename(dir);
+
+  // 1) Real usage from updates.jsonl
+  let hadRealUsage = false;
+  const updatesPath = path.join(dir, "updates.jsonl");
+  // parseUpdatesUsage no-ops on missing file via stream error → empty; check first
+  if (await pathExists(updatesPath)) {
+    const fromUpdates = await parseUpdatesUsage(updatesPath, {
+      sessionId,
+      model,
+      workspace,
+      fallbackTs: ts,
+    });
+    if (fromUpdates.length > 0) {
+      events.push(...fromUpdates);
+      hadRealUsage = true;
+    }
+  }
+
+  // 2) Explicit usage on summary
+  const usage = (summary.usage ?? summary.token_usage) as Record<string, unknown> | undefined;
+  if (!hadRealUsage && usage) {
+    const buckets = bucketsFromUsage(usage);
+    if (buckets) {
+      const { routerCost, ...tokenBuckets } = buckets;
+      events.push(
+        applyPricing({
+          id: stableId("grok", sessionId, "usage"),
+          agent: "grok",
+          model,
+          timestamp: ts,
+          ...tokenBuckets,
+          ...(routerCost != null ? { routerCost } : {}),
+          workspace,
+          sourcePath: summaryPath,
+        }),
+      );
+      hadRealUsage = true;
+    }
+  }
+
+  // 3) Chat text estimate only when no real counters
+  if (hadRealUsage) return events;
+
+  const chatPath = path.join(dir, "chat_history.jsonl");
+  const chatText = await readText(chatPath);
+  if (!chatText) return events;
+
+  // Cumulative context chars → each assistant turn prices full history (over-count friendly)
+  let contextChars = 0;
+  let turn = 0;
+  let emitted = 0;
+  for (const row of parseJsonl(chatText)) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const type = String(r.type ?? r.role ?? "");
+    // Count ALL text including synthetic injects / system / tool results when stored as text
+    const content = extractText(r.content);
+    if (!content) continue;
+    if (
+      type === "user" ||
+      type === "human" ||
+      type === "system" ||
+      type === "tool_result" ||
+      type === "tool"
+    ) {
+      contextChars += content.length;
+      continue;
+    }
+    if (type === "assistant" || type === "ai" || type === "model" || type === "reasoning") {
+      turn += 1;
+      const inputTokens = estimateTokensFromChars(contextChars);
+      const outputTokens = estimateTokensFromText(content);
+      contextChars += content.length; // stays in context for later turns
+      if (inputTokens + outputTokens <= 0) continue;
+      const rowTs =
+        (typeof r.timestamp === "string" && r.timestamp) ||
+        (typeof r.created_at === "string" && r.created_at) ||
+        (typeof r.ts === "string" && r.ts) ||
+        ts;
+      events.push(
+        applyPricing({
+          id: stableId("grok", sessionId, "turn", String(turn), String(inputTokens), String(outputTokens)),
+          agent: "grok",
+          model,
+          timestamp: rowTs,
+          inputTokens,
+          outputTokens,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          workspace,
+          sourcePath: chatPath,
+          estimated: true,
+        }),
+      );
+      emitted += 1;
+    }
+  }
+
+  if (emitted === 0) {
+    let userChars = 0;
+    let assistantChars = 0;
+    for (const row of parseJsonl(chatText)) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as Record<string, unknown>;
+      const type = String(r.type ?? r.role ?? "");
+      const content = extractText(r.content);
+      if (!content) continue;
+      if (type === "user" || type === "human" || type === "system") userChars += content.length;
+      if (type === "assistant" || type === "ai" || type === "model" || type === "reasoning") {
+        assistantChars += content.length;
+      }
+    }
+    if (userChars + assistantChars === 0) return events;
+    const inputTokens = estimateTokensFromChars(userChars);
+    const outputTokens = estimateTokensFromChars(assistantChars);
+    events.push(
+      applyPricing({
+        id: stableId("grok", sessionId, "est", String(inputTokens), String(outputTokens)),
+        agent: "grok",
+        model,
+        timestamp: ts,
+        inputTokens,
+        outputTokens,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        workspace,
+        sourcePath: chatPath,
+        estimated: true,
+      }),
+    );
+  }
   return events;
 }
 

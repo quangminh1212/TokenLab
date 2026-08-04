@@ -124,27 +124,30 @@ export async function parseRouterUsage(
       }
     }
 
+    // Read each JSON once — previously daily + history paths re-read the same multi-MB files.
     const usagePath = path.join(root, "usage.json");
-    if (await pathExists(usagePath)) {
-      const daily = await readDailySummaryFromJsonFile(usagePath);
+    const dbJsonPath = path.join(root, "db.json");
+    const usageDataPath = path.join(root, "usageData.json");
+    const usageParsed = await readJsonIfExists(usagePath);
+    const dbJsonParsed = await readJsonIfExists(dbJsonPath);
+    const usageDataParsed = await readJsonIfExists(usageDataPath);
+
+    {
+      const daily = dailyFromUsageJson(usageParsed);
       if (daily) {
         dailyMaps.push({ source: usagePath, daily });
         hasDailyForRoot = true;
       }
     }
-
-    const dbJsonPath = path.join(root, "db.json");
-    if (await pathExists(dbJsonPath)) {
-      const daily = await readDailySummaryFromDbJson(dbJsonPath);
+    {
+      const daily = dailyFromDbJson(dbJsonParsed);
       if (daily) {
         dailyMaps.push({ source: dbJsonPath, daily });
         hasDailyForRoot = true;
       }
     }
-
-    const usageDataPath = path.join(root, "usageData.json");
-    if (await pathExists(usageDataPath)) {
-      const daily = await readDailySummaryFromJsonFile(usageDataPath);
+    {
+      const daily = dailyFromUsageJson(usageDataParsed);
       if (daily) {
         dailyMaps.push({ source: usageDataPath, daily });
         hasDailyForRoot = true;
@@ -180,23 +183,23 @@ export async function parseRouterUsage(
         }
       }
 
-      // Embedded history inside usage/db wrappers
-      if (await pathExists(usagePath)) {
-        const rows = await parseUsageJsonFile(usagePath, agent);
+      // Embedded history from already-parsed JSON (no second disk read)
+      {
+        const rows = historyFromUsageJson(usageParsed, agent, usagePath);
         if (rows.length) {
           pushEvents(rows);
           gotHistory = true;
         }
       }
-      if (await pathExists(dbJsonPath)) {
-        const rows = await parseDbJsonUsage(dbJsonPath, agent);
+      {
+        const rows = historyFromDbJson(dbJsonParsed, agent, dbJsonPath);
         if (rows.length) {
           pushEvents(rows);
           gotHistory = true;
         }
       }
-      if (await pathExists(usageDataPath)) {
-        const rows = await parseUsageJsonFile(usageDataPath, agent);
+      {
+        const rows = historyFromUsageJson(usageDataParsed, agent, usageDataPath);
         if (rows.length) {
           pushEvents(rows);
           gotHistory = true;
@@ -638,64 +641,80 @@ async function parseSqliteDaily(dbPath: string): Promise<Record<string, unknown>
   }
 }
 
-async function parseUsageJsonFile(file: string, agent: AgentId): Promise<UsageEvent[]> {
+/** Single disk read + JSON.parse; null when missing or invalid. */
+async function readJsonIfExists(file: string): Promise<unknown | null> {
+  if (!(await pathExists(file))) return null;
   const text = await readText(file);
-  if (!text) return [];
+  if (!text) return null;
   try {
-    const data = JSON.parse(text) as unknown;
-    const history = extractHistoryArray(data);
-    return historyToEvents(history, agent, file);
+    return JSON.parse(text) as unknown;
   } catch {
-    return [];
+    return null;
   }
+}
+
+function dailyFromUsageJson(data: unknown | null): Record<string, unknown> | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const o = data as Record<string, unknown>;
+  const daily =
+    o.dailySummary ??
+    o.daily ??
+    o.usageDaily ??
+    (o.usageData && typeof o.usageData === "object" && !Array.isArray(o.usageData)
+      ? (o.usageData as Record<string, unknown>).dailySummary
+      : null);
+  if (daily && typeof daily === "object" && !Array.isArray(daily)) {
+    return daily as Record<string, unknown>;
+  }
+  return null;
+}
+
+function dailyFromDbJson(data: unknown | null): Record<string, unknown> | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const o = data as Record<string, unknown>;
+  const usageData = (o.usageData ?? o.usage ?? null) as Record<string, unknown> | null;
+  const daily = usageData?.dailySummary;
+  if (daily && typeof daily === "object" && !Array.isArray(daily)) {
+    return daily as Record<string, unknown>;
+  }
+  return null;
+}
+
+function historyFromUsageJson(
+  data: unknown | null,
+  agent: AgentId,
+  source: string,
+): UsageEvent[] {
+  if (data == null) return [];
+  return historyToEvents(extractHistoryArray(data), agent, source);
+}
+
+function historyFromDbJson(
+  data: unknown | null,
+  agent: AgentId,
+  source: string,
+): UsageEvent[] {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const o = data as Record<string, unknown>;
+  const usageData = (o.usageData ?? o.usage ?? null) as Record<string, unknown> | null;
+  if (!usageData || typeof usageData !== "object") return [];
+  return historyToEvents(extractHistoryArray(usageData), agent, source);
+}
+
+async function parseUsageJsonFile(file: string, agent: AgentId): Promise<UsageEvent[]> {
+  return historyFromUsageJson(await readJsonIfExists(file), agent, file);
 }
 
 async function parseDbJsonUsage(file: string, agent: AgentId): Promise<UsageEvent[]> {
-  const text = await readText(file);
-  if (!text) return [];
-  try {
-    const data = JSON.parse(text) as Record<string, unknown>;
-    const usageData = (data.usageData ?? data.usage ?? null) as Record<string, unknown> | null;
-    if (!usageData || typeof usageData !== "object") return [];
-    const history = extractHistoryArray(usageData);
-    return historyToEvents(history, agent, file);
-  } catch {
-    return [];
-  }
+  return historyFromDbJson(await readJsonIfExists(file), agent, file);
 }
 
 async function readDailySummaryFromDbJson(file: string): Promise<Record<string, unknown> | null> {
-  const text = await readText(file);
-  if (!text) return null;
-  try {
-    const data = JSON.parse(text) as Record<string, unknown>;
-    const usageData = (data.usageData ?? null) as Record<string, unknown> | null;
-    const daily = usageData?.dailySummary;
-    if (daily && typeof daily === "object" && !Array.isArray(daily)) {
-      return daily as Record<string, unknown>;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
+  return dailyFromDbJson(await readJsonIfExists(file));
 }
 
 async function readDailySummaryFromJsonFile(file: string): Promise<Record<string, unknown> | null> {
-  const text = await readText(file);
-  if (!text) return null;
-  try {
-    const data = JSON.parse(text) as unknown;
-    if (data && typeof data === "object" && !Array.isArray(data)) {
-      const o = data as Record<string, unknown>;
-      const daily = o.dailySummary;
-      if (daily && typeof daily === "object" && !Array.isArray(daily)) {
-        return daily as Record<string, unknown>;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return null;
+  return dailyFromUsageJson(await readJsonIfExists(file));
 }
 
 /**

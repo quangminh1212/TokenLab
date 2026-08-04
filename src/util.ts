@@ -159,6 +159,7 @@ export async function walkFiles(
     } catch {
       return;
     }
+    const subdirs: string[] = [];
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -175,9 +176,20 @@ export async function walkFiles(
         ) {
           continue;
         }
-        await walk(full, depth + 1);
+        subdirs.push(full);
       } else if (entry.isFile()) {
         if (!options.match || options.match(entry.name, full)) out.push(full);
+      }
+    }
+    // Parallel subtree walks (bounded) — sequential readdir was slow on large trees;
+    // unbounded Promise.all thrashed the disk when many agents scanned at once.
+    if (subdirs.length === 1) {
+      await walk(subdirs[0]!, depth + 1);
+    } else if (subdirs.length > 1) {
+      const WALK_CONC = 6;
+      for (let i = 0; i < subdirs.length; i += WALK_CONC) {
+        const chunk = subdirs.slice(i, i + WALK_CONC);
+        await Promise.all(chunk.map((d) => walk(d, depth + 1)));
       }
     }
   }
@@ -270,7 +282,17 @@ export function normalizeModelName(model: string | null | undefined): string | n
 export function estimateTokensFromText(text: string): number {
   if (!text) return 0;
   // Rough heuristic: ~4 chars per token for mixed code/English
-  return Math.max(1, Math.ceil(text.length / 4));
+  return estimateTokensFromChars(text.length);
+}
+
+/**
+ * Same ~4 chars/token heuristic without allocating a string.
+ * Prefer this when only a character/byte count is known — never `"x".repeat(n)`.
+ */
+export function estimateTokensFromChars(charCount: number): number {
+  const n = Number(charCount) || 0;
+  if (n <= 0) return 0;
+  return Math.max(1, Math.ceil(n / 4));
 }
 
 /**

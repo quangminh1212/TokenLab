@@ -105,6 +105,16 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
                 ? Buffer.from(row.chat_message).toString("utf8")
                 : null;
         if (!raw) continue;
+        // Cheap reject before JSON.parse — most chat_message rows have no usage.
+        // Case-sensitive indexOf is faster than regex over 100k+ rows.
+        if (
+          !raw.includes("token") &&
+          !raw.includes("Token") &&
+          !raw.includes("usage") &&
+          !raw.includes("Usage")
+        ) {
+          continue;
+        }
 
         let msg: Record<string, unknown>;
         try {

@@ -327,17 +327,32 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
         await scanAll({
           enabled,
-          // Slightly higher concurrency; light agents first inside scanAll.
-          concurrency: full ? 3 : 4,
+          // Light agents first (scanAll); 4-wide balances speed vs disk contention on Windows.
+          concurrency: full ? 4 : 4,
           // Full: no timeout. Periodic: 90s soft cap (prev data kept on miss).
           timeoutMs: full ? 0 : 90_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
             // Long agent parsers can block the event loop; refresh hang watchdog.
             writeHeartbeat();
-            // 2026-08-03: force GC after each agent to keep heap <200MB
-            // (avoids zombie watchdog orphan kills for large scan datasets)
-            try { globalThis.gc?.(); } catch { /* gc not exposed */ }
             agentsDone += 1;
+            // Force GC sparingly — every agent was multi-100ms and dominated scan wall time.
+            // Heavy parsers + every 6th agent is enough to keep heap in check with --expose-gc.
+            if (
+              typeof globalThis.gc === "function" &&
+              (agentsDone % 6 === 0 ||
+                agent === "devin" ||
+                agent === "antigravity" ||
+                agent === "9router" ||
+                agent === "grok" ||
+                agent === "windsurf" ||
+                events.length >= 5_000)
+            ) {
+              try {
+                globalThis.gc();
+              } catch {
+                /* gc not exposed */
+              }
+            }
             const prevForAgent = byAgent.get(agent) ?? [];
             if (error && events.length === 0) {
               // Timeout/crash with nothing parsed — keep previous (never wipe)

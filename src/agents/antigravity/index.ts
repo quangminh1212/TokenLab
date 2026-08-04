@@ -5,6 +5,7 @@ import { readdir, stat } from "node:fs/promises";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import {
+  estimateTokensFromChars,
   estimateTokensFromText,
   num,
   parseJsonl,
@@ -540,12 +541,13 @@ export async function parseAntigravityTranscripts(
   // Parent of brain is IDE data root (…/antigravity) — conversation DBs live next to brain/
   const ideDataRoot = path.dirname(brain);
 
-  for (const file of selected) {
+  async function parseOneTranscript(file: string): Promise<UsageEvent[]> {
+    const out: UsageEvent[] = [];
     // conversation id = first path segment under brain/
     const rel = path.relative(brain, file);
     const convId = rel.split(path.sep)[0] || path.basename(path.dirname(file));
     const text = await readText(file);
-    if (!text) continue;
+    if (!text) return out;
 
     // Resolve specific model: conversation DB → transcript (head+tail) → generic
     const fromTranscript = extractModelFromText(
@@ -643,12 +645,13 @@ export async function parseAntigravityTranscripts(
       if (!outText.trim() && contextChars <= 0) continue;
 
       turn += 1;
-      const inputTokens = estimateTokensFromText(contextChars > 0 ? "x".repeat(contextChars) : "");
+      // Never allocate "x".repeat(contextChars) — multi-MB strings killed scan time.
+      const inputTokens = estimateTokensFromChars(contextChars);
       const outputTokens = estimateTokensFromText(outText || " ");
       contextChars += outText.length;
       if (inputTokens + outputTokens <= 0) continue;
 
-      events.push(
+      out.push(
         applyPricing({
           id: stableId(
             "antigravity",
@@ -673,6 +676,17 @@ export async function parseAntigravityTranscripts(
           requestCount: 1,
         }),
       );
+    }
+    return out;
+  }
+
+  // Parse several transcripts at once (I/O bound); cap concurrency to limit RAM.
+  const TRANSCRIPT_CONCURRENCY = 4;
+  for (let i = 0; i < selected.length; i += TRANSCRIPT_CONCURRENCY) {
+    const chunk = selected.slice(i, i + TRANSCRIPT_CONCURRENCY);
+    const batches = await Promise.all(chunk.map((f) => parseOneTranscript(f)));
+    for (const batch of batches) {
+      for (const e of batch) events.push(e);
     }
   }
 
@@ -737,9 +751,9 @@ export async function parseAntigravityConversationDbs(
 
           if (genCount + stepCount <= 0) continue;
           // Rough: gen_metadata ≈ model I/O envelopes; payloads ≈ tool/user text
-          const inputTokens = estimateTokensFromText("x".repeat(Math.max(payloadBytes, genBytes)));
-          const outputTokens = estimateTokensFromText(
-            "x".repeat(Math.max(genBytes, Math.floor(payloadBytes * 0.25))),
+          const inputTokens = estimateTokensFromChars(Math.max(payloadBytes, genBytes));
+          const outputTokens = estimateTokensFromChars(
+            Math.max(genBytes, Math.floor(payloadBytes * 0.25)),
           );
           if (inputTokens + outputTokens <= 0) continue;
 
