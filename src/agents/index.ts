@@ -13,6 +13,7 @@ import { agent as copilot } from "./copilot/index.js";
 import { agent as pi } from "./pi/index.js";
 import { agent as kimi } from "./kimi/index.js";
 import { agent as qwen } from "./qwen/index.js";
+import { agent as qwencoder } from "./qwencoder/index.js";
 import { agent as droid } from "./droid/index.js";
 import { agent as amp } from "./amp/index.js";
 import { agent as goose } from "./goose/index.js";
@@ -69,6 +70,7 @@ export const AGENTS: AgentModule[] = [
   pi,
   kimi,
   qwen,
+  qwencoder,
   droid,
   amp,
   goose,

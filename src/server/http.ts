@@ -175,6 +175,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     "xlabrouter",
     "litellm",
     "hermes",
+    "qwencoder",
     "cursor",
     "claude-code",
     "codex",

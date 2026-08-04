@@ -35,6 +35,7 @@ export function agentDisplayName(agent: string | null | undefined): string {
     windsurf: "Windsurf",
     grok: "Grok (xAI)",
     hermes: "Hermes Agent",
+    qwencoder: "QwenCoder Cloud",
     copilot: "GitHub Copilot",
     devin: "Devin",
     opencode: "OpenCode",

@@ -12,6 +12,7 @@ export type AgentId =
   | "pi"
   | "kimi"
   | "qwen"
+  | "qwencoder"
   | "droid"
   | "amp"
   | "goose"
