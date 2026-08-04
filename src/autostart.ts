@@ -53,7 +53,29 @@ export interface AutostartResult {
 /** Resolve node + CLI entry used for serve (global npm + local dist/tsx). */
 export function resolveServeInvocation(): { node: string; cli: string; args: string[] } {
   const node = process.execPath;
-  const cli = process.argv[1] ? path.resolve(process.argv[1]) : fileURLToPath(import.meta.url);
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const argv1 = process.argv[1] ? path.resolve(process.argv[1]) : "";
+  // Prefer real CLI entry. Never treat autostart.js (or other helpers) as serve target —
+  // launchSupervisorNow can be imported from tests/evals and argv[1] is then wrong.
+  const candidates = [
+    argv1,
+    path.join(here, "cli.js"),
+    path.join(here, "cli.ts"),
+    path.join(here, "..", "src", "cli.ts"),
+  ].filter(Boolean);
+  let cli = candidates.find((p) => {
+    const base = path.basename(p).toLowerCase();
+    return (base === "cli.js" || base === "cli.ts" || base === "cli.mjs" || base === "tokenlab" || base === "xlab-token") && fs.existsSync(p);
+  });
+  if (!cli) {
+    // Last resort: argv1 only if it exists and is not this module
+    const self = fileURLToPath(import.meta.url);
+    if (argv1 && fs.existsSync(argv1) && path.resolve(argv1) !== path.resolve(self)) {
+      cli = argv1;
+    } else {
+      cli = path.join(here, "cli.js");
+    }
+  }
   log("Resolved serve invocation:", { node, cli });
   return { node, cli, args: [cli, "serve"] };
 }
@@ -253,7 +275,7 @@ async function writeWindowsLauncher(): Promise<string> {
     "Function StartServe()",
     "  StartServe = 0",
     "  On Error Resume Next",
-    "  Dim startup, proc, ret, pid, existing",
+    "  Dim startup, proc, ret, pid, existing, cmdLine",
     "  existing = FindExistingServe()",
     "  If existing > 0 Then",
     "    StartServe = existing",
@@ -265,8 +287,14 @@ async function writeWindowsLauncher(): Promise<string> {
     "  Set startup = wmi.Get(\"Win32_ProcessStartup\").SpawnInstance_()",
     "  startup.ShowWindow = 0",
     "  Set proc = wmi.Get(\"Win32_Process\")",
-    "  ret = proc.Create(\"\"\"\" & nodePath & \"\"\" --expose-gc \"\"\"\" & cliPath & \"\"\" serve\", Null, startup, pid)",
-    "  If ret = 0 And pid > 0 Then StartServe = pid",
+    // Quote form: "node" --expose-gc "cli.js" serve  (3 quotes around each path, not 4 after --expose-gc)
+    "  cmdLine = \"\"\"\" & nodePath & \"\"\" --expose-gc \"\"\" & cliPath & \"\"\" serve\"",
+    "  ret = proc.Create(cmdLine, Null, startup, pid)",
+    "  If ret = 0 And pid > 0 Then",
+    "    StartServe = pid",
+    "  Else",
+    "    LogLine \"Create failed ret=\" & ret & \" pid=\" & pid & \" cmd=\" & cmdLine",
+    "  End If",
     "  On Error Goto 0",
     "End Function",
     "",
