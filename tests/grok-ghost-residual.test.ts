@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { collapseSourcePathRollups, mergeEventsByIdPreferRicher } from "../src/backup.ts";
+import {
+  collapseSourcePathRollups,
+  mergeEventsByIdPreferRicher,
+  preferRicherEvent,
+} from "../src/backup.ts";
 import type { UsageEvent } from "../src/types.ts";
 
 function ev(partial: Partial<UsageEvent> & Pick<UsageEvent, "id" | "agent">): UsageEvent {
@@ -113,4 +117,67 @@ test("prefer-richer: same id residual then real usage keeps real non-estimated",
   assert.equal(merged[0]!.estimated, false);
   assert.equal(merged[0]!.outputTokens, 900);
   assert.equal(merged[0]!.model, "grok-4.5-build");
+});
+
+test("prefer-richer: residual heavier than real still keeps non-estimated real", () => {
+  const id = "heavy-residual-vs-real";
+  const path = "C:/Users/x/.grok/sessions/demo/sess-4/updates.jsonl";
+  // Stream residual peak often >> uncached real input after cache split
+  const residual = ev({
+    id,
+    agent: "grok",
+    model: "grok-4.5",
+    inputTokens: 263_573,
+    outputTokens: 5_000,
+    totalTokens: 268_573,
+    estimated: true,
+    estimatedCost: 9.99,
+    sourcePath: path,
+  });
+  const real = ev({
+    id,
+    agent: "grok",
+    model: "grok-4.5-build",
+    inputTokens: 4_820,
+    outputTokens: 3_415,
+    cacheReadTokens: 1_040_256,
+    totalTokens: 1_048_491,
+    estimated: false,
+    estimatedCost: 0.15,
+    routerCost: 0.12,
+    sourcePath: path,
+  });
+  // Either merge order — real must win despite residual-looking weight when comparing
+  // only uncached+out without cache (simulate weight trap via totalTokens on residual)
+  const residualTrap = {
+    ...residual,
+    // force weight > real by stuffing totalTokens only on residual view
+    totalTokens: 9_999_999,
+    inputTokens: 9_999_999,
+  };
+  const a = preferRicherEvent(residualTrap as UsageEvent, real);
+  const b = preferRicherEvent(real, residualTrap as UsageEvent);
+  assert.equal(a.estimated, false, "real wins when next is real");
+  assert.equal(b.estimated, false, "real wins when prev is real");
+  assert.equal(a.outputTokens, 3_415);
+  assert.equal(b.outputTokens, 3_415);
+  assert.equal(a.model, "grok-4.5-build");
+
+  // collapse must not drop the real row when a heavier est out=0 also exists
+  const ghostOut0 = ev({
+    id: "ghost-other-id",
+    agent: "grok",
+    model: "grok-4.5",
+    inputTokens: 200_000,
+    outputTokens: 0,
+    totalTokens: 200_000,
+    estimated: true,
+    sourcePath: path,
+  });
+  const collapsed = collapseSourcePathRollups([residualTrap as UsageEvent, real, ghostOut0]);
+  const byId = new Map(collapsed.map((e) => [e.id, e]));
+  assert.ok(byId.has(id), "real usage id must survive collapse");
+  assert.equal(byId.get(id)!.estimated, false);
+  assert.equal(byId.get(id)!.outputTokens, 3_415);
+  assert.ok(!byId.has("ghost-other-id"), "ghost out=0 dropped");
 });

@@ -415,11 +415,16 @@ function hasModelName(e: UsageEvent): boolean {
 
 /**
  * Prefer the richer of two same-id rows.
- * Order: more tokens → known model over null → non-estimated → higher cost.
- * Model fill must beat sticky high default-rate cost from null-model rows
- * (otherwise Devin stays as "unknown" forever after the first bad scan).
+ * Order: non-estimated → more tokens → known model over null → higher cost.
+ * Official / real usage must never be replaced by a heavier stream residual
+ * (Grok residual peak totalTokens often >> uncached+out after cache split).
+ * Model fill still beats sticky null-model rows among equal estimate-ness.
  */
 export function preferRicherEvent(prev: UsageEvent, next: UsageEvent): UsageEvent {
+  // Real (non-estimated) always wins over estimated — even if residual has more tokens.
+  if (!next.estimated && prev.estimated) return next;
+  if (next.estimated && !prev.estimated) return prev;
+
   const pt = eventTokenWeight(prev);
   const et = eventTokenWeight(next);
   if (et > pt) return next;
@@ -429,9 +434,6 @@ export function preferRicherEvent(prev: UsageEvent, next: UsageEvent): UsageEven
   const nextModel = hasModelName(next);
   if (nextModel && !prevModel) return next;
   if (prevModel && !nextModel) return prev;
-
-  if (!next.estimated && prev.estimated) return next;
-  if (next.estimated && !prev.estimated) return prev;
 
   if ((Number(next.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0)) return next;
   return prev;
