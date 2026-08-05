@@ -533,10 +533,9 @@
           ${events.map((e) => {
             const model = normalizeModelName(e.model) || agentLabel(e.agent) || '\u2014';
             const agent = e.agent && e.model ? agentLabel(e.agent) : '';
-            const estHint = e.estimated ? ' <span class="recent-est" title="Estimated from local logs">~</span>' : '';
             return `<li class="recent-item">
               <div class="recent-item-main">
-                <span class="recent-model" title="${escapeHtml(model)}${e.estimated ? ' (estimated)' : ''}">${escapeHtml(model)}${estHint}</span>
+                <span class="recent-model" title="${escapeHtml(model)}">${escapeHtml(model)}</span>
                 ${agent ? `<span class="recent-agent">${escapeHtml(agent)}</span>` : ''}
               </div>
               <div class="recent-item-meta">
