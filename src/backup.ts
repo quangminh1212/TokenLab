@@ -497,15 +497,7 @@ export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
   const best = new Map<string, UsageEvent>();
   const out: UsageEvent[] = [];
 
-  // Paths that already have real (non-estimated) Grok usage from updates.jsonl
-  const grokRealPaths = new Set<string>();
-  for (const e of events) {
-    if (!e || e.agent !== "grok" || e.estimated) continue;
-    if (typeof e.sourcePath !== "string" || !e.sourcePath) continue;
-    const sp = e.sourcePath.replace(/\\/g, "/").toLowerCase();
-    if (sp.endsWith("updates.jsonl")) grokRealPaths.add(sp);
-  }
-
+  // Windsurf cascade collapse (unchanged)
   for (const e of events) {
     if (!e || typeof e.sourcePath !== "string" || !e.sourcePath) {
       out.push(e);
@@ -519,21 +511,11 @@ export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
       best.set(key, prev ? preferRicherEvent(prev, e) : e);
       continue;
     }
-    // Drop ghost residual estimates once real usage exists for the same session file.
-    // Keep live residuals when the path has ONLY estimates (in-progress turn).
-    if (
-      e.agent === "grok" &&
-      e.estimated &&
-      sp.endsWith("updates.jsonl") &&
-      grokRealPaths.has(sp) &&
-      (Number(e.outputTokens) || 0) === 0
-    ) {
-      continue;
-    }
     out.push(e);
   }
   for (const e of best.values()) out.push(e);
-  return out;
+  // Grok residual ghosts + pure out=0 stacks (shared with mono high-water)
+  return dropGrokStaleResiduals(out);
 }
 
 /**
@@ -876,18 +858,109 @@ function dedupeMixedDailyRollups(dailies: UsageEvent[]): UsageEvent[] {
 }
 
 /**
+ * Grok stream residuals used unstable ids (peak in hash) → N out=0 rows per
+ * session file. Drop those ghosts when a better row exists for the path, and
+ * collapse pure out=0 stacks to a single richest residual so
+ * enforceMonotonicAgentDays cannot prefer a 21-ghost envelope over 1 good row.
+ */
+export function dropGrokStaleResiduals(events: UsageEvent[]): UsageEvent[] {
+  if (!Array.isArray(events) || events.length === 0) return events || [];
+
+  type PathInfo = {
+    hasReal: boolean;
+    hasEstOutPos: boolean;
+    outZeroEst: UsageEvent[];
+  };
+  const byPath = new Map<string, PathInfo>();
+  const norm = (sp: string) => sp.replace(/\\/g, "/").toLowerCase();
+
+  for (const e of events) {
+    if (!e || e.agent !== "grok") continue;
+    if (typeof e.sourcePath !== "string" || !e.sourcePath) continue;
+    const sp = norm(e.sourcePath);
+    if (!sp.endsWith("updates.jsonl")) continue;
+    let info = byPath.get(sp);
+    if (!info) {
+      info = { hasReal: false, hasEstOutPos: false, outZeroEst: [] };
+      byPath.set(sp, info);
+    }
+    if (!e.estimated) info.hasReal = true;
+    else if ((Number(e.outputTokens) || 0) > 0) info.hasEstOutPos = true;
+    else info.outZeroEst.push(e);
+  }
+
+  const dropIds = new Set<string>();
+  for (const [, info] of byPath) {
+    if (info.outZeroEst.length === 0) continue;
+    if (info.hasReal || info.hasEstOutPos) {
+      // Better row exists for this session file — drop all out=0 residuals
+      for (const g of info.outZeroEst) dropIds.add(g.id);
+      continue;
+    }
+    // Pure out=0 stack (in-progress / old ghosts only): keep single richest
+    if (info.outZeroEst.length > 1) {
+      let best = info.outZeroEst[0]!;
+      let bestW = eventTokenWeight(best);
+      for (let i = 1; i < info.outZeroEst.length; i++) {
+        const g = info.outZeroEst[i]!;
+        const w = eventTokenWeight(g);
+        if (w > bestW) {
+          best = g;
+          bestW = w;
+        }
+      }
+      for (const g of info.outZeroEst) {
+        if (g.id !== best.id) dropIds.add(g.id);
+      }
+    }
+  }
+
+  if (dropIds.size === 0) return events;
+  return events.filter((e) => !e || !dropIds.has(e.id));
+}
+
+/**
  * Per agent×day high-water mark: never replace a richer previous day snapshot
  * with a thinner rescan. Takes the side with more tokens (then cost, then rows).
  * Usage totals can only grow (or stay) across rescans — never silently drop.
+ *
+ * Grok residual ghosts are stripped from both sides first so a stack of out=0
+ * peak residuals cannot beat a single correct residual/usage row on token sum.
  */
 export function enforceMonotonicAgentDays(
   prev: UsageEvent[],
   next: UsageEvent[],
 ): UsageEvent[] {
   if (!prev?.length) return next || [];
-  if (!next?.length) return prev;
+  if (!next?.length) return dropGrokStaleResiduals(prev);
 
-  type Bucket = { events: UsageEvent[]; tok: number; cost: number; req: number };
+  // Strip Grok residual ghosts before envelope compare — otherwise prev with
+  // 21× out=0 stream peaks restores after mergeAgentScanLight already cleaned them.
+  prev = dropGrokStaleResiduals(prev);
+  next = dropGrokStaleResiduals(next);
+
+  /** Envelope weight: ignore Grok estimated out=0 stream residuals (ghost inflation). */
+  const monoTokenWeight = (e: UsageEvent): number => {
+    if (
+      e.agent === "grok" &&
+      e.estimated &&
+      (Number(e.outputTokens) || 0) === 0 &&
+      typeof e.sourcePath === "string" &&
+      e.sourcePath.replace(/\\/g, "/").toLowerCase().endsWith("updates.jsonl")
+    ) {
+      return 0;
+    }
+    return eventTokenWeight(e);
+  };
+
+  type Bucket = {
+    events: UsageEvent[];
+    tok: number;
+    cost: number;
+    req: number;
+    live: number;
+    estOutPos: number;
+  };
   const bucketize = (list: UsageEvent[]): Map<string, Bucket> => {
     const map = new Map<string, Bucket>();
     for (const e of list) {
@@ -897,14 +970,16 @@ export function enforceMonotonicAgentDays(
       const key = /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${agent}|${day}` : `${agent}|__noday__|${e.id}`;
       let b = map.get(key);
       if (!b) {
-        b = { events: [], tok: 0, cost: 0, req: 0 };
+        b = { events: [], tok: 0, cost: 0, req: 0, live: 0, estOutPos: 0 };
         map.set(key, b);
       }
       b.events.push({ ...e, agent });
-      b.tok += eventTokenWeight(e);
+      b.tok += monoTokenWeight(e);
       b.cost += Number(e.estimatedCost) || 0;
       const rc = e.requestCount;
       b.req += typeof rc === "number" && rc > 0 ? Math.floor(rc) : 1;
+      if (!e.estimated) b.live += 1;
+      else if ((Number(e.outputTokens) || 0) > 0) b.estOutPos += 1;
     }
     return map;
   };
@@ -915,14 +990,20 @@ export function enforceMonotonicAgentDays(
   const out: UsageEvent[] = [];
 
   const better = (a: Bucket, b: Bucket): Bucket => {
-    const aLive = a.events.filter((e) => !e.estimated).length;
-    const bLive = b.events.filter((e) => !e.estimated).length;
+    const aLive = a.live;
+    const bLive = b.live;
     const aEst = a.events.length - aLive;
     const bEst = b.events.length - bLive;
+
+    // Prefer day side with real usage / meaningful residual output over pure out=0 ghosts
+    // (ghost peak sum used to win envelope and restore 21× out=0 after light merge cleaned them).
+    if (aLive !== bLive) return aLive > bLive ? a : b;
+    if (a.estOutPos !== b.estOutPos) return a.estOutPos > b.estOutPos ? a : b;
 
     // Usage only grows: higher token envelope always wins (stale noon-stamped
     // daily must not block fresher SpendLogs / request history for the same day).
     // Multi-root inflation is handled in collapseRouterDailyEvents before mono.
+    // Grok residual out=0 weight is 0 so ghost stacks cannot inflate envelope.
     if (a.tok > b.tok * 1.001) return a;
     if (b.tok > a.tok * 1.001) return b;
     if (a.cost > b.cost * 1.001) return a;
@@ -950,7 +1031,8 @@ export function enforceMonotonicAgentDays(
     else if (n) out.push(...n.events);
     else if (p) out.push(...p.events);
   }
-  return out;
+  // Final strip: whichever side won must not reintroduce Grok residual out=0 stacks
+  return dropGrokStaleResiduals(out);
 }
 
 /**

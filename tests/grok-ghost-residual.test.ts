@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   collapseSourcePathRollups,
+  dropGrokStaleResiduals,
+  enforceMonotonicAgentDays,
   mergeEventsByIdPreferRicher,
   preferRicherEvent,
 } from "../src/backup.ts";
@@ -117,6 +119,83 @@ test("prefer-richer: same id residual then real usage keeps real non-estimated",
   assert.equal(merged[0]!.estimated, false);
   assert.equal(merged[0]!.outputTokens, 900);
   assert.equal(merged[0]!.model, "grok-4.5-build");
+});
+
+test("merge+mono+collapse: unstable residual out=0 stack loses to one residual out>0", () => {
+  // Repro skeptic: light merge drops 21 ghosts, then enforceMonotonicAgentDays
+  // preferred prev day envelope (ghost stack) and restored out=0 rows.
+  const path =
+    "C:/Users/x/.grok/sessions/C%3A%5CDev%5CAgentLab/019fcde5-aaaa-bbbb-cccc-ddddeeeeffff/updates.jsonl";
+  const day = "2026-08-04T12:00:00.000Z";
+  const ghosts: UsageEvent[] = [];
+  for (let i = 0; i < 21; i++) {
+    const peak = 50_000 + i * 10_000; // growing stream peaks → huge envelope sum
+    ghosts.push(
+      ev({
+        id: `residual-peak-${peak}`,
+        agent: "grok",
+        model: "grok-4.5",
+        timestamp: day,
+        inputTokens: peak,
+        outputTokens: 0,
+        totalTokens: peak,
+        estimated: true,
+        estimatedCost: peak * 0.00001,
+        sourcePath: path,
+      }),
+    );
+  }
+  const good = ev({
+    id: "stable-tc-prompt-1",
+    agent: "grok",
+    model: "grok-4.5",
+    timestamp: day,
+    inputTokens: 80_000,
+    outputTokens: 37_900,
+    totalTokens: 117_900,
+    estimated: true,
+    estimatedCost: 0.5,
+    sourcePath: path,
+  });
+
+  // Simulate mergeAgentScanLight: fresh authoritative for residual path drops prev est out=0
+  const fresh = [good];
+  const freshPaths = new Set(
+    fresh.map((e) => (e.sourcePath || "").replace(/\\/g, "/").toLowerCase()),
+  );
+  const prevForMerge = ghosts.filter((e) => {
+    if (e.agent !== "grok" || !e.estimated) return true;
+    if ((Number(e.outputTokens) || 0) > 0) return true;
+    const sp = (e.sourcePath || "").replace(/\\/g, "/").toLowerCase();
+    if (sp.endsWith("updates.jsonl") && freshPaths.has(sp)) return false;
+    return true;
+  });
+  const afterLight = mergeEventsByIdPreferRicher(fresh, prevForMerge);
+  assert.equal(afterLight.length, 1);
+  assert.equal(afterLight[0]!.outputTokens, 37_900);
+
+  // Without ghost strip, mono would restore 21 ghosts (higher tok sum). Must not.
+  const afterMono = enforceMonotonicAgentDays(ghosts, afterLight);
+  const afterCollapse = collapseSourcePathRollups(afterMono);
+  const pathRows = afterCollapse.filter(
+    (e) => (e.sourcePath || "").replace(/\\/g, "/").toLowerCase() === path.toLowerCase(),
+  );
+  assert.ok(pathRows.length >= 1, "keep residual for session");
+  assert.ok(
+    pathRows.every((e) => (Number(e.outputTokens) || 0) > 0 || !e.estimated),
+    "no estimated out=0 ghosts remain",
+  );
+  assert.ok(
+    pathRows.some((e) => (Number(e.outputTokens) || 0) >= 37_900),
+    "correct residual out must survive mono",
+  );
+  assert.ok(
+    !pathRows.some((e) => e.estimated && (Number(e.outputTokens) || 0) === 0),
+    "zero-out residual stack must be gone",
+  );
+  // dropGrokStaleResiduals alone collapses pure out=0 stack
+  const onlyGhosts = dropGrokStaleResiduals(ghosts);
+  assert.equal(onlyGhosts.length, 1, "pure out=0 stack collapses to 1");
 });
 
 test("prefer-richer: residual heavier than real still keeps non-estimated real", () => {
