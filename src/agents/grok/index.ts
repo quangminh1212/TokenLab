@@ -357,6 +357,10 @@ async function parseUpdatesUsage(
   let maxStreamCached = 0;
   let maxStreamTs = ctx.fallbackTs;
   const promptPeak = new Map<string, PromptPeak>();
+  /** Prompts already billed with real turn_completed.usage — never residual again. */
+  const completedWithUsage = new Set<string>();
+  /** Prompts already emitted (usage or usage-less tc) — residual must not re-emit same id. */
+  const emittedPromptIds = new Set<string>();
 
   const stream = createReadStream(updatesPath, { encoding: "utf8" });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
@@ -364,6 +368,10 @@ async function parseUpdatesUsage(
   try {
     for await (const line of rl) {
       notePromptPeak(line, promptPeak);
+      // Stream meta after turn_completed can re-add peaks for completed prompts
+      // (same promptId on later tool/meta lines). Never residual those again.
+      for (const id of completedWithUsage) promptPeak.delete(id);
+      for (const id of emittedPromptIds) promptPeak.delete(id);
 
       // Session-level stream floor (in-progress turns)
       if (!line.includes('"sessionUpdate":"turn_completed"') && !line.includes('"sessionUpdate": "turn_completed"')) {
@@ -449,6 +457,8 @@ async function parseUpdatesUsage(
           }),
         );
         promptPeak.delete(promptId);
+        completedWithUsage.add(promptId);
+        emittedPromptIds.add(promptId);
         continue;
       }
 
@@ -476,17 +486,18 @@ async function parseUpdatesUsage(
         }),
       );
       promptPeak.delete(promptId);
+      emittedPromptIds.add(promptId);
     }
   } finally {
     rl.close();
     stream.destroy();
   }
 
-  // Residual in-progress prompts: still streaming after prior completed turns.
-  // Stable id per prompt (no peak in hash) so rescan updates in place and
-  // turn_completed.usage with the same id replaces the residual (no ghosts).
+  // Residual in-progress prompts only — never re-bill completed promptIds.
+  // Stable id per prompt so rescan updates in place; real usage wins via preferRicher.
   if (promptPeak.size > 0) {
     for (const [promptId, peak] of promptPeak) {
+      if (completedWithUsage.has(promptId) || emittedPromptIds.has(promptId)) continue;
       if (peak.total <= 0 && peak.cached <= 0 && peak.outChars <= 0) continue;
       const cacheRead = Math.min(peak.cached, peak.total || peak.cached);
       const uncached = Math.max(0, (peak.total || cacheRead) - cacheRead);

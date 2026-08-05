@@ -225,6 +225,78 @@ test("parseGrok residual uses stable tc id and estimates output from thought chu
   }
 });
 
+test("parseGrok does not residual a prompt after real turn_completed.usage", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-nore-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-nore");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-nore", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.5",
+        updated_at: "2026-08-05T12:00:00.000Z",
+      }),
+    );
+    const promptId = "prompt-done-then-meta";
+    const thought = JSON.stringify({
+      timestamp: 1785902000,
+      method: "session/update",
+      params: {
+        sessionId: "sess-nore",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "thinking " + "x".repeat(100) },
+        },
+        _meta: { totalTokens: 40_000, promptId },
+      },
+    });
+    const done = JSON.stringify({
+      timestamp: 1785902001,
+      method: "session/update",
+      params: {
+        sessionId: "sess-nore",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: promptId,
+          stop_reason: "end_turn",
+          usage: {
+            inputTokens: 50_000,
+            outputTokens: 1_200,
+            totalTokens: 51_200,
+            cachedReadTokens: 30_000,
+            modelUsage: { "grok-4.5-build": { inputTokens: 50_000, outputTokens: 1_200 } },
+          },
+        },
+      },
+    });
+    // Later stream lines re-mention same promptId (tool meta after completion) —
+    // must NOT re-emit residual with same turnEventId.
+    const afterMeta = JSON.stringify({
+      timestamp: 1785902002,
+      method: "session/update",
+      params: {
+        sessionId: "sess-nore",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-late",
+          status: "completed",
+          content: [{ type: "content", content: { type: "text", text: "late" } }],
+        },
+        _meta: { totalTokens: 90_000, promptId },
+      },
+    });
+    await writeFile(path.join(sessionDir, "updates.jsonl"), `${thought}\n${done}\n${afterMeta}\n`);
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1, "only one event for completed prompt");
+    assert.equal(events[0]!.estimated, false);
+    assert.equal(events[0]!.outputTokens, 1_200);
+    assert.equal(events[0]!.inputTokens, 20_000); // 50k - 30k cache
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("parseGrok estimates residual output from tool_call rawInput", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-tool-"));
   try {
