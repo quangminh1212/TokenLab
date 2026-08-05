@@ -151,8 +151,131 @@ test("parseGrok bills turn_completed without usage via prompt peak totalTokens",
     // peak total 50k with 40k cache → uncached 10k + cache 40k
     assert.equal(events[0]!.inputTokens, 10_000);
     assert.equal(events[0]!.cacheReadTokens, 40_000);
-    assert.equal(events[0]!.outputTokens, 0);
-    assert.equal(events[0]!.totalTokens, 50_000);
+    // output estimated from streamed message chunk text ("hi")
+    assert.ok((events[0]!.outputTokens ?? 0) > 0);
+    assert.ok((events[0]!.totalTokens ?? 0) >= 50_000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGrok residual uses stable tc id and estimates output from thought chunks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-res-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-res");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-res", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.5",
+        updated_at: "2026-08-05T10:00:00.000Z",
+      }),
+    );
+    const promptId = "prompt-in-progress";
+    const longThought = "x".repeat(400);
+    const thought = JSON.stringify({
+      timestamp: 1785900000,
+      method: "session/update",
+      params: {
+        sessionId: "sess-res",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: longThought },
+        },
+        _meta: { totalTokens: 23_100, promptId },
+      },
+    });
+    // No turn_completed yet — residual only
+    await writeFile(path.join(sessionDir, "updates.jsonl"), `${thought}\n`);
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.estimated, true);
+    assert.equal(events[0]!.inputTokens, 23_100);
+    assert.ok((events[0]!.outputTokens ?? 0) > 50, "should estimate output from thought text");
+    // Same id family as turn_completed so later usage replaces residual
+    const withUsage = JSON.stringify({
+      timestamp: 1785900001,
+      method: "session/update",
+      params: {
+        sessionId: "sess-res",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: promptId,
+          stop_reason: "end_turn",
+          usage: {
+            inputTokens: 25_000,
+            outputTokens: 900,
+            totalTokens: 25_900,
+            cachedReadTokens: 0,
+            modelUsage: { "grok-4.5-build": { inputTokens: 25_000, outputTokens: 900 } },
+          },
+        },
+      },
+    });
+    await writeFile(path.join(sessionDir, "updates.jsonl"), `${thought}\n${withUsage}\n`);
+    const after = await parseGrok([root]);
+    assert.equal(after.length, 1);
+    assert.equal(after[0]!.estimated, false);
+    assert.equal(after[0]!.outputTokens, 900);
+    assert.equal(after[0]!.id, events[0]!.id, "residual and real usage share stable id");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGrok estimates residual output from tool_call rawInput", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-tool-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-tool");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-tool", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.5",
+        updated_at: "2026-08-05T11:00:00.000Z",
+      }),
+    );
+    const promptId = "prompt-tools";
+    const tool = JSON.stringify({
+      timestamp: 1785901000,
+      method: "session/update",
+      params: {
+        sessionId: "sess-tool",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-1",
+          title: "run_terminal_command",
+          rawInput: { command: "echo " + "y".repeat(200) },
+        },
+        _meta: { totalTokens: 12_000, promptId },
+      },
+    });
+    // tool results must NOT inflate output
+    const result = JSON.stringify({
+      timestamp: 1785901001,
+      method: "session/update",
+      params: {
+        sessionId: "sess-tool",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-1",
+          status: "completed",
+          content: [{ type: "content", content: { type: "text", text: "z".repeat(5000) } }],
+        },
+        _meta: { totalTokens: 18_000, promptId },
+      },
+    });
+    await writeFile(path.join(sessionDir, "updates.jsonl"), `${tool}\n${result}\n`);
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.estimated, true);
+    assert.equal(events[0]!.inputTokens, 18_000);
+    assert.ok((events[0]!.outputTokens ?? 0) > 20, "tool_call rawInput counts as model output");
+    // tool result text is large but must not dominate output estimate
+    assert.ok((events[0]!.outputTokens ?? 0) < 500, "tool_call_update text must not count as output");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

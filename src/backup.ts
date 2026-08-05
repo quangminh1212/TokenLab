@@ -484,11 +484,25 @@ export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEven
  * Windsurf progressive rescans mint new ids for the same .pb when tokens grow.
  * Keep the richest row per file. Do NOT collapse Grok by timestamp — turns can
  * share a second and must all be kept (prefer overcount over missing turns).
+ *
+ * Also drops stale Grok stream residuals: older scans minted unique residual ids
+ * (peak baked into hash) with output=0. Once real turn_completed.usage exists for
+ * that updates.jsonl, those ghosts double-count context as input and pollute
+ * RECENT REQUESTS with `model ~ in/0`.
  */
 export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
   if (!Array.isArray(events) || events.length === 0) return events || [];
   const best = new Map<string, UsageEvent>();
   const out: UsageEvent[] = [];
+
+  // Paths that already have real (non-estimated) Grok usage from updates.jsonl
+  const grokRealPaths = new Set<string>();
+  for (const e of events) {
+    if (!e || e.agent !== "grok" || e.estimated) continue;
+    if (typeof e.sourcePath !== "string" || !e.sourcePath) continue;
+    const sp = e.sourcePath.replace(/\\/g, "/").toLowerCase();
+    if (sp.endsWith("updates.jsonl")) grokRealPaths.add(sp);
+  }
 
   for (const e of events) {
     if (!e || typeof e.sourcePath !== "string" || !e.sourcePath) {
@@ -501,6 +515,17 @@ export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
       const key = `ws|${sp}`;
       const prev = best.get(key);
       best.set(key, prev ? preferRicherEvent(prev, e) : e);
+      continue;
+    }
+    // Drop ghost residual estimates once real usage exists for the same session file.
+    // Keep live residuals when the path has ONLY estimates (in-progress turn).
+    if (
+      e.agent === "grok" &&
+      e.estimated &&
+      sp.endsWith("updates.jsonl") &&
+      grokRealPaths.has(sp) &&
+      (Number(e.outputTokens) || 0) === 0
+    ) {
       continue;
     }
     out.push(e);

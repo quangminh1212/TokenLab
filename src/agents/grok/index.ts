@@ -253,37 +253,92 @@ async function mtimeIso(file: string): Promise<string | null> {
   }
 }
 
-/** Peak stream totals + cache reads per prompt_id (for turns without turn_completed.usage). */
-type PromptPeak = { total: number; cached: number };
+/** Peak stream totals + cache reads + output-ish chars per prompt_id. */
+type PromptPeak = { total: number; cached: number; outChars: number };
 
 function notePromptPeak(line: string, promptPeak: Map<string, PromptPeak>): void {
-  if (!line.includes("totalTokens") && !line.includes("cachedReadTokens")) return;
   const pm = line.match(/"promptId"\s*:\s*"([^"]+)"/) ?? line.match(/"prompt_id"\s*:\s*"([^"]+)"/);
   const promptId = pm?.[1];
   if (!promptId) return;
-  const prev = promptPeak.get(promptId) ?? { total: 0, cached: 0 };
+
+  const prev = promptPeak.get(promptId) ?? { total: 0, cached: 0, outChars: 0 };
   let changed = false;
-  const tm = line.match(/"totalTokens"\s*:\s*(\d+)/);
-  if (tm) {
-    const tt = Number(tm[1]);
-    if (Number.isFinite(tt) && tt > prev.total) {
-      prev.total = tt;
+
+  if (line.includes("totalTokens") || line.includes("cachedReadTokens")) {
+    const tm = line.match(/"totalTokens"\s*:\s*(\d+)/);
+    if (tm) {
+      const tt = Number(tm[1]);
+      if (Number.isFinite(tt) && tt > prev.total) {
+        prev.total = tt;
+        changed = true;
+      }
+    }
+    // Stream meta sometimes reports cache hits before turn_completed.usage
+    const cm =
+      line.match(/"cachedReadTokens"\s*:\s*(\d+)/) ??
+      line.match(/"cached_tokens"\s*:\s*(\d+)/) ??
+      line.match(/"cache_read_tokens"\s*:\s*(\d+)/);
+    if (cm) {
+      const cr = Number(cm[1]);
+      if (Number.isFinite(cr) && cr > prev.cached) {
+        prev.cached = cr;
+        changed = true;
+      }
+    }
+  }
+
+  // In-progress turns: estimate output from streamed model text (no usage yet).
+  // Count agent thought/message + tool_call args (model-generated). Never tool results.
+  const isThoughtOrMsg =
+    line.includes("agent_thought_chunk") ||
+    line.includes("agent_message_chunk") ||
+    line.includes("AgentThoughtChunk") ||
+    line.includes("AgentMessageChunk");
+  // Exact tool_call only — not tool_call_update (tool results = input context)
+  const isToolCall = /"sessionUpdate"\s*:\s*"tool_call"(?![_a-zA-Z])/.test(line);
+  if (isThoughtOrMsg || isToolCall) {
+    let add = 0;
+    if (isThoughtOrMsg) {
+      for (const m of line.matchAll(/"text"\s*:\s*"((?:\\.|[^"\\])*)"/g)) {
+        add += (m[1] ?? "").length;
+      }
+    }
+    if (isToolCall) {
+      try {
+        const row = JSON.parse(line) as {
+          params?: { update?: { rawInput?: unknown; title?: unknown } };
+        };
+        const u = row.params?.update;
+        if (u?.rawInput != null) {
+          add +=
+            typeof u.rawInput === "string"
+              ? u.rawInput.length
+              : JSON.stringify(u.rawInput).length;
+        } else if (typeof u?.title === "string") {
+          add += u.title.length;
+        }
+      } catch {
+        /* ignore bad line */
+      }
+    }
+    if (add > 0) {
+      prev.outChars += add;
       changed = true;
     }
   }
-  // Stream meta sometimes reports cache hits before turn_completed.usage
-  const cm =
-    line.match(/"cachedReadTokens"\s*:\s*(\d+)/) ??
-    line.match(/"cached_tokens"\s*:\s*(\d+)/) ??
-    line.match(/"cache_read_tokens"\s*:\s*(\d+)/);
-  if (cm) {
-    const cr = Number(cm[1]);
-    if (Number.isFinite(cr) && cr > prev.cached) {
-      prev.cached = cr;
-      changed = true;
-    }
-  }
+
   if (changed) promptPeak.set(promptId, prev);
+}
+
+/** Stable per-prompt id so residual → turn_completed.usage replaces in place (no ghost rows). */
+function turnEventId(sessionId: string, promptId: string): string {
+  return stableId("grok", sessionId, "tc", promptId);
+}
+
+function peakToOutputTokens(peak: PromptPeak): number {
+  if (peak.outChars <= 0) return 0;
+  // Same char heuristic as chat estimate — prefer slight over-count vs 0.
+  return estimateTokensFromChars(peak.outChars);
 }
 
 /** Stream updates.jsonl and emit one event per turn_completed with usage. */
@@ -311,7 +366,7 @@ async function parseUpdatesUsage(
       notePromptPeak(line, promptPeak);
 
       // Session-level stream floor (in-progress turns)
-      if (!line.includes("turn_completed")) {
+      if (!line.includes('"sessionUpdate":"turn_completed"') && !line.includes('"sessionUpdate": "turn_completed"')) {
         if (line.includes("totalTokens")) {
           const m = line.match(/"totalTokens"\s*:\s*(\d+)/);
           if (m) {
@@ -382,7 +437,7 @@ async function parseUpdatesUsage(
         const { routerCost, ...tokenBuckets } = buckets;
         events.push(
           applyPricing({
-            id: stableId("grok", ctx.sessionId, "tc", promptId),
+            id: turnEventId(ctx.sessionId, promptId),
             agent: "grok",
             model,
             timestamp: ts,
@@ -398,19 +453,21 @@ async function parseUpdatesUsage(
       }
 
       // Newer Grok CLI: turn_completed without usage — bill peak stream tokens + cache
-      const peak = promptPeak.get(promptId) ?? { total: 0, cached: 0 };
-      if (peak.total <= 0 && peak.cached <= 0) continue;
+      const peak = promptPeak.get(promptId) ?? { total: 0, cached: 0, outChars: 0 };
+      if (peak.total <= 0 && peak.cached <= 0 && peak.outChars <= 0) continue;
       const cacheRead = Math.min(peak.cached, peak.total || peak.cached);
       const uncached = Math.max(0, (peak.total || cacheRead) - cacheRead);
+      const outEst = peakToOutputTokens(peak);
 
       events.push(
         applyPricing({
-          id: stableId("grok", ctx.sessionId, "tc", promptId),
+          // Same id family as real usage so a later usage row replaces this estimate.
+          id: turnEventId(ctx.sessionId, promptId),
           agent: "grok",
           model: ctx.model,
           timestamp: ts,
           inputTokens: uncached,
-          outputTokens: 0,
+          outputTokens: outEst,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: 0,
           workspace: ctx.workspace,
@@ -426,20 +483,22 @@ async function parseUpdatesUsage(
   }
 
   // Residual in-progress prompts: still streaming after prior completed turns.
-  // Bill each remaining prompt peak (not just session-level max) so live usage is not missing.
+  // Stable id per prompt (no peak in hash) so rescan updates in place and
+  // turn_completed.usage with the same id replaces the residual (no ghosts).
   if (promptPeak.size > 0) {
     for (const [promptId, peak] of promptPeak) {
-      if (peak.total <= 0 && peak.cached <= 0) continue;
+      if (peak.total <= 0 && peak.cached <= 0 && peak.outChars <= 0) continue;
       const cacheRead = Math.min(peak.cached, peak.total || peak.cached);
       const uncached = Math.max(0, (peak.total || cacheRead) - cacheRead);
+      const outEst = peakToOutputTokens(peak);
       events.push(
         applyPricing({
-          id: stableId("grok", ctx.sessionId, "residual", promptId, String(peak.total), String(cacheRead)),
+          id: turnEventId(ctx.sessionId, promptId),
           agent: "grok",
           model: ctx.model,
           timestamp: maxStreamTs,
           inputTokens: uncached,
-          outputTokens: 0,
+          outputTokens: outEst,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: 0,
           workspace: ctx.workspace,
@@ -449,12 +508,12 @@ async function parseUpdatesUsage(
       );
     }
   } else if (events.length === 0 && (maxStreamTokens > 0 || maxStreamCached > 0)) {
-    // No prompt ids in stream meta — session-level floor only
+    // No prompt ids in stream meta — session-level floor only (stable id, no peak)
     const cacheRead = Math.min(maxStreamCached, maxStreamTokens || maxStreamCached);
     const uncached = Math.max(0, (maxStreamTokens || cacheRead) - cacheRead);
     events.push(
       applyPricing({
-        id: stableId("grok", ctx.sessionId, "stream-floor", String(maxStreamTokens), String(cacheRead)),
+        id: stableId("grok", ctx.sessionId, "stream-floor"),
         agent: "grok",
         model: ctx.model,
         timestamp: maxStreamTs,

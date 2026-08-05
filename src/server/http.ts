@@ -215,10 +215,32 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if ((routerAgent || antigravityAgent) && fresh.length >= 5) {
       return fresh;
     }
+    // Grok: drop prev estimated residual ghosts for session files re-scanned this pass.
+    // Old residual ids baked peak totals into the hash so they never got replaced when
+    // turn_completed.usage arrived (same path, different id → double-count + out=0 UI).
+    let prevForMerge = prev;
+    if (fresh[0]?.agent === "grok") {
+      const freshPaths = new Set<string>();
+      for (const e of fresh) {
+        if (typeof e.sourcePath === "string" && e.sourcePath) {
+          freshPaths.add(e.sourcePath.replace(/\\/g, "/").toLowerCase());
+        }
+      }
+      prevForMerge = prev.filter((e) => {
+        if (e.agent !== "grok" || !e.estimated) return true;
+        if ((Number(e.outputTokens) || 0) > 0) return true;
+        const sp =
+          typeof e.sourcePath === "string" ? e.sourcePath.replace(/\\/g, "/").toLowerCase() : "";
+        if (!sp || !sp.endsWith("updates.jsonl")) return true;
+        // Path re-scanned → fresh is authoritative for residuals on that file
+        if (freshPaths.has(sp)) return false;
+        return true;
+      });
+    }
     // Union by id; keep higher token/cost row when same id reappears.
     // Also keeps prev-only rows (already-scanned history) so we only *add*
     // newly seen ids from this pass rather than re-baselining the agent.
-    return mergeEventsByIdPreferRicher(fresh, prev);
+    return mergeEventsByIdPreferRicher(fresh, prevForMerge);
   }
 
   /**
