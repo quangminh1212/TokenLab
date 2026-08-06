@@ -2,7 +2,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { aggregate, computeActiveUsageRpm, costReport } from "../aggregate.js";
+import {
+  aggregate,
+  computeActiveUsageRpm,
+  costReport,
+  precomputeDashboardPeriods,
+  type DashPeriodKey,
+  type PrecomputedPeriodStats,
+} from "../aggregate.js";
 import { buildRecentLiveEvents, computeDashboardLiveRate } from "../live-rate.js";
 import { AGENTS, detectAgents, scanAll } from "../agents/index.js";
 import {
@@ -36,7 +43,9 @@ import type { AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent } from "../ty
 import {
   filterByPeriod,
   filterByPeriodSorted,
+  filterByPeriodSortedDetailed,
   normalizeModelName,
+  parseSince,
   pathExists,
   sortEventsByTime,
   startOfDayInTimeZone,
@@ -82,6 +91,82 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     string,
     { stats: ReturnType<typeof aggregate>; usageRpm: ReturnType<typeof computeActiveUsageRpm> }
   >();
+  /** Live RPM memo — shared across double /api/stats fetches on period switch. */
+  let liveRateMemo: {
+    at: number;
+    scanRevision: number;
+    windowMinutes: number;
+    value: Awaited<ReturnType<typeof computeDashboardLiveRate>>;
+  } | null = null;
+  const LIVE_RATE_TTL_MS = 2_500;
+  /** Single-pass period stats for Today/24h/7D/30D/All — period switch = Map get. */
+  let dashPeriodStats: Map<DashPeriodKey, PrecomputedPeriodStats> | null = null;
+  let dashPeriodStatsBuilding = false;
+
+  function dashPeriodKey(since: string | null, until: string | null): DashPeriodKey | null {
+    if (until) return null;
+    if (!since) return "all";
+    const s = String(since).trim().toLowerCase();
+    if (s === "today" || s === "24h" || s === "7d" || s === "30d") return s;
+    return null;
+  }
+
+  function rebuildDashPeriodStats(): void {
+    if (cache.length === 0) {
+      dashPeriodStats = null;
+      return;
+    }
+    if (dashPeriodStatsBuilding) return;
+    dashPeriodStatsBuilding = true;
+    try {
+      writeHeartbeat();
+      ensureCacheSorted();
+      const tz = configuredTimeZone();
+      const now = Date.now();
+      const bounds: Record<DashPeriodKey, number | null> = {
+        today: parseSince("today", tz)?.getTime() ?? null,
+        "24h": parseSince("24h", tz)?.getTime() ?? null,
+        "7d": parseSince("7d", tz)?.getTime() ?? null,
+        "30d": parseSince("30d", tz)?.getTime() ?? null,
+        all: null,
+      };
+      dashPeriodStats = precomputeDashboardPeriods(cache, cacheTs || [], bounds, now);
+      writeHeartbeat();
+      console.log(
+        `[tokenlab] period index ready: ${cache.length} events → ${dashPeriodStats.size} periods`,
+      );
+    } catch (err) {
+      console.warn(
+        "[tokenlab] period index rebuild failed:",
+        err instanceof Error ? err.message : err,
+      );
+      dashPeriodStats = null;
+    } finally {
+      dashPeriodStatsBuilding = false;
+    }
+  }
+
+  async function getLiveRateCached(windowMinutes = 3): Promise<
+    Awaited<ReturnType<typeof computeDashboardLiveRate>>
+  > {
+    const mins = Math.max(1, Math.min(60, Math.floor(windowMinutes) || 3));
+    const now = Date.now();
+    if (
+      liveRateMemo &&
+      liveRateMemo.scanRevision === scanRevision &&
+      liveRateMemo.windowMinutes === mins &&
+      now - liveRateMemo.at < LIVE_RATE_TTL_MS
+    ) {
+      return liveRateMemo.value;
+    }
+    writeHeartbeat();
+    const value = await computeDashboardLiveRate(cache, mins, now, {
+      timestampsMs: cacheTs,
+    });
+    writeHeartbeat();
+    liveRateMemo = { at: now, scanRevision, windowMinutes: mins, value };
+    return value;
+  }
 
   /**
    * Replace in-memory event cache. When `sorted` is false (mid-scan progressive),
@@ -105,6 +190,19 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       cacheTs = null;
     }
     periodStatsMemo.clear();
+    liveRateMemo = null;
+    dashPeriodStats = null;
+    // After full sorted set (boot / scan finalize): rebuild period index in background
+    // so the next Today→30D click is a Map lookup, not a multi-second rescan.
+    if (opts.sorted && events.length > 0) {
+      setImmediate(() => {
+        try {
+          rebuildDashPeriodStats();
+        } catch {
+          /* logged inside */
+        }
+      });
+    }
   }
 
   function ensureCacheSorted(): { events: UsageEvent[]; timestampsMs: number[] } {
@@ -118,17 +216,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   }
 
   function eventsInPeriod(since: string | null, until: string | null): UsageEvent[] {
+    return eventsInPeriodDetailed(since, until).events;
+  }
+
+  function eventsInPeriodDetailed(
+    since: string | null,
+    until: string | null,
+  ): { events: UsageEvent[]; timestampsMs: number[] | null } {
     // While scanning, skip sort (progressive rebuilds are frequent); linear filter is fine.
     if (scanning || !cacheTs || cacheTs.length !== cache.length) {
-      return filterByPeriod(cache, since, until, configuredTimeZone());
+      return {
+        events: filterByPeriod(cache, since, until, configuredTimeZone()),
+        timestampsMs: null,
+      };
     }
-    return filterByPeriodSorted(cache, cacheTs, since, until, configuredTimeZone());
+    return filterByPeriodSortedDetailed(cache, cacheTs, since, until, configuredTimeZone());
   }
 
   /** Reprice keeps timestamps/order — retain sort index, only invalidate period memo. */
   function repriceCache(forceTable: boolean): void {
     cache = repriceEvents(cache, { forceTable });
     periodStatsMemo.clear();
+    liveRateMemo = null;
   }
 
   /** Events from other machines / restore — survive local rescan (merged by id). */
@@ -689,33 +798,58 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const until = url.searchParams.get("until");
       const groupBy = (url.searchParams.get("groupBy") || "agent") as GroupBy;
       const sort = (url.searchParams.get("sort") || "cost") as "tokens" | "cost";
+      // live=0: skip hot-mirror RPM (chart series second fetch) — period switch speed win
+      const wantLive = url.searchParams.get("live") !== "0";
       if (!["agent", "model", "day", "hour"].includes(groupBy)) {
         return json(res, 400, {
           error: { code: "INVALID_QUERY", message: "groupBy must be one of: agent, model, day, hour" },
         });
       }
+      writeHeartbeat();
       // Memo period aggregates across dashboard double-fetch (agent + day series).
       const memoKey = `${scanRevision}|${pricingRevision}|${since || ""}|${until || ""}|${groupBy}|${sort}`;
       let periodPart = periodStatsMemo.get(memoKey);
       if (!periodPart) {
-        if (!scanning) ensureCacheSorted();
-        const events = eventsInPeriod(since, until);
-        const stats = aggregate(events, groupBy, sort, since, until);
-        // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
-        const usageRpm = computeActiveUsageRpm(events);
-        periodPart = { stats, usageRpm };
+        // Fast path: precomputed Today/24h/7D/30D/All index (one pass at scan end)
+        const pk = dashPeriodKey(since, until);
+        if (pk && !dashPeriodStats && !scanning && cache.length > 0) {
+          rebuildDashPeriodStats();
+        }
+        const pre = pk && dashPeriodStats ? dashPeriodStats.get(pk) : undefined;
+        if (pre?.byGroup?.[groupBy]) {
+          const base = pre.byGroup[groupBy];
+          const groups = base.groups.slice().sort((a, b) =>
+            sort === "cost" ? b.estimatedCost - a.estimatedCost : b.totalTokens - a.totalTokens,
+          );
+          periodPart = {
+            stats: { ...base, groups, period: { since, until } },
+            usageRpm: pre.usageRpm,
+          };
+        } else {
+          if (!scanning) ensureCacheSorted();
+          const { events, timestampsMs } = eventsInPeriodDetailed(since, until);
+          writeHeartbeat();
+          const stats = aggregate(events, groupBy, sort, since, until, timestampsMs);
+          // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
+          const usageRpm = computeActiveUsageRpm(events);
+          periodPart = { stats, usageRpm };
+        }
         // Cap memo size (period × groupBy combos are small; defend against abuse)
         if (periodStatsMemo.size > 64) periodStatsMemo.clear();
         periodStatsMemo.set(memoKey, periodPart);
       }
-      // Live RPM: cache live rows + hot 9router/RouterLab history tails (not period filter)
-      const live = await computeDashboardLiveRate(cache, 3);
+      writeHeartbeat();
+      if (!wantLive) {
+        return json(res, 200, { ...periodPart.stats, usageRpm: periodPart.usageRpm });
+      }
+      // Live RPM: short TTL memo + only recent cache rows (not full 50k history)
+      const live = await getLiveRateCached(3);
       return json(res, 200, { ...periodPart.stats, usageRpm: periodPart.usageRpm, live });
     }
 
     if (req.method === "GET" && pathname === "/api/rpm") {
       const mins = Math.min(30, Math.max(1, Number(url.searchParams.get("minutes") || 3)));
-      return json(res, 200, await computeDashboardLiveRate(cache, mins));
+      return json(res, 200, await getLiveRateCached(mins));
     }
 
     if (req.method === "GET" && pathname === "/api/cost") {
@@ -735,17 +869,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // only real per-call rows (no 298M-token estimated day blobs).
       const liveOnly = url.searchParams.get("live") !== "0";
       if (liveOnly) {
-        const liveList = await buildRecentLiveEvents(cache, {
-          limit: Math.min(2000, Math.max(limit * 4, 100)),
+        writeHeartbeat();
+        if (!scanning) ensureCacheSorted();
+        const sinceDate = parseSince(since, configuredTimeZone());
+        const untilDate = until ? new Date(until) : null;
+        const sinceMs = sinceDate ? sinceDate.getTime() : null;
+        const untilMs =
+          untilDate && !Number.isNaN(untilDate.getTime()) ? untilDate.getTime() : null;
+        // Server already filters by sinceMs — no second full-list filterByPeriod needed
+        let list = await buildRecentLiveEvents(cache, {
+          limit: Math.min(200, Math.max(limit, 40)),
           agent: agent || null,
           nowMs: Date.now(),
+          sinceMs,
+          untilMs,
+          timestampsMs: cacheTs,
         });
-        let list = filterByPeriod(liveList, since, until, configuredTimeZone());
+        writeHeartbeat();
         if (agent) list = list.filter((e) => e.agent === agent);
-        list = list
-          .slice()
-          .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
-          .slice(0, limit);
+        list = list.slice(0, limit);
         return json(res, 200, { events: list, count: list.length, liveOnly: true });
       }
       if (!scanning) ensureCacheSorted();

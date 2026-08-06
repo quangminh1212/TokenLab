@@ -18,22 +18,15 @@ function emptyTotals(currency = "USD"): TokenTotals {
   };
 }
 
-function add(t: TokenTotals, e: UsageEvent): void {
-  t.inputTokens += e.inputTokens;
-  t.outputTokens += e.outputTokens;
-  t.cacheReadTokens += e.cacheReadTokens;
-  t.cacheWriteTokens += e.cacheWriteTokens;
-  t.totalTokens += e.totalTokens;
+type CostParts = { inputCost: number; cacheCost: number; outputCost: number };
+
+function addWithParts(t: TokenTotals, e: UsageEvent, parts: CostParts): void {
+  t.inputTokens += e.inputTokens || 0;
+  t.outputTokens += e.outputTokens || 0;
+  t.cacheReadTokens += e.cacheReadTokens || 0;
+  t.cacheWriteTokens += e.cacheWriteTokens || 0;
+  t.totalTokens += e.totalTokens || 0;
   t.estimatedCost += e.estimatedCost ?? 0;
-  // Rate-weighted parts (cache uses cacheRead/Write rates, not input rate)
-  const parts = priceCostParts(
-    e.model,
-    e.inputTokens || 0,
-    e.outputTokens || 0,
-    e.cacheReadTokens || 0,
-    e.cacheWriteTokens || 0,
-    e.estimatedCost,
-  );
   t.inputCost = (t.inputCost || 0) + parts.inputCost;
   t.cacheCost = (t.cacheCost || 0) + parts.cacheCost;
   t.outputCost = (t.outputCost || 0) + parts.outputCost;
@@ -42,7 +35,19 @@ function add(t: TokenTotals, e: UsageEvent): void {
   t.eventCount += typeof reqs === "number" && Number.isFinite(reqs) && reqs > 0 ? Math.floor(reqs) : 1;
 }
 
-function groupKey(e: UsageEvent, by: GroupBy): string {
+function add(t: TokenTotals, e: UsageEvent): void {
+  const parts = priceCostParts(
+    e.model,
+    e.inputTokens || 0,
+    e.outputTokens || 0,
+    e.cacheReadTokens || 0,
+    e.cacheWriteTokens || 0,
+    e.estimatedCost,
+  );
+  addWithParts(t, e, parts);
+}
+
+function groupKey(e: UsageEvent, by: GroupBy, tsMs?: number): string {
   if (by === "agent") return e.agent;
   if (by === "model") {
     // Strip provider suffixes; always lowercase so kimi-k3 ≡ Kimi-k3
@@ -50,8 +55,9 @@ function groupKey(e: UsageEvent, by: GroupBy): string {
     // Label missing model with agent so "unknown" is not a mystery model name
     return (m || `unknown (${e.agent})`).toLowerCase();
   }
-  const d = new Date(e.timestamp);
-  if (Number.isNaN(d.getTime())) return "unknown";
+  const t = tsMs != null && Number.isFinite(tsMs) ? tsMs : Date.parse(e.timestamp);
+  if (!Number.isFinite(t)) return "unknown";
+  const d = new Date(t);
   if (by === "day") return d.toISOString().slice(0, 10);
   return `${d.toISOString().slice(0, 13)}:00`;
 }
@@ -62,19 +68,33 @@ export function aggregate(
   sort: "tokens" | "cost" = "cost",
   since: string | null = null,
   until: string | null = null,
+  /** Optional parallel ms timestamps (same length) — avoids re-parse for day/hour keys */
+  timestampsMs?: number[] | null,
 ): StatsResult {
   const totals = emptyTotals();
   const map = new Map<string, GroupRow>();
+  const n = events.length;
+  const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
 
-  for (const e of events) {
-    add(totals, e);
-    const key = groupKey(e, groupBy);
+  for (let i = 0; i < n; i++) {
+    const e = events[i]!;
+    // priceCostParts once per event (was 2× — totals + group row)
+    const parts = priceCostParts(
+      e.model,
+      e.inputTokens || 0,
+      e.outputTokens || 0,
+      e.cacheReadTokens || 0,
+      e.cacheWriteTokens || 0,
+      e.estimatedCost,
+    );
+    addWithParts(totals, e, parts);
+    const key = groupKey(e, groupBy, useTs ? timestampsMs![i] : undefined);
     let row = map.get(key);
     if (!row) {
       row = { key, ...emptyTotals() };
       map.set(key, row);
     }
-    add(row, e);
+    addWithParts(row, e, parts);
   }
 
   const groups = [...map.values()].sort((a, b) =>
@@ -89,8 +109,138 @@ export function aggregate(
   };
 }
 
+/** Dashboard period keys (match UI segment + since query). */
+export type DashPeriodKey = "today" | "24h" | "7d" | "30d" | "all";
+
+export type PrecomputedPeriodStats = {
+  builtAt: number;
+  /** groupBy → StatsResult (sort=cost for agent/model, tokens for day/hour) */
+  byGroup: Record<GroupBy, StatsResult>;
+  usageRpm: ReturnType<typeof computeActiveUsageRpm>;
+};
+
+/**
+ * Single-pass precompute for dashboard period tabs.
+ * One priceCostParts per event total (not 2× per groupBy × period) so Today↔30D
+ * switches are Map lookups instead of multi-second full rescans.
+ */
+export function precomputeDashboardPeriods(
+  events: UsageEvent[],
+  timestampsMs: number[],
+  bounds: Record<DashPeriodKey, number | null>,
+  nowMs: number = Date.now(),
+): Map<DashPeriodKey, PrecomputedPeriodStats> {
+  const keys: DashPeriodKey[] = ["today", "24h", "7d", "30d", "all"];
+  type Acc = {
+    totals: TokenTotals;
+    agent: Map<string, GroupRow>;
+    model: Map<string, GroupRow>;
+    day: Map<string, GroupRow>;
+    hour: Map<string, GroupRow>;
+    rpmEvents: UsageEvent[];
+  };
+  const acc = new Map<DashPeriodKey, Acc>();
+  for (const k of keys) {
+    acc.set(k, {
+      totals: emptyTotals(),
+      agent: new Map(),
+      model: new Map(),
+      day: new Map(),
+      hour: new Map(),
+      rpmEvents: [],
+    });
+  }
+
+  const n = events.length;
+  const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
+
+  const bump = (map: Map<string, GroupRow>, key: string, e: UsageEvent, parts: CostParts) => {
+    let row = map.get(key);
+    if (!row) {
+      row = { key, ...emptyTotals() };
+      map.set(key, row);
+    }
+    addWithParts(row, e, parts);
+  };
+
+  for (let i = 0; i < n; i++) {
+    const e = events[i]!;
+    const t = useTs ? timestampsMs[i]! : Date.parse(e.timestamp);
+    if (!Number.isFinite(t)) continue;
+    const parts = priceCostParts(
+      e.model,
+      e.inputTokens || 0,
+      e.outputTokens || 0,
+      e.cacheReadTokens || 0,
+      e.cacheWriteTokens || 0,
+      e.estimatedCost,
+    );
+    const agentKey = e.agent;
+    const modelKey = (normalizeModelName(e.model) || `unknown (${e.agent})`).toLowerCase();
+    const dayKey = new Date(t).toISOString().slice(0, 10);
+    const hourKey = `${new Date(t).toISOString().slice(0, 13)}:00`;
+
+    for (const pk of keys) {
+      const start = bounds[pk];
+      if (start != null && t < start) continue;
+      if (t > nowMs + 5_000) continue;
+      const a = acc.get(pk)!;
+      addWithParts(a.totals, e, parts);
+      bump(a.agent, agentKey, e, parts);
+      bump(a.model, modelKey, e, parts);
+      bump(a.day, dayKey, e, parts);
+      // Hour series only needed for today/24h charts
+      if (pk === "today" || pk === "24h") bump(a.hour, hourKey, e, parts);
+      a.rpmEvents.push(e);
+    }
+  }
+
+  const finish = (
+    map: Map<string, GroupRow>,
+    groupBy: GroupBy,
+    sort: "tokens" | "cost",
+    since: string | null,
+  ): StatsResult => {
+    const groups = [...map.values()].sort((a, b) =>
+      sort === "cost" ? b.estimatedCost - a.estimatedCost : b.totalTokens - a.totalTokens,
+    );
+    return {
+      totals: emptyTotals(), // filled below
+      groups,
+      groupBy,
+      period: { since, until: null },
+    };
+  };
+
+  const out = new Map<DashPeriodKey, PrecomputedPeriodStats>();
+  for (const pk of keys) {
+    const a = acc.get(pk)!;
+    const since = pk === "all" ? null : pk;
+    const agentStats = finish(a.agent, "agent", "cost", since);
+    agentStats.totals = a.totals;
+    const modelStats = finish(a.model, "model", "cost", since);
+    modelStats.totals = { ...a.totals };
+    const dayStats = finish(a.day, "day", "tokens", since);
+    dayStats.totals = { ...a.totals };
+    const hourStats = finish(a.hour, "hour", "tokens", since);
+    hourStats.totals = { ...a.totals };
+    out.set(pk, {
+      builtAt: nowMs,
+      byGroup: {
+        agent: agentStats,
+        model: modelStats,
+        day: dayStats,
+        hour: hourStats,
+      },
+      usageRpm: computeActiveUsageRpm(a.rpmEvents),
+    });
+  }
+  return out;
+}
+
 /**
  * Live request rate over a sliding wall-clock window (default 3 minutes).
+
  *
  * International / APM standard (Prometheus rate, Datadog, New Relic):
  *   RPS = N / T_seconds

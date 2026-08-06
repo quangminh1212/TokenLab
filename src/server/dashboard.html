@@ -671,6 +671,20 @@
       }).join('');
     }
 
+    /** Client period cache — instant switch when scan/pricing unchanged. */
+    const periodLoadCache = new Map();
+    const PERIOD_CACHE_MAX = 12;
+
+    function periodCacheKey() {
+      return [
+        state.period || 'all',
+        state.groupBy,
+        state.viewMode,
+        state.scanRevision,
+        typeof pricingRevision === 'number' ? pricingRevision : 0,
+      ].join('|');
+    }
+
     async function load(opts = {}) {
       const quiet = opts.quiet === true;
       if (state.loading) {
@@ -684,12 +698,30 @@
       const hourly = isHourlyPeriod();
       state.chartByHour = hourly;
 
+      // Serve from client cache first (period tab switch without re-fetch)
+      const cacheKey = periodCacheKey();
+      if (!opts.force && periodLoadCache.has(cacheKey)) {
+        const hit = periodLoadCache.get(cacheKey);
+        try {
+          applyLoadedPayload(hit, { fromCache: true });
+        } finally {
+          state.loading = false;
+          $('fetchSpin').classList.add('hidden');
+          if (state.pendingLoad) {
+            state.pendingLoad = false;
+            void load({ quiet: true });
+          }
+        }
+        return;
+      }
+
       const tableSort = (state.groupBy === 'hour' || state.groupBy === 'day')
         ? 'tokens'
         : (state.viewMode === 'tokens' ? 'tokens' : 'cost');
       const qStats = new URLSearchParams({ groupBy: state.groupBy, sort: tableSort });
       const seriesBy = hourly ? 'hour' : 'day';
-      const qSeries = new URLSearchParams({ groupBy: seriesBy, sort: 'tokens' });
+      // live=0 on series: skip second hot-mirror RPM pass (primary stats already has live)
+      const qSeries = new URLSearchParams({ groupBy: seriesBy, sort: 'tokens', live: '0' });
       if (since) { qStats.set('since', since); qSeries.set('since', since); }
 
       try {
@@ -706,90 +738,13 @@
           fetch('/api/events?' + qEvents).then((r) => r.json()),
         ]);
 
-        state.totals = stats.totals || {};
-        // Period RPM: active-minutes mean from filtered events (not wall-clock span)
-        if (stats.usageRpm && typeof stats.usageRpm === 'object') state.usageRpm = stats.usageRpm;
-        else if (seriesStats.usageRpm && typeof seriesStats.usageRpm === 'object') state.usageRpm = seriesStats.usageRpm;
-        else state.usageRpm = null;
-        // Live 3m window (secondary) from /api/stats
-        if (stats.live && typeof stats.live === 'object') state.live = stats.live;
-        else if (seriesStats.live && typeof seriesStats.live === 'object') state.live = seriesStats.live;
-        state.lastTotalsKey = totalsKey(state.totals);
-        let groups = stats.groups || [];
-        // Chronological for time buckets
-        if (state.groupBy === 'hour' || state.groupBy === 'day') {
-          groups = groups.slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+        const payload = { stats, seriesStats, health, eventsRes, since, hourly };
+        if (periodLoadCache.size >= PERIOD_CACHE_MAX) {
+          const first = periodLoadCache.keys().next().value;
+          periodLoadCache.delete(first);
         }
-        state.groups = groups;
-
-        // Chronological sort by date key (ISO YYYY-MM-DD / hour keys sort lexicographically)
-        const rawSeries = (seriesStats.groups || []).slice().sort((a, b) => {
-          const ka = String(a.key || '');
-          const kb = String(b.key || '');
-          return ka < kb ? -1 : ka > kb ? 1 : 0;
-        });
-        state.daySeries = hourly ? fillHourSeries(rawSeries, state.period) : rawSeries;
-
-        const eventCount = health.eventCount || 0;
-        state.scanning = Boolean(health.scanning);
-        if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
-        if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
-        if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
-        if (typeof health.todayStartsAt === 'string' && health.todayStartsAt) {
-          state.todayStartsAt = health.todayStartsAt;
-        }
-        // First boot / empty cache: keep polling until first scan finishes
-        state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
-        state.lastEventCount = eventCount;
-
-        // Header meta: version only (+ scan state). Rows / RPM live in overview cards.
-        const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
-        $('meta').textContent = `v${health.version || ''}${scanHint}`;
-
-        renderOverview(state.totals, state.live);
-        renderChart();
-        renderTable();
-
-        let recent = Array.isArray(eventsRes.events) ? eventsRes.events : [];
-        // Client-side safety net if an older server build lacks since support
-        const t0 = parseSinceMs(since);
-        if (t0 != null) {
-          recent = recent.filter((e) => {
-            const t = new Date(e.timestamp).getTime();
-            return !Number.isNaN(t) && t >= t0;
-          });
-        }
-        // RECENT REQUESTS: real per-call rows + single-turn estimates only.
-        // Drop daily/model rollups and future-stamped rows (UI used to show them as "Today").
-        const nowMs = Date.now();
-        recent = recent.filter((e) => {
-          if (!e) return false;
-          const t = new Date(e.timestamp).getTime();
-          if (Number.isNaN(t)) return false;
-          // Future timestamps = day rollups / noon-UTC fakes — hide from Recent requests
-          if (t > nowMs + 5_000) return false;
-          const rc = e.requestCount;
-          if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
-          if (e.estimated) {
-            if (typeof rc === 'number' && Number.isFinite(rc) && rc > 1) return false;
-            const total =
-              (Number(e.totalTokens) || 0) ||
-              (Number(e.inputTokens) || 0) +
-                (Number(e.outputTokens) || 0) +
-                (Number(e.cacheReadTokens) || 0) +
-                (Number(e.cacheWriteTokens) || 0);
-            if (total > 2e6) return false;
-            if (total <= 0 && !(Number(e.estimatedCost) > 0)) return false;
-          }
-          return true;
-        });
-        // Ensure newest-first even if response order varies
-        recent = recent
-          .slice()
-          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-        renderRecent(recent.slice(0, 25));
-
-        scheduleScanPoll();
+        periodLoadCache.set(cacheKey, payload);
+        applyLoadedPayload(payload, { fromCache: false });
       } catch {
         if (!quiet) $('meta').innerHTML = '<span class="err">Failed to load API</span>';
         // Still retry while bootstrapping empty UI
@@ -803,6 +758,96 @@
           void load({ quiet: true });
         }
       }
+    }
+
+    function applyLoadedPayload(payload, meta = {}) {
+      const { stats, seriesStats, health, eventsRes, since, hourly } = payload;
+      void meta;
+
+      state.totals = stats.totals || {};
+      // Period RPM: active-minutes mean from filtered events (not wall-clock span)
+      if (stats.usageRpm && typeof stats.usageRpm === 'object') state.usageRpm = stats.usageRpm;
+      else if (seriesStats.usageRpm && typeof seriesStats.usageRpm === 'object') state.usageRpm = seriesStats.usageRpm;
+      else state.usageRpm = null;
+      // Live 3m window (secondary) from /api/stats
+      if (stats.live && typeof stats.live === 'object') state.live = stats.live;
+      else if (seriesStats.live && typeof seriesStats.live === 'object') state.live = seriesStats.live;
+      state.lastTotalsKey = totalsKey(state.totals);
+      let groups = stats.groups || [];
+      // Chronological for time buckets
+      if (state.groupBy === 'hour' || state.groupBy === 'day') {
+        groups = groups.slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+      }
+      state.groups = groups;
+
+      // Chronological sort by date key (ISO YYYY-MM-DD / hour keys sort lexicographically)
+      const rawSeries = (seriesStats.groups || []).slice().sort((a, b) => {
+        const ka = String(a.key || '');
+        const kb = String(b.key || '');
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      });
+      state.daySeries = hourly ? fillHourSeries(rawSeries, state.period) : rawSeries;
+
+      const eventCount = health.eventCount || 0;
+      state.scanning = Boolean(health.scanning);
+      if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
+      if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
+      if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
+      if (typeof health.todayStartsAt === 'string' && health.todayStartsAt) {
+        state.todayStartsAt = health.todayStartsAt;
+      }
+      // First boot / empty cache: keep polling until first scan finishes
+      state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
+      state.lastEventCount = eventCount;
+
+      // Header meta: version only (+ scan state). Rows / RPM live in overview cards.
+      const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
+      $('meta').textContent = `v${health.version || ''}${scanHint}`;
+
+      renderOverview(state.totals, state.live);
+      renderChart();
+      renderTable();
+
+      let recent = Array.isArray(eventsRes.events) ? eventsRes.events : [];
+      // Client-side safety net if an older server build lacks since support
+      const t0 = parseSinceMs(since);
+      if (t0 != null) {
+        recent = recent.filter((e) => {
+          const t = new Date(e.timestamp).getTime();
+          return !Number.isNaN(t) && t >= t0;
+        });
+      }
+      // RECENT REQUESTS: real per-call rows + single-turn estimates only.
+      // Drop daily/model rollups and future-stamped rows (UI used to show them as "Today").
+      const nowMs = Date.now();
+      recent = recent.filter((e) => {
+        if (!e) return false;
+        const t = new Date(e.timestamp).getTime();
+        if (Number.isNaN(t)) return false;
+        // Future timestamps = day rollups / noon-UTC fakes — hide from Recent requests
+        if (t > nowMs + 5_000) return false;
+        const rc = e.requestCount;
+        if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
+        if (e.estimated) {
+          if (typeof rc === 'number' && Number.isFinite(rc) && rc > 1) return false;
+          const total =
+            (Number(e.totalTokens) || 0) ||
+            (Number(e.inputTokens) || 0) +
+              (Number(e.outputTokens) || 0) +
+              (Number(e.cacheReadTokens) || 0) +
+              (Number(e.cacheWriteTokens) || 0);
+          if (total > 2e6) return false;
+          if (total <= 0 && !(Number(e.estimatedCost) > 0)) return false;
+        }
+        return true;
+      });
+      // Ensure newest-first even if response order varies
+      recent = recent
+        .slice()
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      renderRecent(recent.slice(0, 25));
+
+      scheduleScanPoll();
     }
 
     let scanPollTimer = 0;
@@ -891,7 +936,8 @@
             }
             if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
               pricingRevision = msg.revision;
-              requestLoad({ quiet: true });
+              periodLoadCache.clear();
+              requestLoad({ quiet: true, force: true });
               return;
             }
             if (msg.type === 'scan') {
@@ -925,7 +971,8 @@
                 // Do NOT stamp scanRevision here before load \u2014 requestLoad will refresh from /api/health
                 state.scanning = false;
                 state.awaitingData = false;
-                requestLoad({ quiet: true });
+                periodLoadCache.clear();
+                requestLoad({ quiet: true, force: true });
               }
             }
           } catch {

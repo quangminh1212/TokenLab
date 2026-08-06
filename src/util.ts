@@ -490,20 +490,35 @@ export function filterByPeriodSorted(
   until?: string | null,
   timeZone?: string | null,
 ): UsageEvent[] {
-  if (!events.length) return events;
+  return filterByPeriodSortedDetailed(events, timestampsMs, since, until, timeZone).events;
+}
+
+/** Like filterByPeriodSorted but also returns the sliced parallel timestamp index. */
+export function filterByPeriodSortedDetailed(
+  events: UsageEvent[],
+  timestampsMs: number[],
+  since?: string | null,
+  until?: string | null,
+  timeZone?: string | null,
+): { events: UsageEvent[]; timestampsMs: number[] } {
+  if (!events.length) return { events, timestampsMs: [] };
   if (timestampsMs.length !== events.length) {
-    return filterByPeriod(events, since, until, timeZone);
+    const filtered = filterByPeriod(events, since, until, timeZone);
+    return { events: filtered, timestampsMs: buildTimestampIndex(filtered) };
   }
   const s = parseSince(since, timeZone);
   const u = until ? new Date(until) : null;
   const sMs = s ? s.getTime() : null;
   const uMs = u && !Number.isNaN(u.getTime()) ? u.getTime() : null;
-  if (sMs == null && uMs == null) return events;
+  if (sMs == null && uMs == null) return { events, timestampsMs };
   const lo = sMs != null ? bisectLeftTs(timestampsMs, sMs) : 0;
   const hi = uMs != null ? bisectRightTs(timestampsMs, uMs) : events.length;
-  if (lo <= 0 && hi >= events.length) return events;
-  if (lo >= hi) return [];
-  return events.slice(lo, hi);
+  if (lo >= hi) return { events: [], timestampsMs: [] };
+  if (lo <= 0 && hi >= events.length) return { events, timestampsMs };
+  return {
+    events: events.slice(lo, hi),
+    timestampsMs: timestampsMs.slice(lo, hi),
+  };
 }
 
 /** Format USD with thousand dots and decimal comma: $197.527,9600 */
