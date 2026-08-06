@@ -18,6 +18,7 @@ import {
   normalizeAgentId,
   normalizeModelName,
   pathExists,
+  sortEventsByTime,
   stableId,
   startOfDayInTimeZone,
 } from "./util.js";
@@ -44,8 +45,9 @@ function logError(...args: unknown[]): void {
 }
 
 export const BACKUP_FORMAT = "tokenlab" as const;
-/** Legacy format name accepted on import for backward compatibility. */
+/** Legacy format names accepted on import for backward compatibility. */
 const BACKUP_FORMAT_LEGACY = "tokenlab-backup";
+const BACKUP_FORMAT_LEGACY_XLAB = "xlab-token-backup";
 /** v1 = settings only · v2 = full events · v3 = period stats (by model + agent) */
 export const BACKUP_FORMAT_VERSION = 3 as const;
 
@@ -1215,11 +1217,48 @@ function scanCacheScore(events: UsageEvent[]): { count: number; tokens: number }
   return { count: events.length, tokens };
 }
 
+/**
+ * Fingerprint for no-op save detection (count + token weight + cost + max ts).
+ * Avoids rewriting ~20MB scan-cache when content is unchanged.
+ */
+export function scanCacheFingerprint(events: UsageEvent[]): string {
+  let tokens = 0;
+  let cost = 0;
+  let maxTs = 0;
+  for (const e of events) {
+    tokens += eventTokenWeight(e);
+    cost += Number(e.estimatedCost) || 0;
+    const t = Date.parse(e.timestamp);
+    if (Number.isFinite(t) && t > maxTs) maxTs = t;
+  }
+  return `${events.length}|${tokens}|${cost.toFixed(4)}|${maxTs}`;
+}
+
+/** Last successful save fingerprint (process-local) — skip identical rewrites. */
+let lastScanCacheWriteFp = "";
+
+/**
+ * Load only the main scan-cache file (no bak/archive/legacy multi-read).
+ * Used by full-save high-water merge so we do not re-parse 3× ~20MB snapshots.
+ */
+export async function loadScanCacheMainOnly(): Promise<UsageEvent[]> {
+  const events = await loadScanCacheCandidate(scanCachePath());
+  if (!events || events.length === 0) return [];
+  return collapseExactUsageDuplicates(collapseRouterDailyEvents(events));
+}
+
 export async function loadScanCache(): Promise<UsageEvent[]> {
   const p = scanCachePath();
-  const candidates = [p, scanCacheBackupPath(), scanCacheArchivePath()];
-  // Legacy fallback candidates — pre-rename xlab-token dir. Included so usage
-  // never silently drops after the rename; we union by id (richer wins).
+
+  // FAST PATH: valid main → return immediately (skip bak + archive + legacy I/O).
+  // Full saves keep main at high-water; bak/archive are crash recovery only.
+  const mainEvents = await loadScanCacheCandidate(p);
+  if (mainEvents && mainEvents.length > 0) {
+    return collapseExactUsageDuplicates(collapseRouterDailyEvents(mainEvents));
+  }
+
+  // RECOVERY: main missing/corrupt — score bak + archive, then legacy rename dir.
+  const candidates = [scanCacheBackupPath(), scanCacheArchivePath()];
   const legacyCandidates = [
     legacyScanCachePath(),
     `${legacyScanCachePath()}.bak`,
@@ -1282,9 +1321,7 @@ export async function loadScanCache(): Promise<UsageEvent[]> {
     }
   }
   if (best.length > 0) {
-    if (bestFrom !== p) {
-      log("loadScanCache: recovered", best.length, "events from →", bestFrom);
-    }
+    log("loadScanCache: recovered", best.length, "events from →", bestFrom);
     // Heal legacy unstable daily ids + exact clones so restart totals stay honest.
     return collapseExactUsageDuplicates(collapseRouterDailyEvents(best));
   }
@@ -1305,13 +1342,6 @@ export async function saveScanCache(
   opts: SaveScanCacheOpts = {},
 ): Promise<void> {
   const mode = opts.mode === "quick" ? "quick" : "full";
-  // Progressive saves already hold clean-ish rows; skip O(n) collapse passes mid-scan.
-  let clean =
-    mode === "quick"
-      ? events
-      : collapseExactUsageDuplicates(
-          collapseSourcePathRollups(collapseRouterDailyEvents(sanitizeEvents(events) || [])),
-        );
   const p = scanCachePath();
   const bak = scanCacheBackupPath();
   await mkdir(path.dirname(p), { recursive: true });
@@ -1325,11 +1355,30 @@ export async function saveScanCache(
       /* optional */
     }
 
+    // Same-process short-circuit BEFORE collapse/high-water (those are O(n) on 50k+ rows).
+    // After restart lastScanCacheWriteFp is empty so first save always proceeds.
+    {
+      const raw = Array.isArray(events) ? events : [];
+      const earlyFp = scanCacheFingerprint(raw);
+      if (earlyFp === lastScanCacheWriteFp && (await pathExists(p))) {
+        log("saveScanCache: skip unchanged (early)", raw.length, mode);
+        return;
+      }
+    }
+
+    // Progressive saves already hold clean-ish rows; skip O(n) collapse passes mid-scan.
+    let clean =
+      mode === "quick"
+        ? events
+        : collapseExactUsageDuplicates(
+            collapseSourcePathRollups(collapseRouterDailyEvents(sanitizeEvents(events) || [])),
+          );
+
     // Full save: never write a thinner all-time snapshot than what is already on disk.
-    // (Rescans that flip daily↔partial history used to shrink EST. COST by tens of k$.)
+    // High-water reads MAIN ONLY (not bak+archive) — was 3× ~20MB parse per full save.
     if (mode === "full") {
       try {
-        const existing = await loadScanCache();
+        const existing = await loadScanCacheMainOnly();
         if (existing.length > 0) {
           const merged = enforceMonotonicAgentDays(existing, clean);
           clean = collapseExactUsageDuplicates(
@@ -1342,6 +1391,15 @@ export async function saveScanCache(
           err instanceof Error ? err.message : err,
         );
       }
+      // Persist timestamp-sorted for O(log n) period filters after next load.
+      clean = sortEventsByTime(clean).events;
+    }
+
+    const fp = scanCacheFingerprint(clean);
+    // Skip identical rewrite after high-water (full) when merge did not change content.
+    if (fp === lastScanCacheWriteFp && (await pathExists(p))) {
+      log("saveScanCache: skip unchanged", clean.length, mode);
+      return;
     }
 
     // One serialize only — avoid JSON.parse(verify) which doubled peak RAM (~8MB×2+).
@@ -1353,14 +1411,42 @@ export async function saveScanCache(
     const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
     try {
       await writeFile(tmp, json, "utf8");
-      await rename(tmp, p);
-      // .bak every write so corrupt main is recoverable
-      try {
-        await copyFile(p, bak);
-      } catch (err) {
-        logError("saveScanCache: backup copy failed:", err instanceof Error ? err.message : err);
+      // Rotate previous main → .bak (rename, not 20MB copyFile).
+      if (await pathExists(p)) {
+        try {
+          const { unlink } = await import("node:fs/promises");
+          try {
+            await unlink(bak);
+          } catch {
+            /* bak may not exist */
+          }
+          await rename(p, bak);
+        } catch (err) {
+          // Fallback: copy if rename fails (cross-device / locked)
+          try {
+            await copyFile(p, bak);
+          } catch (err2) {
+            logError(
+              "saveScanCache: backup rotate failed:",
+              err2 instanceof Error ? err2.message : err2,
+            );
+          }
+          logError(
+            "saveScanCache: rename main→bak failed (used copy fallback):",
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
-      // Archive only on full saves (not every progressive tick)
+      await rename(tmp, p);
+      // First write (or rotate failed): seed .bak so corrupt-main recovery works.
+      if (!(await pathExists(bak))) {
+        try {
+          await copyFile(p, bak);
+        } catch (err) {
+          logError("saveScanCache: seed bak failed:", err instanceof Error ? err.message : err);
+        }
+      }
+      // Archive only on full saves when content actually changed
       if (mode === "full") {
         try {
           await copyFile(p, scanCacheArchivePath());
@@ -1368,6 +1454,7 @@ export async function saveScanCache(
           logError("saveScanCache: archive copy failed:", err instanceof Error ? err.message : err);
         }
       }
+      lastScanCacheWriteFp = fp;
       log("saveScanCache:", clean.length, mode, "→", p);
       try {
         const { writeHeartbeat } = await import("./process-guard.js");
@@ -1595,7 +1682,12 @@ export async function buildFullBackup(opts: {
 export function isXlabBackup(raw: unknown): raw is XlabBackup {
   if (!raw || typeof raw !== "object") return false;
   const o = raw as Record<string, unknown>;
-  return (o.format === BACKUP_FORMAT || o.format === BACKUP_FORMAT_LEGACY) && typeof o.config === "object" && o.config != null;
+  const fmt = o.format;
+  const formatOk =
+    fmt === BACKUP_FORMAT ||
+    fmt === BACKUP_FORMAT_LEGACY ||
+    fmt === BACKUP_FORMAT_LEGACY_XLAB;
+  return formatOk && typeof o.config === "object" && o.config != null;
 }
 
 export type RestoreResult = {

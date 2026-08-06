@@ -33,7 +33,14 @@ import {
 import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
 import { writeHeartbeat } from "../process-guard.js";
 import type { AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
-import { filterByPeriod, normalizeModelName, pathExists, startOfDayInTimeZone } from "../util.js";
+import {
+  filterByPeriod,
+  filterByPeriodSorted,
+  normalizeModelName,
+  pathExists,
+  sortEventsByTime,
+  startOfDayInTimeZone,
+} from "../util.js";
 import { VERSION } from "../version.js";
 
 function configuredTimeZone(): string {
@@ -68,13 +75,69 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const startedAt = Date.now();
 
   let cache: UsageEvent[] = [];
+  /** Parallel ms timestamps for O(log n) period filter (null while unsorted/dirty). */
+  let cacheTs: number[] | null = null;
+  /** Period aggregate memo: invalidated on scan / pricing changes. */
+  const periodStatsMemo = new Map<
+    string,
+    { stats: ReturnType<typeof aggregate>; usageRpm: ReturnType<typeof computeActiveUsageRpm> }
+  >();
+
+  /**
+   * Replace in-memory event cache. When `sorted` is false (mid-scan progressive),
+   * defer the O(n log n) sort until the first period query or scan finalize.
+   */
+  function setCache(events: UsageEvent[], opts: { sorted?: boolean } = {}): void {
+    if (opts.sorted) {
+      cache = events;
+      cacheTs = events.length
+        ? (() => {
+            const ts = new Array<number>(events.length);
+            for (let i = 0; i < events.length; i++) {
+              const t = Date.parse(events[i]!.timestamp);
+              ts[i] = Number.isNaN(t) ? 0 : t;
+            }
+            return ts;
+          })()
+        : [];
+    } else {
+      cache = events;
+      cacheTs = null;
+    }
+    periodStatsMemo.clear();
+  }
+
+  function ensureCacheSorted(): { events: UsageEvent[]; timestampsMs: number[] } {
+    if (cacheTs && cacheTs.length === cache.length) {
+      return { events: cache, timestampsMs: cacheTs };
+    }
+    const sorted = sortEventsByTime(cache);
+    cache = sorted.events;
+    cacheTs = sorted.timestampsMs;
+    return { events: cache, timestampsMs: cacheTs };
+  }
+
+  function eventsInPeriod(since: string | null, until: string | null): UsageEvent[] {
+    // While scanning, skip sort (progressive rebuilds are frequent); linear filter is fine.
+    if (scanning || !cacheTs || cacheTs.length !== cache.length) {
+      return filterByPeriod(cache, since, until, configuredTimeZone());
+    }
+    return filterByPeriodSorted(cache, cacheTs, since, until, configuredTimeZone());
+  }
+
+  /** Reprice keeps timestamps/order — retain sort index, only invalidate period memo. */
+  function repriceCache(forceTable: boolean): void {
+    cache = repriceEvents(cache, { forceTable });
+    periodStatsMemo.clear();
+  }
+
   /** Events from other machines / restore — survive local rescan (merged by id). */
   let importedEvents: UsageEvent[] = await loadImportedEvents();
   /** Last local scan snapshot — unioned so incomplete/timeout passes never wipe known usage. */
   const diskScanCache = await loadScanCache();
   // Union import + disk, then collapse so xlabrouter/routerlab never double-count
   // and day totals never shrink vs either source.
-  cache = collapseExactUsageDuplicates(
+  const warmMerged = collapseExactUsageDuplicates(
     collapseSourcePathRollups(
       collapseRouterDailyEvents(
         enforceMonotonicAgentDays(
@@ -84,6 +147,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       ),
     ),
   );
+  // Disk saves write timestamp-sorted; sort once more for safety then index.
+  setCache(sortEventsByTime(warmMerged).events, { sorted: true });
   if (diskScanCache.length > 0) {
     console.log(`[tokenlab] loaded ${diskScanCache.length} cached scan events`);
   }
@@ -319,8 +384,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           merged = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
           );
+          // Final pass: sort once for O(log n) period queries + sorted disk persist.
+          setCache(sortEventsByTime(merged).events, { sorted: true });
+        } else {
+          // Mid-scan: mark index dirty (no O(n log n) sort every agent).
+          setCache(merged, { sorted: false });
         }
-        cache = merged;
       };
 
       const scheduleProgressBroadcast = (payload: Record<string, unknown>): void => {
@@ -625,13 +694,23 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           error: { code: "INVALID_QUERY", message: "groupBy must be one of: agent, model, day, hour" },
         });
       }
-      const events = filterByPeriod(cache, since, until, configuredTimeZone());
-      const stats = aggregate(events, groupBy, sort, since, until);
-      // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
-      const usageRpm = computeActiveUsageRpm(events);
+      // Memo period aggregates across dashboard double-fetch (agent + day series).
+      const memoKey = `${scanRevision}|${pricingRevision}|${since || ""}|${until || ""}|${groupBy}|${sort}`;
+      let periodPart = periodStatsMemo.get(memoKey);
+      if (!periodPart) {
+        if (!scanning) ensureCacheSorted();
+        const events = eventsInPeriod(since, until);
+        const stats = aggregate(events, groupBy, sort, since, until);
+        // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
+        const usageRpm = computeActiveUsageRpm(events);
+        periodPart = { stats, usageRpm };
+        // Cap memo size (period × groupBy combos are small; defend against abuse)
+        if (periodStatsMemo.size > 64) periodStatsMemo.clear();
+        periodStatsMemo.set(memoKey, periodPart);
+      }
       // Live RPM: cache live rows + hot 9router/RouterLab history tails (not period filter)
       const live = await computeDashboardLiveRate(cache, 3);
-      return json(res, 200, { ...stats, usageRpm, live });
+      return json(res, 200, { ...periodPart.stats, usageRpm: periodPart.usageRpm, live });
     }
 
     if (req.method === "GET" && pathname === "/api/rpm") {
@@ -642,7 +721,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if (req.method === "GET" && pathname === "/api/cost") {
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
-      const events = filterByPeriod(cache, since, until, configuredTimeZone());
+      if (!scanning) ensureCacheSorted();
+      const events = eventsInPeriod(since, until);
       return json(res, 200, costReport(events, since, until));
     }
 
@@ -664,16 +744,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         if (agent) list = list.filter((e) => e.agent === agent);
         list = list
           .slice()
-          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
           .slice(0, limit);
         return json(res, 200, { events: list, count: list.length, liveOnly: true });
       }
-      let list = filterByPeriod(cache, since, until, configuredTimeZone());
+      if (!scanning) ensureCacheSorted();
+      let list = eventsInPeriod(since, until);
       if (agent) list = list.filter((e) => e.agent === agent);
-      list = list
-        .slice()
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-        .slice(0, limit);
+      // Cache is ascending; recent page = tail (avoid full re-sort when no agent filter).
+      if (!agent && cacheTs && cacheTs.length === cache.length && list.length > limit) {
+        list = list.slice(list.length - limit).reverse();
+      } else {
+        list = list
+          .slice()
+          .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+          .slice(0, limit);
+      }
       return json(res, 200, { events: list, count: list.length, liveOnly: false });
     }
 
@@ -930,7 +1016,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       }
       const cfg = await setCustomRates(normalized, replace);
       // Force table reprice so new rates apply immediately to all events
-      cache = repriceEvents(cache, { forceTable: true });
+      repriceCache(true);
       bumpPricing(live ? "live" : "save");
       const totals = aggregate(cache, "agent", "cost", null, null).totals;
       return json(res, 200, {
@@ -1075,14 +1161,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           importedEvents = mergeEventsByIdPreferRicher(importedEvents, result.events);
           await saveImportedEvents(importedEvents);
           // Prefer real local rows over Gist rollups for the same day×agent×model
-          cache = repriceEvents(mergeLocalPreferOverGistRollups(cache, importedEvents), {
+          const restored = repriceEvents(mergeLocalPreferOverGistRollups(cache, importedEvents), {
             forceTable: result.config.pricing?.preferRouterCost === false,
           });
+          setCache(sortEventsByTime(restored).events, { sorted: true });
           bumpScan("restore");
         } else {
-          cache = repriceEvents(cache, {
-            forceTable: result.config.pricing?.preferRouterCost === false,
-          });
+          repriceCache(result.config.pricing?.preferRouterCost === false);
         }
         bumpPricing("restore");
         return json(res, 200, {
@@ -1141,7 +1226,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         },
       });
       // Reprice when preferRouterCost flips
-      cache = repriceEvents(cache, { forceTable: next.pricing?.preferRouterCost === false });
+      repriceCache(next.pricing?.preferRouterCost === false);
       bumpPricing("config");
       return json(res, 200, {
         ok: true,

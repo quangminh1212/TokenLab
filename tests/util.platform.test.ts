@@ -4,10 +4,14 @@ import path from "node:path";
 import {
   appDataDir,
   cacheDir,
+  filterByPeriod,
+  filterByPeriodSorted,
   homeDir,
   localAppDataDir,
   normalizeModelName,
+  sortEventsByTime,
 } from "../src/util.js";
+import type { UsageEvent } from "../src/types.js";
 import {
   jetbrainsRoots,
   pathEnv,
@@ -108,5 +112,77 @@ describe("normalizeModelName", () => {
   it("returns null for empty", () => {
     assert.equal(normalizeModelName(""), null);
     assert.equal(normalizeModelName(null), null);
+  });
+});
+
+function sampleEvt(id: string, ts: string): UsageEvent {
+  return {
+    id,
+    agent: "grok",
+    model: "grok-3",
+    timestamp: ts,
+    inputTokens: 10,
+    outputTokens: 2,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 12,
+    estimatedCost: 0.001,
+    currency: "USD",
+    pricingStatus: "priced",
+    workspace: null,
+    sourcePath: "/x",
+  };
+}
+
+describe("period filter index (fast retrieval)", () => {
+  it("sortEventsByTime orders ascending and builds parallel ms index", () => {
+    const events = [
+      sampleEvt("c", "2026-08-03T12:00:00.000Z"),
+      sampleEvt("a", "2026-08-01T12:00:00.000Z"),
+      sampleEvt("b", "2026-08-02T12:00:00.000Z"),
+    ];
+    const { events: sorted, timestampsMs } = sortEventsByTime(events);
+    assert.deepEqual(
+      sorted.map((e) => e.id),
+      ["a", "b", "c"],
+    );
+    assert.equal(timestampsMs.length, 3);
+    assert.ok(timestampsMs[0]! < timestampsMs[1]!);
+    assert.ok(timestampsMs[1]! < timestampsMs[2]!);
+  });
+
+  it("filterByPeriodSorted matches linear filterByPeriod", () => {
+    const raw = [
+      sampleEvt("old", "2026-07-01T00:00:00.000Z"),
+      sampleEvt("mid", "2026-08-01T12:00:00.000Z"),
+      sampleEvt("new", "2026-08-06T18:00:00.000Z"),
+      sampleEvt("newer", "2026-08-06T20:00:00.000Z"),
+    ];
+    const { events, timestampsMs } = sortEventsByTime(raw);
+    const since = "2026-08-01T00:00:00.000Z";
+    const until = "2026-08-06T19:00:00.000Z";
+    const linear = filterByPeriod(events, since, until);
+    const indexed = filterByPeriodSorted(events, timestampsMs, since, until);
+    assert.deepEqual(
+      indexed.map((e) => e.id),
+      linear.map((e) => e.id),
+    );
+    assert.deepEqual(
+      indexed.map((e) => e.id),
+      ["mid", "new"],
+    );
+  });
+
+  it("filterByPeriodSorted empty range returns []", () => {
+    const { events, timestampsMs } = sortEventsByTime([
+      sampleEvt("a", "2026-08-01T00:00:00.000Z"),
+    ]);
+    const out = filterByPeriodSorted(
+      events,
+      timestampsMs,
+      "2026-09-01T00:00:00.000Z",
+      null,
+    );
+    assert.equal(out.length, 0);
   });
 });

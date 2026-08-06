@@ -389,21 +389,121 @@ export function parseSince(since?: string | null, timeZone?: string | null): Dat
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * Filter events by [since, until]. Uses Date.parse (faster than `new Date` per row)
+ * and precomputes bound ms so hot API paths do not re-parse bounds every iteration.
+ */
 export function filterByPeriod(
   events: UsageEvent[],
   since?: string | null,
   until?: string | null,
   timeZone?: string | null,
 ): UsageEvent[] {
+  if (!events.length) return events;
   const s = parseSince(since, timeZone);
   const u = until ? new Date(until) : null;
+  const sMs = s ? s.getTime() : null;
+  const uMs = u && !Number.isNaN(u.getTime()) ? u.getTime() : null;
+  if (sMs == null && uMs == null) return events;
   return events.filter((e) => {
-    const t = new Date(e.timestamp).getTime();
+    const t = Date.parse(e.timestamp);
     if (Number.isNaN(t)) return false;
-    if (s && t < s.getTime()) return false;
-    if (u && !Number.isNaN(u.getTime()) && t > u.getTime()) return false;
+    if (sMs != null && t < sMs) return false;
+    if (uMs != null && t > uMs) return false;
     return true;
   });
+}
+
+/** Parallel timestamp index (ms) for events — NaN timestamps become 0. */
+export function buildTimestampIndex(events: UsageEvent[]): number[] {
+  const n = events.length;
+  const ts = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const t = Date.parse(events[i]!.timestamp);
+    ts[i] = Number.isNaN(t) ? 0 : t;
+  }
+  return ts;
+}
+
+/**
+ * Sort events ascending by timestamp (stable). Returns new arrays — does not mutate input.
+ * Disk + hot period filters can then use O(log n) range extraction.
+ */
+export function sortEventsByTime(events: UsageEvent[]): {
+  events: UsageEvent[];
+  timestampsMs: number[];
+} {
+  const n = events.length;
+  if (n === 0) return { events: [], timestampsMs: [] };
+  const order = new Array<number>(n);
+  const ts = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    order[i] = i;
+    const t = Date.parse(events[i]!.timestamp);
+    ts[i] = Number.isNaN(t) ? 0 : t;
+  }
+  order.sort((a, b) => {
+    const d = ts[a]! - ts[b]!;
+    return d !== 0 ? d : a - b;
+  });
+  const outEvents = new Array<UsageEvent>(n);
+  const outTs = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const src = order[i]!;
+    outEvents[i] = events[src]!;
+    outTs[i] = ts[src]!;
+  }
+  return { events: outEvents, timestampsMs: outTs };
+}
+
+function bisectLeftTs(timestampsMs: number[], target: number): number {
+  let lo = 0;
+  let hi = timestampsMs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timestampsMs[mid]! < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function bisectRightTs(timestampsMs: number[], target: number): number {
+  let lo = 0;
+  let hi = timestampsMs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timestampsMs[mid]! <= target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * O(log n + k) period filter when `events` are sorted ascending by timestamp and
+ * `timestampsMs` is the parallel index (same length). Falls back to linear filter
+ * if lengths mismatch.
+ */
+export function filterByPeriodSorted(
+  events: UsageEvent[],
+  timestampsMs: number[],
+  since?: string | null,
+  until?: string | null,
+  timeZone?: string | null,
+): UsageEvent[] {
+  if (!events.length) return events;
+  if (timestampsMs.length !== events.length) {
+    return filterByPeriod(events, since, until, timeZone);
+  }
+  const s = parseSince(since, timeZone);
+  const u = until ? new Date(until) : null;
+  const sMs = s ? s.getTime() : null;
+  const uMs = u && !Number.isNaN(u.getTime()) ? u.getTime() : null;
+  if (sMs == null && uMs == null) return events;
+  const lo = sMs != null ? bisectLeftTs(timestampsMs, sMs) : 0;
+  const hi = uMs != null ? bisectRightTs(timestampsMs, uMs) : events.length;
+  if (lo <= 0 && hi >= events.length) return events;
+  if (lo >= hi) return [];
+  return events.slice(lo, hi);
 }
 
 /** Format USD with thousand dots and decimal comma: $197.527,9600 */

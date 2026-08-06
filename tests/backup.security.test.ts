@@ -15,6 +15,7 @@ import {
   mergeMultiMachineGistRollups,
   collapseRouterDailyEvents,
   loadScanCache,
+  loadScanCacheMainOnly,
   restoreBackup,
   mirrorsRoot,
   mergeEventsByIdPreferRicher,
@@ -22,6 +23,7 @@ import {
   salvageScanCacheJson,
   saveScanCache,
   scanCacheBackupPath,
+  scanCacheFingerprint,
   scanCachePath,
 } from "../src/backup.js";
 import type { UsageEvent } from "../src/types.js";
@@ -483,12 +485,63 @@ test("saveScanCache round-trips and loadScanCache recovers from .bak when main i
     const loaded = await loadScanCache();
     assert.equal(loaded.length, 2);
     assert.equal(loaded.find((e) => e.id === "persist-a")?.inputTokens, 1000);
+    // First write must seed .bak for recovery
+    assert.equal(await pathExists(scanCacheBackupPath()), true);
+    // Main-only path matches full load when main is healthy
+    const mainOnly = await loadScanCacheMainOnly();
+    assert.equal(mainOnly.length, 2);
 
     // Simulate interrupted write leaving invalid JSON in the main file.
     await writeFile(scanCachePath(), '{"id":"broken"', "utf8");
     const recovered = await loadScanCache();
     assert.equal(recovered.length, 2, "must fall back to .bak after corrupt main");
     assert.equal(await pathExists(scanCacheBackupPath()), true);
+  } finally {
+    if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
+    else process.env.XLAB_TOKEN_DATA_DIR = prev;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("saveScanCache skips identical rewrite and persists timestamp-sorted", async () => {
+  const root = path.join(process.cwd(), ".test-scan-cache-skip-" + Date.now());
+  const prev = process.env.XLAB_TOKEN_DATA_DIR;
+  process.env.XLAB_TOKEN_DATA_DIR = root;
+  try {
+    await mkdir(root, { recursive: true });
+    const events = [
+      evt({
+        id: "late",
+        agent: "grok",
+        timestamp: "2026-08-03T00:00:00.000Z",
+        inputTokens: 100,
+        totalTokens: 110,
+        estimatedCost: 1,
+      }),
+      evt({
+        id: "early",
+        agent: "grok",
+        timestamp: "2026-08-01T00:00:00.000Z",
+        inputTokens: 200,
+        totalTokens: 220,
+        estimatedCost: 2,
+      }),
+    ];
+    await saveScanCache(events, { mode: "full" });
+    const raw1 = await readFile(scanCachePath(), "utf8");
+    const parsed1 = JSON.parse(raw1) as UsageEvent[];
+    assert.equal(parsed1[0]?.id, "early", "full save must sort by timestamp ascending");
+    assert.equal(parsed1[1]?.id, "late");
+    const { stat } = await import("node:fs/promises");
+    const before = (await stat(scanCachePath())).mtimeMs;
+    // Identical content → no-op write (fingerprint short-circuit)
+    await saveScanCache(events, { mode: "full" });
+    const after = (await stat(scanCachePath())).mtimeMs;
+    assert.equal(after, before, "unchanged save must not rewrite main file");
+    assert.equal(
+      scanCacheFingerprint(parsed1),
+      scanCacheFingerprint(await loadScanCacheMainOnly()),
+    );
   } finally {
     if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
     else process.env.XLAB_TOKEN_DATA_DIR = prev;
@@ -552,7 +605,7 @@ test("restore accepts v1 settings-only backup", async () => {
 
 test("unified backup file includes portable project settings (no token)", () => {
   const s = buildSettingsBackup();
-  assert.equal(s.format, "xlab-token-backup");
+  assert.equal(s.format, "tokenlab");
   assert.ok(s.config.timezone);
   assert.ok(s.config.pricing);
   assert.ok(s.config.pricing?.currency);
