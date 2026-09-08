@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   buildDailyAgentModelRollups,
+  buildFullBackup,
   buildGistFullBackup,
   buildGistRestoreRollups,
   buildPeriodStats,
@@ -856,6 +857,32 @@ test("buildGistFullBackup is period-stats and much smaller than raw events", asy
   const rawSize = Buffer.byteLength(JSON.stringify(events), "utf8");
   const gistSize = Buffer.byteLength(JSON.stringify(backup), "utf8");
   assert.ok(gistSize < rawSize, `gist ${gistSize} should be < raw ${rawSize}`);
+});
+
+test("buildFullBackup uses compact Gist rollups instead of raw events", async () => {
+  const events = Array.from({ length: 2_000 }, (_, i) =>
+    evt({
+      id: `full-bulk-${i}`,
+      agent: i % 2 === 0 ? "grok" : "windsurf",
+      model: i % 3 === 0 ? "grok-4.5" : "swe-1-6",
+      timestamp: new Date(Date.now() - (i % 40) * 86_400_000).toISOString(),
+      inputTokens: 100 + i,
+      totalTokens: 110 + i,
+      estimatedCost: 0.01 * (i + 1),
+    }),
+  );
+  const backup = await buildFullBackup({ events, includeMirrors: false });
+  assert.equal(backup.scope, "full");
+  assert.equal(backup.formatVersion, 3);
+  assert.ok(backup.periodStats?.all?.byModel.length);
+  assert.ok(backup.periodStats?.all?.byAgent.length);
+  assert.ok((backup.events?.length || 0) < events.length);
+  assert.equal(backup.meta?.sourceEventCount, events.length);
+  assert.equal(backup.meta?.rollupEventCount, backup.events?.length);
+  assert.match(backup.meta?.note || "", /raw request rows omitted/);
+  const rawSize = Buffer.byteLength(JSON.stringify(events), "utf8");
+  const exportSize = Buffer.byteLength(JSON.stringify(backup), "utf8");
+  assert.ok(exportSize < rawSize, `export ${exportSize} should be < raw ${rawSize}`);
 });
 
 test("buildGistFullBackup multi-machine sums periodStats cost", async () => {

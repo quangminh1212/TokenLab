@@ -110,12 +110,9 @@ export interface XlabBackup {
   scope: BackupScope;
   /** Project settings (timezone, pricing, host/port, gist id/url) */
   config: PortableBackupConfig;
-  /**
-   * Usage by model & agent for Today / 24h / 7D / 30D / All.
-   * Always present on Gist; optional on full export.
-   */
+  /** Usage by model & agent for Today / 24h / 7D / 30D / All. */
   periodStats?: Partial<Record<GistPeriodKey, PeriodSnapshot>>;
-  /** Raw scan events (full) or hour/day rollups (period-stats / multi-machine) */
+  /** Compact hour/day rollups for full and period-stats backups. */
   events?: UsageEvent[];
   /** Cached OpenRouter model catalog (full scope) */
   openrouter?: {
@@ -1599,31 +1596,23 @@ export async function buildFullBackup(opts: {
   includeMirrors?: boolean;
   note?: string;
 }): Promise<XlabBackup> {
-  const base = buildSettingsBackup({
-    eventCountHint: opts.events.length,
-    note:
-      opts.note ||
-      "TokenLab backup file (full): settings + events + periodStats + OpenRouter + mirrors",
+  // Keep the downloadable full export aligned with Gist: preserve usage
+  // coverage through compact hour/day rollups instead of serializing every
+  // request row. Existing Gist rollups in the merged cache are passed as the
+  // remote slice so another machine's data is not lost on export.
+  const machineId = getMachineId();
+  const existingRollups = opts.events.filter(isGistRollupEvent);
+  const base = await buildGistFullBackup(opts.events, {
+    remoteEvents: existingRollups,
+    machineId,
   });
   base.scope = "full";
-
-  // Events (in-memory scan cache) — same objects when possible (avoid map clone RAM)
-  base.events = opts.events;
-
-  // Dashboard periods (same shape as Gist) so full export stays one format
-  try {
-    base.periodStats = buildPeriodStats(opts.events, base.config.timezone || "local");
-    const all = base.periodStats.all;
-    if (all) {
-      base.meta = {
-        ...base.meta,
-        modelCount: all.byModel.length,
-        agentCount: all.byAgent.length,
-      };
-    }
-  } catch {
-    /* optional — never fail full export */
-  }
+  base.meta = {
+    ...base.meta,
+    note:
+      (opts.note || base.meta?.note || "") +
+      " · compact usage rollups match Gist; raw request rows omitted",
+  };
 
   // OpenRouter catalog from memory or disk
   const memModels = getOpenRouterModelsSync();
@@ -1671,7 +1660,11 @@ export async function buildFullBackup(opts: {
 
   base.meta = {
     ...base.meta,
-    eventCount: base.events.length,
+    // Keep source count for UI/reporting; rollupEventCount is the serialized
+    // event count and is intentionally much smaller.
+    eventCount: opts.events.length,
+    sourceEventCount: opts.events.length,
+    rollupEventCount: base.events?.length || 0,
     openrouterModelCount: base.openrouter?.models.length || 0,
     mirrorFileCount,
     mirrorBytes,
