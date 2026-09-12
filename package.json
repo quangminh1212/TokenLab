@@ -34,7 +34,7 @@
     "generate-favicons": "node scripts/generate-favicons.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "os": [
     "darwin",
