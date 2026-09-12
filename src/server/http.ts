@@ -21,6 +21,8 @@ import {
   enforceMonotonicAgentDays,
   loadImportedEvents,
   loadScanCache,
+  dropPreviousAgentSourceEvents,
+  dropPreviousAgentSessionEvents,
   mergeEventsByIdPreferRicher,
   mergeLocalPreferOverGistRollups,
   migrateLegacyDataDir,
@@ -291,6 +293,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   };
   /** Shared promise so concurrent /api/scan waits for the in-flight scan (not empty cache). */
   let scanPromise: Promise<number> | null = null;
+  /** Last background light scan requested by the Recent requests feed. */
+  let lastRecentLightScanAt = 0;
+  const RECENT_LIGHT_SCAN_MIN_MS = 60_000;
   /** Bumps after each completed scan so UIs can reload when cache fills. */
   let scanRevision = 0;
   let scanUpdatedAt = 0;
@@ -410,6 +415,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         if (freshPaths.has(sp)) return false;
         return true;
       });
+      prevForMerge = dropPreviousAgentSessionEvents(prevForMerge, fresh, "grok");
+    }
+    if (fresh[0]?.agent === "claude-code") {
+      // Replace rows from the freshly parsed files so old cache entries from
+      // one-per-content-block parsing cannot survive a rescan.
+      prevForMerge = dropPreviousAgentSourceEvents(prevForMerge, fresh, "claude-code");
     }
     // Union by id; keep higher token/cost row when same id reappears.
     // Also keeps prev-only rows (already-scanned history) so we only *add*
@@ -480,7 +491,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
           // Never let a thinner rescan shrink per-agent day totals vs previous cache.
-          scanned = enforceMonotonicAgentDays(prev, scanned);
+          scanned = enforceMonotonicAgentDays(
+            dropPreviousAgentSessionEvents(
+              dropPreviousAgentSourceEvents(prev, scanned, "claude-code"),
+              scanned,
+              "grok",
+            ),
+            scanned,
+          );
           scanned = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
@@ -489,7 +507,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // Then high-water again so imported history cannot be wiped by a partial local day.
         let merged = mergeLocalPreferOverGistRollups(scanned, importedEvents);
         if (finalize) {
-          merged = enforceMonotonicAgentDays(prev, merged);
+          merged = enforceMonotonicAgentDays(
+            dropPreviousAgentSessionEvents(
+              dropPreviousAgentSourceEvents(prev, merged, "claude-code"),
+              merged,
+              "grok",
+            ),
+            merged,
+          );
           merged = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
           );
@@ -634,6 +659,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       }
     })();
     return scanPromise;
+  }
+
+  /**
+   * Keep non-router Recent requests fresh without making the API caller wait
+   * for a parser pass. Router mirrors are read directly by live-rate.ts; this
+   * light pass covers local Codex/Claude/Grok/OpenCode sources that only exist
+   * in the scan cache. Coalesce with boot/manual/periodic scans and rate-limit
+   * to avoid turning a polling dashboard into a full disk scan loop.
+   */
+  function scheduleRecentLightScan(): void {
+    const now = Date.now();
+    if (scanPromise || now - lastRecentLightScanAt < RECENT_LIGHT_SCAN_MIN_MS) return;
+    lastRecentLightScanAt = now;
+    void rescan({ full: false }).catch((err) => {
+      slog("[tokenlab] recent light scan failed:", err instanceof Error ? err.message : err);
+    });
   }
 
   // Do NOT block listen on the full scan — large agent datasets (100k+ events)
@@ -869,6 +910,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // only real per-call rows (no 298M-token estimated day blobs).
       const liveOnly = url.searchParams.get("live") !== "0";
       if (liveOnly) {
+        scheduleRecentLightScan();
         writeHeartbeat();
         if (!scanning) ensureCacheSorted();
         const sinceDate = parseSince(since, configuredTimeZone());
