@@ -13,9 +13,10 @@ import {
   downloadBackupFromGist,
   loadImportedEvents,
   loadScanCache,
-  mergeEventsByIdPreferRicher,
+  replaceFreshAgentSessionEvents,
   mergeLocalPreferOverGistRollups,
   migrateLegacyDataDir,
+  replaceFreshAgentSourceEvents,
   uploadBackupToGist,
 } from "./backup.js";
 import { installProcessGuard, startHeartbeat } from "./process-guard.js";
@@ -116,8 +117,15 @@ async function loadFullEvents(): Promise<UsageEvent[]> {
     loadScanCache(),
     loadImportedEvents(),
   ]);
-  // Union scanned + cached (richer rows win on id collisions)
-  const local = mergeEventsByIdPreferRicher(scanned, cached);
+  // Fresh Claude Code source rows replace pre-dedupe cache rows. Older cache
+  // versions used one id per repeated content block, so a plain union would
+  // keep the historical over-count forever.
+  let local = replaceFreshAgentSourceEvents(
+    scanned,
+    cached,
+    "claude-code",
+  );
+  local = replaceFreshAgentSessionEvents(scanned, local, "grok");
   // Then merge imported + drop same-machine Gist rollups when local covers key
   return mergeLocalPreferOverGistRollups(local, imported);
 }

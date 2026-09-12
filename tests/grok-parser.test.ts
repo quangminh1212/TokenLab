@@ -154,6 +154,109 @@ test("parseGrok reads snake-case cache fields from newer usage payloads", async 
   }
 });
 
+test("parseGrok uses usage.json snapshot without double-counting completed updates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-snapshot-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-snapshot");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-snapshot", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.5-build",
+        updated_at: "2026-08-05T10:00:02.000Z",
+      }),
+    );
+    const usage = {
+      updatedAt: "2026-08-05T10:00:01.000Z",
+      session: {
+        inputTokens: 100_000,
+        outputTokens: 2_000,
+        totalTokens: 102_000,
+        cachedReadTokens: 80_000,
+        cacheCreationTokens: 0,
+        modelCalls: 3,
+        costUsdTicks: 299_109_200,
+        primaryModelId: "grok-4.5-build",
+      },
+    };
+    await writeFile(path.join(sessionDir, "usage.json"), JSON.stringify(usage));
+
+    const completed = JSON.stringify({
+      timestamp: "2026-08-05T10:00:00.000Z",
+      method: "session/update",
+      params: {
+        sessionId: "sess-snapshot",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: "completed",
+          usage: usage.session,
+        },
+      },
+    });
+    const inProgress = JSON.stringify({
+      timestamp: "2026-08-05T10:00:02.000Z",
+      method: "session/update",
+      params: {
+        sessionId: "sess-snapshot",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "still working" },
+        },
+        _meta: { totalTokens: 40_000, promptId: "live" },
+      },
+    });
+    await writeFile(path.join(sessionDir, "updates.jsonl"), `${completed}\n${inProgress}\n`);
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 2);
+    const snapshot = events.find((e) => !e.estimated)!;
+    const residual = events.find((e) => e.estimated)!;
+    assert.equal(snapshot.totalTokens, 102_000);
+    assert.equal(snapshot.inputTokens, 20_000);
+    assert.equal(snapshot.cacheReadTokens, 80_000);
+    assert.equal(snapshot.requestCount, 3);
+    assert.equal(snapshot.sourcePath, path.join(sessionDir, "usage.json"));
+    assert.equal(residual.inputTokens, 40_000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGrok recovers pruned sessions from client-state/session-meta", async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), "xlab-grok-meta-"));
+  const root = path.join(parent, ".grok");
+  try {
+    await mkdir(path.join(root, "client-state"), { recursive: true });
+    const sessionId = "019f93c8-b594-7391-9505-ba4981098f0c";
+    await writeFile(
+      path.join(root, "client-state", "session-meta.json"),
+      JSON.stringify({
+        [sessionId]: {
+          usage: {
+            inputTokens: 120_000,
+            outputTokens: 3_000,
+            totalTokens: 123_000,
+            cachedReadTokens: 100_000,
+            modelCalls: 5,
+          },
+          customName: "old session",
+        },
+      }),
+    );
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.ok(events[0]!.id);
+    assert.equal(events[0]!.inputTokens, 20_000);
+    assert.equal(events[0]!.cacheReadTokens, 100_000);
+    assert.equal(events[0]!.outputTokens, 3_000);
+    assert.equal(events[0]!.requestCount, 5);
+    assert.equal(events[0]!.estimated, false);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
 test("parseGrok bills turn_completed without usage via prompt peak totalTokens", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-nou-"));
   try {
@@ -476,6 +579,120 @@ test("parseGrok falls back to chat estimate when updates has no usage", async ()
     // Over-count policy: synthetic injects are included in prompt estimate
     assert.ok((events[0]!.inputTokens ?? 0) > 1000);
     assert.ok((events[0]!.outputTokens ?? 0) > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGrok reads persisted usage.json when updates are unavailable", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-persisted-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-persisted");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "usage.json"),
+      JSON.stringify({
+        sessionId: "sess-persisted",
+        updatedAt: "2026-09-13T02:00:00.000Z",
+        session: {
+          inputTokens: 3_200,
+          outputTokens: 120,
+          cachedReadTokens: 700,
+          cacheCreationTokens: 11,
+          totalTokens: 3_320,
+          costUsdTicks: 2_000_000_000,
+        },
+        turns: [
+          {
+            turnNumber: 1,
+            endedAt: "2026-09-13T01:59:00.000Z",
+            inputTokens: 1_000,
+            outputTokens: 90,
+            cachedReadTokens: 700,
+            cacheCreationTokens: 11,
+            costUsdTicks: 1_250_000_000,
+            primaryModelId: "grok-4.6-build",
+          },
+          {
+            turnNumber: 2,
+            endedAt: "2026-09-13T02:00:00.000Z",
+            inputTokens: 2_200,
+            outputTokens: 30,
+            cachedReadTokens: 0,
+            cacheCreationTokens: 0,
+            costUsdTicks: 750_000_000,
+            primaryModelId: "grok-4.6-build",
+          },
+        ],
+      }),
+    );
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 2);
+    assert.ok(events.every((event) => event.estimated === false));
+    assert.ok(events.every((event) => event.sourcePath.endsWith("usage.json")));
+    assert.equal(events[0]!.model, "grok-4.6-build");
+    assert.equal(events[0]!.inputTokens, 300);
+    assert.equal(events[0]!.cacheReadTokens, 700);
+    assert.equal(events[0]!.cacheWriteTokens, 11);
+    assert.equal(events[0]!.totalTokens, 1_101);
+    assert.equal(events.reduce((sum, event) => sum + event.totalTokens, 0), 3_331);
+    assert.ok(Math.abs((events[0]!.estimatedCost ?? 0) - 0.125) < 1e-9);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGrok does not double-count usage.json with matching updates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-persisted-dedupe-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-persisted-dedupe");
+    await mkdir(sessionDir, { recursive: true });
+    const timestamp = "2026-09-13T03:00:00.000Z";
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-persisted-dedupe", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.6-build",
+        updated_at: timestamp,
+      }),
+    );
+    const usage = {
+      inputTokens: 1_000,
+      outputTokens: 90,
+      cachedReadTokens: 700,
+      cacheCreationTokens: 11,
+      costUsdTicks: 1_250_000_000,
+    };
+    await writeFile(
+      path.join(sessionDir, "updates.jsonl"),
+      JSON.stringify({
+        timestamp,
+        method: "session/update",
+        params: {
+          sessionId: "sess-persisted-dedupe",
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: "prompt-1",
+            usage,
+          },
+        },
+      }) + "\n",
+    );
+    await writeFile(
+      path.join(sessionDir, "usage.json"),
+      JSON.stringify({
+        sessionId: "sess-persisted-dedupe",
+        updatedAt: timestamp,
+        turns: [{ turnNumber: 1, endedAt: timestamp, ...usage }],
+      }),
+    );
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.sourcePath.endsWith("updates.jsonl"), true);
+    assert.equal(events[0]!.totalTokens, 1_101);
+    assert.ok(Math.abs((events[0]!.estimatedCost ?? 0) - 0.125) < 1e-9);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

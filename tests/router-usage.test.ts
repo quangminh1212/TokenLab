@@ -394,6 +394,47 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("uses LiteLLM model_group and maps legacy OpenClaw rows to glm-5.3", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-litellm-model-group-"));
+    try {
+      const rows = [
+        {
+          id: "grouped",
+          timestamp: "2026-08-01T10:00:00.000Z",
+          model: "openai/openclaw",
+          model_group: "glm-5.3",
+          provider: "openai",
+          promptTokens: 100,
+          completionTokens: 20,
+          cost: 0.01,
+          tokens: { prompt_tokens: 100, completion_tokens: 20 },
+        },
+        {
+          id: "legacy",
+          timestamp: "2026-08-01T10:01:00.000Z",
+          model: "openclaw",
+          provider: "openai",
+          promptTokens: 80,
+          completionTokens: 10,
+          cost: 0.01,
+          tokens: { prompt_tokens: 80, completion_tokens: 10 },
+        },
+      ];
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "litellm");
+      assert.equal(events.length, 2);
+      assert.ok(events.every((e) => e.model === "glm-5.3"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not stamp yesterday daily rollup into next local morning (Today leak)", async () => {
     // Reproduce: history spill at 17:12Z (00:12 UTC+7 next day) must NOT pull
     // the full previous UTC-day daily ($448-class) into TokenLab "Today".

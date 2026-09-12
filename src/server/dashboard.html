@@ -523,6 +523,47 @@
       return 'No requests yet.';
     }
 
+    function recentEventsForDisplay(eventsRes, since) {
+      let recent = Array.isArray(eventsRes && eventsRes.events) ? eventsRes.events : [];
+      // Client-side safety net if an older server build lacks since support
+      const t0 = parseSinceMs(since);
+      if (t0 != null) {
+        recent = recent.filter((e) => {
+          const t = new Date(e.timestamp).getTime();
+          return !Number.isNaN(t) && t >= t0;
+        });
+      }
+      // RECENT REQUESTS: real per-call rows + single-turn estimates only.
+      // Drop daily/model rollups and future-stamped rows (UI used to show them as "Today").
+      const nowMs = Date.now();
+      recent = recent.filter((e) => {
+        if (!e) return false;
+        const t = new Date(e.timestamp).getTime();
+        if (Number.isNaN(t)) return false;
+        // Future timestamps = day rollups / noon-UTC fakes — hide from Recent requests
+        if (t > nowMs + 5_000) return false;
+        const rc = e.requestCount;
+        if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
+        if (e.estimated) {
+          if (typeof rc === 'number' && Number.isFinite(rc) && rc > 1) return false;
+          const total =
+            (Number(e.totalTokens) || 0) ||
+            (Number(e.inputTokens) || 0) +
+              (Number(e.outputTokens) || 0) +
+              (Number(e.cacheReadTokens) || 0) +
+              (Number(e.cacheWriteTokens) || 0);
+          if (total > 2e6) return false;
+          if (total <= 0 && !(Number(e.estimatedCost) > 0)) return false;
+        }
+        return true;
+      });
+      // Ensure newest-first even if response order varies
+      return recent
+        .slice()
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, 25);
+    }
+
     function renderRecent(events) {
       if (!events.length) {
         $('recentBody').innerHTML = `<div class="chart-empty">${emptyMsg('recent')}</div>`;
@@ -808,46 +849,43 @@
       renderChart();
       renderTable();
 
-      let recent = Array.isArray(eventsRes.events) ? eventsRes.events : [];
-      // Client-side safety net if an older server build lacks since support
-      const t0 = parseSinceMs(since);
-      if (t0 != null) {
-        recent = recent.filter((e) => {
-          const t = new Date(e.timestamp).getTime();
-          return !Number.isNaN(t) && t >= t0;
-        });
-      }
-      // RECENT REQUESTS: real per-call rows + single-turn estimates only.
-      // Drop daily/model rollups and future-stamped rows (UI used to show them as "Today").
-      const nowMs = Date.now();
-      recent = recent.filter((e) => {
-        if (!e) return false;
-        const t = new Date(e.timestamp).getTime();
-        if (Number.isNaN(t)) return false;
-        // Future timestamps = day rollups / noon-UTC fakes — hide from Recent requests
-        if (t > nowMs + 5_000) return false;
-        const rc = e.requestCount;
-        if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
-        if (e.estimated) {
-          if (typeof rc === 'number' && Number.isFinite(rc) && rc > 1) return false;
-          const total =
-            (Number(e.totalTokens) || 0) ||
-            (Number(e.inputTokens) || 0) +
-              (Number(e.outputTokens) || 0) +
-              (Number(e.cacheReadTokens) || 0) +
-              (Number(e.cacheWriteTokens) || 0);
-          if (total > 2e6) return false;
-          if (total <= 0 && !(Number(e.estimatedCost) > 0)) return false;
-        }
-        return true;
-      });
-      // Ensure newest-first even if response order varies
-      recent = recent
-        .slice()
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      renderRecent(recent.slice(0, 25));
+      renderRecent(recentEventsForDisplay(eventsRes, since));
 
       scheduleScanPoll();
+    }
+
+    // Recent requests are a live feed and must not share the period/chart cache.
+    // Stats can stay memoized for instant tab switches; this lightweight poll
+    // keeps new local and mirror rows visible without a tight polling loop.
+    let recentRefreshInFlight = false;
+    async function refreshRecentOnly() {
+      if (recentRefreshInFlight) return;
+      recentRefreshInFlight = true;
+      const periodAtStart = state.period;
+      const since = sinceParam();
+      const qEvents = new URLSearchParams({ limit: '100', live: '1' });
+      if (since) qEvents.set('since', since);
+      try {
+        const [eventsRes, health] = await Promise.all([
+          fetch('/api/events?' + qEvents, { cache: 'no-store' }).then((r) => r.json()),
+          fetch('/api/health', { cache: 'no-store' }).then((r) => r.json()),
+        ]);
+        // A period switch happened while the request was in flight; let the
+        // normal load path render the selected period instead.
+        if (periodAtStart !== state.period) return;
+        state.scanning = Boolean(health.scanning);
+        if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
+        if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
+        if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
+        state.lastEventCount = health.eventCount || 0;
+        const scanHint = state.scanning ? ' · scanning…' : (state.awaitingData ? ' · waiting…' : '');
+        $('meta').textContent = `v${health.version || ''}${scanHint}`;
+        renderRecent(recentEventsForDisplay(eventsRes, since));
+      } catch {
+        // The regular dashboard load / SSE reconnect remains the fallback.
+      } finally {
+        recentRefreshInFlight = false;
+      }
     }
 
     let scanPollTimer = 0;
@@ -911,11 +949,17 @@
     };
 
     requestLoad();
-    // Background refresh — skip while scanning (SSE + scan poll handle that)
+    // Background refresh once per minute — skip while scanning (SSE + scan poll handle that)
     setInterval(() => {
       if (state.scanning) return;
       void requestLoad({ quiet: true });
-    }, 15_000);
+    }, 60_000);
+
+    // Keep only the Recent requests card hot; reloading full period stats every
+    // few seconds would defeat the period cache and make large histories lag.
+    setInterval(() => {
+      void refreshRecentOnly();
+    }, 60_000);
 
     // Realtime: pricing rate changes + scan completion (fills empty bootstrap UI)
     function watchLiveStream() {

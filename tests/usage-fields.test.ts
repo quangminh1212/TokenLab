@@ -78,3 +78,35 @@ test("extractTokenBuckets reads Orca full-input cache fields", () => {
     inputIncludesCache: true,
   });
 });
+
+test("extractTokenBuckets reads nested Claude cache creation without double-counting", () => {
+  const b = extractTokenBuckets({
+    input_tokens: 100,
+    output_tokens: 20,
+    cache_read_input_tokens: 50,
+    cache_creation_input_tokens: 0,
+    cache_creation: {
+      ephemeral_5m_input_tokens: 4,
+      ephemeral_1h_input_tokens: 6,
+      input_tokens: 10,
+    },
+  });
+  assert.equal(b?.cacheWriteTokens, 10);
+  assert.equal(b?.cacheReadTokens, 50);
+});
+
+test("extractTokenBuckets reads Codex cached_input_tokens fields", () => {
+  const b = extractTokenBuckets({
+    input_tokens: 1000,
+    cached_input_tokens: 800,
+    cache_write_input_tokens: 120,
+    output_tokens: 25,
+  });
+  assert.deepEqual(b, {
+    inputTokens: 1000,
+    outputTokens: 25,
+    cacheReadTokens: 800,
+    cacheWriteTokens: 120,
+    inputIncludesCache: true,
+  });
+});

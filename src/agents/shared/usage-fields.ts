@@ -69,12 +69,35 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       ? (nested.input_tokens_details as Record<string, unknown>)
       : null);
 
+  // Anthropic/Claude Code 2.x can expose cache creation as a nested
+  // breakdown while retaining the flat cache_creation_input_tokens field.
+  // The flat total wins when it is positive; otherwise sum the mutually
+  // exclusive ephemeral windows so cache-write usage is not lost.
+  const cacheCreationDetails =
+    nested.cache_creation && typeof nested.cache_creation === "object"
+      ? (nested.cache_creation as Record<string, unknown>)
+      : null;
+  const ephemeralCacheCreationTokens =
+    num(cacheCreationDetails?.ephemeral_5m_input_tokens) +
+    num(cacheCreationDetails?.ephemeral_1h_input_tokens);
+  const cacheCreationDetailTokens =
+    ephemeralCacheCreationTokens > 0
+      ? ephemeralCacheCreationTokens
+      : num(cacheCreationDetails?.input_tokens ?? cacheCreationDetails?.tokens);
+
+  const cacheReadDetails =
+    nested.cache_read && typeof nested.cache_read === "object"
+      ? (nested.cache_read as Record<string, unknown>)
+      : null;
+
   const cacheReadTokens = num(
     nested.cached_input_tokens ??
       nested.cachedInputTokens ??
       nested.cache_read_input_tokens ??
       nested.cache_read_tokens ??
       nested.cacheReadTokens ??
+      nested.cached_input_tokens ??
+      nested.cachedInputTokens ??
       nested.cachedReadTokens ??
       nested.cacheReadInputTokens ??
       nested.cache_read ??
@@ -92,7 +115,7 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       promptDetails?.cached_input_tokens ??
       promptDetails?.cachedInputTokens,
   );
-  const cacheWriteTokens = num(
+  const flatCacheWriteTokens = num(
     nested.cache_write_input_tokens ??
       nested.cacheWriteInputTokens ??
       nested.cache_creation_input_tokens ??
@@ -100,6 +123,7 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       nested.cache_creation_tokens ??
       nested.cacheCreationTokens ??
       nested.cache_write_tokens ??
+      nested.cacheWriteInputTokens ??
       nested.cacheWriteTokens ??
       nested.cache_write ??
       nested.cachedWriteTokens ??
@@ -110,8 +134,21 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       promptDetails?.cache_write_input_tokens ??
       promptDetails?.cacheWriteInputTokens,
   );
+  const cacheWriteTokens =
+    flatCacheWriteTokens > 0 ? flatCacheWriteTokens : cacheCreationDetailTokens;
 
-  if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) return null;
+  // A few OpenAI-compatible proxies put cache reads under a details object.
+  // Use it only when no flat alias was present so aliases are never summed.
+  const cacheReadWithDetails =
+    cacheReadTokens > 0
+      ? cacheReadTokens
+      : num(
+          cacheReadDetails?.input_tokens ??
+            cacheReadDetails?.cached_tokens ??
+            cacheReadDetails?.tokens,
+        );
+
+  if (inputTokens + outputTokens + cacheReadWithDetails + cacheWriteTokens <= 0) return null;
   const inputIncludesCache =
     nested.cached_input_tokens != null ||
     nested.cachedInputTokens != null ||
@@ -120,11 +157,12 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
     promptDetails?.cached_tokens != null ||
     promptDetails?.cachedTokens != null ||
     promptDetails?.cached_input_tokens != null ||
-    promptDetails?.cachedInputTokens != null;
+    promptDetails?.cachedInputTokens != null ||
+    cacheReadDetails != null;
   return {
     inputTokens,
     outputTokens,
-    cacheReadTokens,
+    cacheReadTokens: cacheReadWithDetails,
     cacheWriteTokens,
     ...(inputIncludesCache ? { inputIncludesCache: true } : {}),
   };
@@ -138,7 +176,20 @@ export function extractModel(...candidates: unknown[]): string | null {
     }
     if (c && typeof c === "object") {
       const o = c as Record<string, unknown>;
-      for (const key of ["model", "modelId", "model_id", "model_name", "rawModel"] as const) {
+      // Gateways such as LiteLLM expose the public model group separately from
+      // the provider-native model path. Prefer that public identity when it is
+      // available (for example openai/openclaw + model_group=glm-5.3).
+      for (const key of [
+        "model_group",
+        "modelGroup",
+        "displayModel",
+        "display_model",
+        "model",
+        "modelId",
+        "model_id",
+        "model_name",
+        "rawModel",
+      ] as const) {
         if (typeof o[key] === "string" && (o[key] as string).trim()) {
           const n = normalizeModelName(o[key] as string);
           if (n) return n;
