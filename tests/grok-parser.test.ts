@@ -107,6 +107,53 @@ test("parseGrok prefers turn_completed usage and splits cache", async () => {
   }
 });
 
+test("parseGrok reads snake-case cache fields from newer usage payloads", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-snake-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-snake");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-snake", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.6",
+        updated_at: "2026-08-05T10:00:00.000Z",
+      }),
+    );
+    await writeFile(
+      path.join(sessionDir, "updates.jsonl"),
+      JSON.stringify({
+        timestamp: 1785900000,
+        method: "session/update",
+        params: {
+          sessionId: "sess-snake",
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: "prompt-snake",
+            usage: {
+              input_tokens: 1_000,
+              cached_input_tokens: 700,
+              output_tokens: 90,
+              cache_write_input_tokens: 12,
+              reasoning_output_tokens: 20,
+            },
+          },
+        },
+      }) + "\n",
+    );
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.model, "grok-4.6");
+    assert.equal(events[0]!.inputTokens, 300);
+    assert.equal(events[0]!.cacheReadTokens, 700);
+    assert.equal(events[0]!.cacheWriteTokens, 12);
+    assert.equal(events[0]!.outputTokens, 90);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("parseGrok bills turn_completed without usage via prompt peak totalTokens", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-nou-"));
   try {

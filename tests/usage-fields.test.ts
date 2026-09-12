@@ -62,3 +62,19 @@ test("extractTokenBuckets reads cached_tokens and prompt_tokens_details", () => 
   assert.equal(nested?.inputTokens, 500);
   assert.equal(nested?.cacheReadTokens, 400);
 });
+
+test("extractTokenBuckets reads Orca full-input cache fields", () => {
+  const b = extractTokenBuckets({
+    input_tokens: 1_000,
+    cached_input_tokens: 800,
+    cache_write_input_tokens: 50,
+    reasoning_output_tokens: 7,
+  });
+  assert.deepEqual(b, {
+    inputTokens: 1_000,
+    outputTokens: 7,
+    cacheReadTokens: 800,
+    cacheWriteTokens: 50,
+    inputIncludesCache: true,
+  });
+});

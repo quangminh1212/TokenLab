@@ -212,4 +212,84 @@ describe("parseCodex", () => {
       delete process.env.TOKENLAB_DATA_DIR;
     }
   });
+
+  it("uses Orca per-request records once and ignores duplicate token snapshots", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tokenlab-codex-orca-"));
+    temps.push(root);
+    const sessions = path.join(root, "sessions");
+    await mkdir(sessions, { recursive: true });
+    const rollout = path.join(sessions, "rollout-orca.jsonl");
+
+    const first = {
+      input_tokens: 1_000,
+      cached_input_tokens: 400,
+      output_tokens: 20,
+      cache_write_input_tokens: 5,
+      total_tokens: 1_020,
+    };
+    const second = {
+      input_tokens: 1_300,
+      cached_input_tokens: 800,
+      output_tokens: 30,
+      cache_write_input_tokens: 0,
+      total_tokens: 1_330,
+    };
+    const lines = [
+      {
+        timestamp: "2026-08-02T03:00:00.000Z",
+        type: "token_usage_record",
+        payload: { type: "token_usage_record", usage: first },
+      },
+      {
+        timestamp: "2026-08-02T03:00:00.100Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { total_token_usage: first, last_token_usage: first },
+        },
+      },
+      {
+        timestamp: "2026-08-02T03:00:01.000Z",
+        type: "token_usage_record",
+        payload: { type: "token_usage_record", usage: second },
+      },
+      {
+        timestamp: "2026-08-02T03:00:01.100Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 2_300,
+              cached_input_tokens: 1_200,
+              output_tokens: 50,
+              cache_write_input_tokens: 5,
+            },
+            last_token_usage: second,
+          },
+        },
+      },
+    ];
+    await writeFile(rollout, lines.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf8");
+
+    const events = await parseCodex([root]);
+    assert.equal(events.length, 2);
+    assert.deepEqual(
+      events.map((e) => ({
+        input: e.inputTokens,
+        output: e.outputTokens,
+        cacheRead: e.cacheReadTokens,
+        cacheWrite: e.cacheWriteTokens,
+      })),
+      [
+        { input: 600, output: 20, cacheRead: 400, cacheWrite: 5 },
+        { input: 500, output: 30, cacheRead: 800, cacheWrite: 0 },
+      ],
+    );
+    assert.equal(
+      events.reduce((sum, e) => sum + (e.totalTokens || 0), 0),
+      2_355,
+      "full prompt totals should be preserved without duplicate snapshots",
+    );
+  });
 });

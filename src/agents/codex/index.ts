@@ -370,6 +370,45 @@ function coerceSqliteTime(v: unknown): string {
   return new Date().toISOString();
 }
 
+type CodexTokenBuckets = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+};
+
+/**
+ * Orca/Codex reports input_tokens as the full prompt when a cache field is
+ * present. Keep cache reads as their own bucket and make input the uncached
+ * portion so totals and pricing do not count the same tokens twice.
+ */
+function codexBuckets(usage: unknown): CodexTokenBuckets | null {
+  const buckets = extractTokenBuckets(usage);
+  if (!buckets) return null;
+  return {
+    inputTokens: Math.max(
+      0,
+      buckets.inputTokens - (buckets.inputIncludesCache ? buckets.cacheReadTokens : 0),
+    ),
+    outputTokens: Math.max(0, buckets.outputTokens),
+    cacheReadTokens: Math.max(0, buckets.cacheReadTokens),
+    cacheWriteTokens: Math.max(0, buckets.cacheWriteTokens),
+  };
+}
+
+function codexBucketKey(buckets: CodexTokenBuckets): string {
+  return [
+    buckets.inputTokens,
+    buckets.outputTokens,
+    buckets.cacheReadTokens,
+    buckets.cacheWriteTokens,
+  ].join(":");
+}
+
+function isTokenUsageRecord(type: string, payloadType: string): boolean {
+  return type === "token_usage_record" || payloadType === "token_usage_record";
+}
+
 function parseJsonlFile(
   events: UsageEvent[],
   text: string,
@@ -379,6 +418,33 @@ function parseJsonlFile(
   claimedProxyIds: Set<string>,
 ): void {
   const rows = parseJsonl(text);
+  // Orca writes both a per-request token_usage_record and a token_count
+  // snapshot for the same turn. The record is authoritative; snapshots are
+  // only used when a record is absent (older/newer format variants).
+  const tokenUsageRecordCounts = new Map<string, number>();
+  const tokenUsageRecordCount = rows.reduce<number>((count, row) => {
+    if (!row || typeof row !== "object") return count;
+    const r = row as Record<string, unknown>;
+    const type = String(r.type ?? r.event_type ?? r.kind ?? "");
+    const payload =
+      r.payload && typeof r.payload === "object" ? (r.payload as Record<string, unknown>) : null;
+    const payloadType = payload ? String(payload.type ?? "") : "";
+    if (!isTokenUsageRecord(type, payloadType)) return count;
+
+    const buckets = codexBuckets(
+      payload?.usage ??
+        r.usage ??
+        payload?.token_usage ??
+        r.token_usage ??
+        findUsageObject(r, type),
+    );
+    if (!buckets) return count;
+    const key = codexBucketKey(buckets);
+    tokenUsageRecordCounts.set(key, (tokenUsageRecordCounts.get(key) ?? 0) + 1);
+    return count + 1;
+  }, 0);
+  const consumedTokenUsageRecords = new Map<string, number>();
+
   let idx = 0;
   let lastIn = 0;
   let lastOut = 0;
@@ -462,42 +528,80 @@ function parseJsonlFile(
       }
     }
 
-    const usageObj = findUsageObject(r, type);
+    const tokenRecord = isTokenUsageRecord(type, payloadType);
+    const tokenCountSnapshot = type === "event_msg" && payloadType === "token_count";
+    let perCallUsage = tokenRecord;
+    let usageObj: unknown = findUsageObject(r, type);
+
+    if (tokenCountSnapshot) {
+      const info =
+        payload?.info && typeof payload.info === "object"
+          ? (payload.info as Record<string, unknown>)
+          : null;
+      const lastUsage = info?.last_token_usage;
+      const lastBuckets = codexBuckets(lastUsage);
+
+      if (tokenUsageRecordCount > 0 && lastBuckets) {
+        const key = codexBucketKey(lastBuckets);
+        const matched = consumedTokenUsageRecords.get(key) ?? 0;
+        const available = tokenUsageRecordCounts.get(key) ?? 0;
+        if (matched < available) {
+          // This is the mirror snapshot for a record already emitted.
+          consumedTokenUsageRecords.set(key, matched + 1);
+          continue;
+        }
+        // A last_token_usage without a matching record is a useful per-call
+        // fallback. It can happen when a rollout is still being written.
+        usageObj = lastUsage;
+        perCallUsage = true;
+      } else if (tokenUsageRecordCount > 0) {
+        // A cumulative snapshot without a per-turn value would duplicate all
+        // records in this file, so leave it out.
+        continue;
+      } else if (lastBuckets && !info?.total_token_usage) {
+        // Some versions emit only last_token_usage. Treat it as per-call.
+        usageObj = lastUsage;
+        perCallUsage = true;
+      }
+    }
+
     if (!usageObj) continue;
 
-    const buckets = extractTokenBuckets(usageObj);
+    const buckets = codexBuckets(usageObj);
     if (!buckets) continue;
 
     let { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = buckets;
 
-    // Detect cumulative counters (common in Codex token_count streams)
-    const looksCumulative =
-      cumulativeMode === true ||
-      (inputTokens >= lastIn &&
-        outputTokens >= lastOut &&
-        (inputTokens > lastIn || outputTokens > lastOut) &&
-        (lastIn > 0 || lastOut > 0 || type.includes("token")));
+    if (!perCallUsage) {
+      // Detect cumulative counters (common in Codex token_count streams).
+      const looksCumulative =
+        cumulativeMode === true ||
+        (inputTokens >= lastIn &&
+          outputTokens >= lastOut &&
+          (inputTokens > lastIn || outputTokens > lastOut) &&
+          (lastIn > 0 || lastOut > 0 || type.includes("token")));
 
-    if (looksCumulative && (inputTokens >= lastIn || outputTokens >= lastOut)) {
-      cumulativeMode = true;
-      const dIn = Math.max(0, inputTokens - lastIn);
-      const dOut = Math.max(0, outputTokens - lastOut);
-      const dCr = Math.max(0, cacheReadTokens - lastCr);
-      const dCw = Math.max(0, cacheWriteTokens - lastCw);
-      lastIn = inputTokens;
-      lastOut = outputTokens;
-      lastCr = cacheReadTokens;
-      lastCw = cacheWriteTokens;
-      inputTokens = dIn;
-      outputTokens = dOut;
-      cacheReadTokens = dCr;
-      cacheWriteTokens = dCw;
-    } else if (cumulativeMode !== true) {
-      // per-call absolute values
-      lastIn = 0;
-      lastOut = 0;
-      lastCr = 0;
-      lastCw = 0;
+      if (looksCumulative && (inputTokens >= lastIn || outputTokens >= lastOut)) {
+        cumulativeMode = true;
+        const dIn = Math.max(0, inputTokens - lastIn);
+        const dOut = Math.max(0, outputTokens - lastOut);
+        const dCr = Math.max(0, cacheReadTokens - lastCr);
+        const dCw = Math.max(0, cacheWriteTokens - lastCw);
+        lastIn = inputTokens;
+        lastOut = outputTokens;
+        lastCr = cacheReadTokens;
+        lastCw = cacheWriteTokens;
+        inputTokens = dIn;
+        outputTokens = dOut;
+        cacheReadTokens = dCr;
+        cacheWriteTokens = dCw;
+      } else if (cumulativeMode !== true) {
+        // per-call absolute values
+        lastIn = 0;
+        lastOut = 0;
+        lastCr = 0;
+        lastCw = 0;
+      }
     }
 
     if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) continue;
@@ -880,7 +984,7 @@ function collectFromJson(
     data.forEach((row, i) => {
       if (!row || typeof row !== "object") return;
       const r = row as Record<string, unknown>;
-      const buckets = extractTokenBuckets(r.usage ?? r.token_count ?? r);
+      const buckets = codexBuckets(r.usage ?? r.token_count ?? r);
       if (!buckets) return;
       events.push(
         applyPricing({
@@ -919,6 +1023,9 @@ export const agent: AgentModule = {
     const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
     return unique([
       expandHome(process.env.CODEX_HOME || path.join(home, ".codex")),
+      ...(process.env.ORCA_CODEX_HOME ? [expandHome(process.env.ORCA_CODEX_HOME)] : []),
+      // Orca desktop stores its Codex runtime outside the normal ~/.codex tree.
+      path.join(appData, "orca", "codex-runtime-home", "home"),
       path.join(home, ".codex"),
       path.join(xdgConfig, "codex"),
       path.join(appData, "Codex"),
