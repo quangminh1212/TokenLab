@@ -610,7 +610,7 @@ html.dark {
 .fetch-spin.hidden { display: none; }
 @keyframes u-spin { to { transform: rotate(360deg); } }
 
-/* Overview cards - 2 rows × 3 columns on desktop */
+/* Overview cards - 3 columns so six cards form two balanced rows */
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

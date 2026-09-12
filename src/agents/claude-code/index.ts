@@ -180,10 +180,13 @@ export async function parseClaudeCode(roots: string[]): Promise<UsageEvent[]> {
     const inputTokens = buckets.inputIncludesCache
       ? Math.max(0, buckets.inputTokens - buckets.cacheReadTokens)
       : buckets.inputTokens;
-    const model =
+    const rawModel =
       (typeof candidate.message.model === "string" && candidate.message.model) ||
       (typeof candidate.row.model === "string" && candidate.row.model) ||
       null;
+    // The LiteLLM route exposes its internal alias as `openclaw`, but this
+    // Claude Code route is actually backed by openclaw 5.3.
+    const model = rawModel?.toLowerCase() === "openclaw" ? "openclaw.3" : rawModel;
     events.push(
       applyPricing({
         id: stableId("claude-code", candidate.requestKey),
