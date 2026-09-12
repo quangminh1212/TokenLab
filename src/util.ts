@@ -276,6 +276,9 @@ export function normalizeModelName(model: string | null | undefined): string | n
   if (lower.startsWith("deep_seek")) m = "deepseek" + m.slice("deep_seek".length);
   // Digigo / digigo case
   if (lower === "digigo") m = "Digigo";
+  // LiteLLM internal alias for the openclaw 5.3 route (Claude Code / router SpendLogs)
+  // — display the real public model, not the router alias.
+  if (lower === "openclaw") m = "glm-5.3";
 
   return m || null;
 }

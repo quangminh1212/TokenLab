@@ -450,6 +450,14 @@ def _to_iso_z(ts: str) -> str:
 
 daily_ll = {}
 
+
+def _litellm_display_model(raw_model: str, model_group: str = "") -> str:
+    """Use LiteLLM's public model group, with the current OpenClaw alias fallback."""
+    display = (model_group or raw_model or "mixed").strip() or "mixed"
+    if display.lower() in ("openclaw", "openai/openclaw"):
+        return "glm-5.3"
+    return display
+
 # Cache lives in SpendLogs.metadata JSON (not cache_read_input_tokens columns):
 #   metadata.usage_object.prompt_tokens_details.cached_tokens
 #   metadata.additional_usage_values.prompt_tokens_details.cached_tokens
@@ -577,40 +585,44 @@ if raw_logs_day:
         }
 
 raw_by_model = _psql(
-    'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
-    "COALESCE(custom_llm_provider,''), COUNT(*), "
+    'SELECT ("startTime"::date)::text, '
+    "COALESCE(NULLIF(model_group,''), COALESCE(model,'mixed')), "
+    "COALESCE(model,'mixed'), COALESCE(custom_llm_provider,''), COUNT(*), "
     "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
     f"COALESCE(SUM(spend),0), COALESCE(SUM({_SQL_CACHE_READ}),0) "
     'FROM "LiteLLM_SpendLogs" '
     'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
-    "GROUP BY 1,2,3 ORDER BY 1"
+    "GROUP BY 1,2,3,4 ORDER BY 1"
 )
 if not raw_by_model:
     raw_by_model = _psql(
-        'SELECT ("startTime"::date)::text, COALESCE(model,\'mixed\'), '
-        "COALESCE(custom_llm_provider,''), COUNT(*), "
+        'SELECT ("startTime"::date)::text, '
+        "COALESCE(NULLIF(model_group,''), COALESCE(model,'mixed')), "
+        "COALESCE(model,'mixed'), COALESCE(custom_llm_provider,''), COUNT(*), "
         "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
         "COALESCE(SUM(spend),0), 0::bigint "
         'FROM "LiteLLM_SpendLogs" '
         'WHERE COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)>0 OR COALESCE(spend,0)>0 '
-        "GROUP BY 1,2,3 ORDER BY 1"
+        "GROUP BY 1,2,3,4 ORDER BY 1"
     )
 if raw_by_model:
     for line in raw_by_model.splitlines():
         parts = line.split("\t")
-        if len(parts) < 7:
+        if len(parts) < 8:
             continue
         date_key = (parts[0] or "").strip()[:10]
         if len(date_key) != 10:
             continue
-        model = (parts[1] or "mixed").strip() or "mixed"
-        provider = (parts[2] or "").strip()
+        model_group = (parts[1] or "").strip()
+        raw_model = (parts[2] or "mixed").strip() or "mixed"
+        model = _litellm_display_model(raw_model, model_group)
+        provider = (parts[3] or "").strip()
         try:
-            reqs = int(float(parts[3] or 0))
-            pt = int(float(parts[4] or 0))
-            ct = int(float(parts[5] or 0))
-            cost = float(parts[6] or 0)
-            cache_r = int(float(parts[7] or 0)) if len(parts) > 7 else 0
+            reqs = int(float(parts[4] or 0))
+            pt = int(float(parts[5] or 0))
+            ct = int(float(parts[6] or 0))
+            cost = float(parts[7] or 0)
+            cache_r = int(float(parts[8] or 0)) if len(parts) > 8 else 0
         except Exception:
             continue
         day = daily_ll.setdefault(date_key, {
@@ -624,7 +636,8 @@ if raw_by_model:
         mk = f"{model}|{provider}" if provider else model
         bm[mk] = {
             "requests": reqs, "promptTokens": pt, "completionTokens": ct,
-            "cachedTokens": max(0, cache_r), "cost": cost, "rawModel": model,
+            "cachedTokens": max(0, cache_r), "cost": cost, "model_group": model,
+            "rawModel": raw_model,
             "provider": provider or None,
         }
 
@@ -646,7 +659,8 @@ if raw_daily:
         date_key = (parts[0] or "").strip()[:10]
         if len(date_key) != 10:
             continue
-        model = (parts[1] or "").strip() or "mixed"
+        raw_model = (parts[1] or "").strip() or "mixed"
+        model = _litellm_display_model(raw_model)
         provider = (parts[2] or "").strip()
         try:
             pt = int(float(parts[3] or 0))
@@ -677,7 +691,8 @@ if raw_daily:
             day["cost"] = float(day.get("cost") or 0) + max(0.0, cost)
             row = bm.setdefault(mk, {
                 "requests": 0, "promptTokens": 0, "completionTokens": 0,
-                "cachedTokens": 0, "cost": 0.0, "rawModel": model,
+                "cachedTokens": 0, "cost": 0.0, "model_group": model,
+                "rawModel": raw_model,
                 "provider": provider or None,
             })
             row["requests"] = int(row.get("requests") or 0) + max(0, reqs)
@@ -686,7 +701,8 @@ if raw_daily:
             row["cost"] = float(row.get("cost") or 0) + max(0.0, cost)
         row = bm.setdefault(mk, {
             "requests": max(0, reqs), "promptTokens": max(0, pt), "completionTokens": max(0, ct),
-            "cachedTokens": 0, "cost": max(0.0, cost), "rawModel": model,
+            "cachedTokens": 0, "cost": max(0.0, cost), "model_group": model,
+            "rawModel": raw_model,
             "provider": provider or None,
         })
         prev_c = int(row.get("cachedTokens") or 0)
@@ -741,7 +757,9 @@ if raw_hist:
             continue
         rid = (parts[0] or "").strip()
         ts = _to_iso_z(parts[1] or "")
-        model = (parts[2] or "").strip() or "mixed"
+        raw_model = (parts[2] or "").strip() or "mixed"
+        model_group = (parts[9] or "").strip() if len(parts) > 9 else ""
+        model = _litellm_display_model(raw_model, model_group)
         provider = (parts[3] or "").strip()
         try:
             pt = int(float(parts[4] or 0))
@@ -776,6 +794,8 @@ if raw_hist:
             "id": rid or f"ll-{ts}-{model}-{pt}-{ct}",
             "timestamp": ts,
             "model": model,
+            "model_group": model,
+            "rawModel": raw_model,
             "provider": provider or None,
             "promptTokens": pt,
             "completionTokens": ct,

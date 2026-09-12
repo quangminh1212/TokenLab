@@ -88,6 +88,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let cache: UsageEvent[] = [];
   /** Parallel ms timestamps for O(log n) period filter (null while unsorted/dirty). */
   let cacheTs: number[] | null = null;
+  /**
+   * Stable read snapshot. Progressive scans replace `cache` several times while
+   * parsers finish; dashboard/API reads must keep using the last sorted snapshot
+   * instead of filtering a partial unsorted array on every request.
+   */
+  let readCache: UsageEvent[] = [];
+  let readCacheTs: number[] | null = null;
   /** Period aggregate memo: invalidated on scan / pricing changes. */
   const periodStatsMemo = new Map<
     string,
@@ -161,9 +168,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     ) {
       return liveRateMemo.value;
     }
+    const source = scanning ? readCache : cache;
+    const sourceTs = scanning ? readCacheTs : cacheTs;
     writeHeartbeat();
-    const value = await computeDashboardLiveRate(cache, mins, now, {
-      timestampsMs: cacheTs,
+    const value = await computeDashboardLiveRate(source, mins, now, {
+      timestampsMs: sourceTs,
     });
     writeHeartbeat();
     liveRateMemo = { at: now, scanRevision, windowMinutes: mins, value };
@@ -187,6 +196,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             return ts;
           })()
         : [];
+      // Publish only complete, timestamp-indexed snapshots to readers.
+      readCache = cache;
+      readCacheTs = cacheTs;
     } else {
       cache = events;
       cacheTs = null;
@@ -225,19 +237,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     since: string | null,
     until: string | null,
   ): { events: UsageEvent[]; timestampsMs: number[] | null } {
-    // While scanning, skip sort (progressive rebuilds are frequent); linear filter is fine.
-    if (scanning || !cacheTs || cacheTs.length !== cache.length) {
+    // While scanning, read the last complete snapshot. This keeps period tabs
+    // responsive while a large local parser is still producing fresh events.
+    const source = scanning ? readCache : cache;
+    const sourceTs = scanning ? readCacheTs : cacheTs;
+    if (!sourceTs || sourceTs.length !== source.length) {
       return {
-        events: filterByPeriod(cache, since, until, configuredTimeZone()),
+        events: filterByPeriod(source, since, until, configuredTimeZone()),
         timestampsMs: null,
       };
     }
-    return filterByPeriodSortedDetailed(cache, cacheTs, since, until, configuredTimeZone());
+    return filterByPeriodSortedDetailed(source, sourceTs, since, until, configuredTimeZone());
   }
 
   /** Reprice keeps timestamps/order — retain sort index, only invalidate period memo. */
   function repriceCache(forceTable: boolean): void {
     cache = repriceEvents(cache, { forceTable });
+    readCache = cache;
+    readCacheTs = cacheTs;
     periodStatsMemo.clear();
     liveRateMemo = null;
   }
@@ -349,17 +366,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
    * Full pass still covers every agent — keeps periodic work small & UI snappy.
    */
   const PERIODIC_LIGHT_AGENTS = new Set<string>([
+    "codex",
     "9router",
     "routerlab",
     "xlabrouter",
     "litellm",
-    "hermes",
-    "qwencoder",
-    "cursor",
-    "claude-code",
-    "codex",
-    "opencode",
-    "grok",
   ]);
 
   /** Safe log — never throw EPIPE into uncaughtException mid-scan. */
@@ -369,6 +380,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     } catch {
       /* EPIPE etc. */
     }
+  };
+
+  const grokReplacedSessions = new Set<string>();
+  const grokSessionKey = (sourcePath: unknown): string => {
+    if (typeof sourcePath !== "string") return "";
+    const tagged = sourcePath.match(/#([0-9a-f]{8}-[0-9a-f-]{27,})$/i);
+    if (tagged?.[1]) return tagged[1].toLowerCase();
+    const onDisk = sourcePath.match(
+      /[\\/]sessions[\\/][^\\/]+[\\/]([^\\/]+)[\\/](?:usage|updates|chat_history)\.json(?:l)?$/i,
+    );
+    return onDisk?.[1]?.toLowerCase() || "";
   };
 
   /**
@@ -394,22 +416,54 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if ((routerAgent || antigravityAgent) && fresh.length >= 5) {
       return fresh;
     }
+    // Codex light scans re-read only files whose mtime changed. Replace the
+    // previous rows for those files before unioning, otherwise a growing
+    // rollout would retain stale partial rows alongside the fresh snapshot.
+    const codexAgent = fresh[0]?.agent === "codex";
+    if (codexAgent) {
+      const sourceKey = (sourcePath: unknown): string => {
+        if (typeof sourcePath !== "string") return "";
+        return sourcePath
+          .split(" ← ", 1)[0]!
+          .replace(/\\/g, "/")
+          .toLowerCase();
+      };
+      const freshPaths = new Set(
+        fresh.map((e) => sourceKey(e.sourcePath)).filter((p): p is string => Boolean(p)),
+      );
+      if (freshPaths.size > 0) {
+        prev = prev.filter((e) => !freshPaths.has(sourceKey(e.sourcePath)));
+      }
+    }
     // Grok: drop prev estimated residual ghosts for session files re-scanned this pass.
     // Old residual ids baked peak totals into the hash so they never got replaced when
     // turn_completed.usage arrived (same path, different id → double-count + out=0 UI).
     let prevForMerge = prev;
     if (fresh[0]?.agent === "grok") {
+      const snapshotSessions = new Set<string>();
       const freshPaths = new Set<string>();
       for (const e of fresh) {
         if (typeof e.sourcePath === "string" && e.sourcePath) {
-          freshPaths.add(e.sourcePath.replace(/\\/g, "/").toLowerCase());
+          const source = e.sourcePath.replace(/\\/g, "/").toLowerCase();
+          freshPaths.add(source);
+          if (source.endsWith("usage.json") || source.includes("session-meta.json#")) {
+            const session = grokSessionKey(e.sourcePath);
+            if (session) snapshotSessions.add(session);
+          }
         }
       }
+      for (const session of snapshotSessions) grokReplacedSessions.add(session);
       prevForMerge = prev.filter((e) => {
-        if (e.agent !== "grok" || !e.estimated) return true;
-        if ((Number(e.outputTokens) || 0) > 0) return true;
+        if (e.agent !== "grok") return true;
         const sp =
           typeof e.sourcePath === "string" ? e.sourcePath.replace(/\\/g, "/").toLowerCase() : "";
+        const session = grokSessionKey(e.sourcePath);
+        // A usage.json/session-meta snapshot replaces every older per-turn row
+        // for that session; otherwise the aggregate would be added on top of
+        // the previous updates.jsonl rows during the warm-cache merge.
+        if (session && snapshotSessions.has(session)) return false;
+        if ((Number(e.outputTokens) || 0) > 0) return true;
+        if (!e.estimated) return true;
         if (!sp || !sp.endsWith("updates.jsonl")) return true;
         // Path re-scanned → fresh is authoritative for residuals on that file
         if (freshPaths.has(sp)) return false;
@@ -437,6 +491,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     // Coalesce concurrent rescans — never return mid-scan empty cache to callers.
     if (scanPromise) return scanPromise;
     const full = opts.full === true;
+    grokReplacedSessions.clear();
     scanning = true;
     // Keep previous cache visible until first progressive batch arrives
     broadcastStream({
@@ -469,6 +524,26 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       let progressBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
       let lastProgressPayload: Record<string, unknown> | null = null;
       let agentsDone = 0;
+      const codexReplacedPaths = new Set<string>();
+      const codexSourceKey = (sourcePath: unknown): string => {
+        if (typeof sourcePath !== "string") return "";
+        return sourcePath
+          .split(" ← ", 1)[0]!
+          .replace(/\\/g, "/")
+          .toLowerCase();
+      };
+      const previousForMonotonic = (): UsageEvent[] => {
+        if (codexReplacedPaths.size === 0 && grokReplacedSessions.size === 0) return prev;
+        return prev.filter((e) => {
+          if (e.agent === "codex" && codexReplacedPaths.has(codexSourceKey(e.sourcePath))) {
+            return false;
+          }
+          if (e.agent === "grok" && grokReplacedSessions.has(grokSessionKey(e.sourcePath))) {
+            return false;
+          }
+          return true;
+        });
+      };
 
       const rebuild = (force = false, finalize = false): void => {
         const now = Date.now();
@@ -491,9 +566,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
           // Never let a thinner rescan shrink per-agent day totals vs previous cache.
+          // Union semantics: previousForMonotonic() drops prev rows replaced by
+          // fresh codex/openclaw passes; then drop claude-code source rows and openclaw
+          // session rows superseded by this scan, so stale cache cannot survive.
           scanned = enforceMonotonicAgentDays(
             dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(prev, scanned, "claude-code"),
+              dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
               scanned,
               "grok",
             ),
@@ -509,9 +587,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         if (finalize) {
           merged = enforceMonotonicAgentDays(
             dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(prev, merged, "claude-code"),
+              dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
               merged,
-              "grok",
+              "openclaw",
             ),
             merged,
           );
@@ -553,6 +631,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
         await scanAll({
           enabled,
+          light: !full,
           // Light agents first (scanAll); 4-wide balances speed vs disk contention on Windows.
           concurrency: full ? 4 : 4,
           // Full: no timeout. Periodic: 90s soft cap (prev data kept on miss).
@@ -586,6 +665,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               // Parser returned empty but we already had data — keep previous
             } else {
               // Light by-id merge mid-scan (no router collapse) — big lag win.
+              if (agent === "codex") {
+                for (const e of events) {
+                  const source = codexSourceKey(e.sourcePath);
+                  if (source) codexReplacedPaths.add(source);
+                }
+              }
               byAgent.set(agent, mergeAgentScanLight(events, prevForAgent));
               rebuild(false, false);
             }
@@ -823,7 +908,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         node: process.version,
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         agentsDetected: agents.filter((a) => a.detected).map((a) => a.id),
-        eventCount: cache.length,
+        // Keep the dashboard's visible count stable while a progressive scan
+        // is replacing the write-side cache.
+        eventCount: scanning ? readCache.length : cache.length,
         scanning,
         scanRevision,
         scanUpdatedAt,
@@ -913,19 +1000,21 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         scheduleRecentLightScan();
         writeHeartbeat();
         if (!scanning) ensureCacheSorted();
+        const source = scanning ? readCache : cache;
+        const sourceTs = scanning ? readCacheTs : cacheTs;
         const sinceDate = parseSince(since, configuredTimeZone());
         const untilDate = until ? new Date(until) : null;
         const sinceMs = sinceDate ? sinceDate.getTime() : null;
         const untilMs =
           untilDate && !Number.isNaN(untilDate.getTime()) ? untilDate.getTime() : null;
         // Server already filters by sinceMs — no second full-list filterByPeriod needed
-        let list = await buildRecentLiveEvents(cache, {
+        let list = await buildRecentLiveEvents(source, {
           limit: Math.min(200, Math.max(limit, 40)),
           agent: agent || null,
           nowMs: Date.now(),
           sinceMs,
           untilMs,
-          timestampsMs: cacheTs,
+          timestampsMs: sourceTs,
         });
         writeHeartbeat();
         if (agent) list = list.filter((e) => e.agent === agent);
@@ -1510,7 +1599,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         const script = await resolveSyncScript();
         if (!script) return false;
         const ok = await new Promise<boolean>((resolve) => {
-          const child = spawn("python", [script], {
+          // python.exe still creates a console host on this Windows install
+          // even with windowsHide, which flashes a CMD window on every sync.
+          // pythonw.exe has no console subsystem; keep python on other hosts.
+          const python = process.platform === "win32" ? "pythonw.exe" : "python";
+          const child = spawn(python, [script], {
             stdio: "ignore",
             windowsHide: true,
             env: { ...process.env },
@@ -1545,13 +1638,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     return mirrorSyncPromise;
   }
 
-  // Boot: sync remote 9router usage then full scan so first paint is not stale.
+  // Boot: serve the warm cache first. A full local scan can take minutes on a
+  // machine with large Codex/Claude/Grok histories, so do not compete with the
+  // first dashboard paint when a valid scan cache already exists.
   void syncVpsMirrors("boot", 120_000)
     .catch(() => false)
     .finally(() => {
-      void rescan({ full: true }).catch((err) => {
-        console.error("[tokenlab] initial full scan failed:", err instanceof Error ? err.message : err);
-      });
+      if (cache.length === 0) {
+        void rescan({ full: true }).catch((err) => {
+          console.error("[tokenlab] initial full scan failed:", err instanceof Error ? err.message : err);
+        });
+        return;
+      }
+      // Give the browser a short quiet window to render the warm snapshot,
+      // then refresh only hot remote mirrors. Manual Refresh remains the
+      // explicit full historical scan for local agents.
+      const bootLightScan = setTimeout(() => {
+        void rescan({ full: false }).catch((err) => {
+          console.error("[tokenlab] initial light scan failed:", err instanceof Error ? err.message : err);
+        });
+      }, 2_500);
+      bootLightScan.unref?.();
+      console.log("[tokenlab] warm cache served; deferred full local scan (use Refresh for a full scan)");
     });
 
   let periodicTick = 0;
