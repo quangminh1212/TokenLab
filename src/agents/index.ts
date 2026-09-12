@@ -134,6 +134,8 @@ export type ScanAllOptions = {
    * On timeout the agent contributes 0 events for this pass (server unions previous).
    */
   timeoutMs?: number;
+  /** Use an agent's optional recent/incremental parser when available. */
+  light?: boolean;
   /** Called after each agent finishes so the server can stream progressive totals. */
   onAgentDone?: (info: { agent: AgentId; events: UsageEvent[]; durationMs: number; error?: string }) => void;
 };
@@ -185,7 +187,7 @@ export async function scanAll(
   enabledOrOpts?: Partial<Record<AgentId, boolean>> | ScanAllOptions,
 ): Promise<UsageEvent[]> {
   const opts: ScanAllOptions =
-    enabledOrOpts && ("enabled" in enabledOrOpts || "concurrency" in enabledOrOpts || "timeoutMs" in enabledOrOpts || "onAgentDone" in enabledOrOpts)
+    enabledOrOpts && ("enabled" in enabledOrOpts || "concurrency" in enabledOrOpts || "timeoutMs" in enabledOrOpts || "light" in enabledOrOpts || "onAgentDone" in enabledOrOpts)
       ? (enabledOrOpts as ScanAllOptions)
       : { enabled: enabledOrOpts as Partial<Record<AgentId, boolean>> | undefined };
 
@@ -201,14 +203,16 @@ export async function scanAll(
     await Promise.all(
       AGENTS.map(async (mod): Promise<Job | null> => {
         if (enabled && enabled[mod.id] === false) return null;
-        if (!mod.parse) return null;
+        if (!mod.parse && !(opts.light && mod.parseLight)) return null;
         const candidateRoots = mod.roots().filter(Boolean);
         const checks = await Promise.all(
           candidateRoots.map(async (r) => ((await pathExists(r)) ? r : "")),
         );
         const roots = checks.filter(Boolean);
         if (roots.length === 0) return null;
-        return { id: mod.id, label: mod.label, roots, parse: mod.parse };
+        const parse = opts.light && mod.parseLight ? mod.parseLight : mod.parse;
+        if (!parse) return null;
+        return { id: mod.id, label: mod.label, roots, parse };
       }),
     )
   ).filter((j): j is Job => j != null);

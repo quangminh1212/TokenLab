@@ -434,6 +434,14 @@ export function preferRicherEvent(prev: UsageEvent, next: UsageEvent): UsageEven
   if (nextModel && !prevModel) return next;
   if (prevModel && !nextModel) return prev;
 
+  // A parser may learn cache fields on a later pass without changing the
+  // request's input/output totals. Prefer that richer row so warm caches do
+  // not permanently hide Codex cached-input accounting.
+  const prevCache = (Number(prev.cacheReadTokens) || 0) + (Number(prev.cacheWriteTokens) || 0);
+  const nextCache = (Number(next.cacheReadTokens) || 0) + (Number(next.cacheWriteTokens) || 0);
+  if (nextCache > prevCache) return next;
+  if (prevCache > nextCache) return prev;
+
   if ((Number(next.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0)) return next;
   return prev;
 }
