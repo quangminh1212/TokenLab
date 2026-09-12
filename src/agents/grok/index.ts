@@ -128,30 +128,52 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
   // 2) Real usage/residuals from updates.jsonl
   let hadRealUsage = false;
   const updatesPath = path.join(dir, "updates.jsonl");
+  let fromUpdates: UsageEvent[] = [];
   // parseUpdatesUsage no-ops on missing file via stream error → empty; check first
   if (await pathExists(updatesPath)) {
-    const fromUpdates = await parseUpdatesUsage(updatesPath, {
+    fromUpdates = await parseUpdatesUsage(updatesPath, {
       sessionId,
       model,
       workspace,
       fallbackTs: ts,
     });
-    if (fromUpdates.length > 0) {
-      const latestRealTs = latestEventTimestamp(fromUpdates.filter((e) => !e.estimated));
-      const snapshotTs = usageSnapshot ? Date.parse(usageSnapshot.timestamp) : NaN;
-      // If usage.json is older than a completed update, the update file is the
-      // safer complete source for this session. Otherwise the snapshot already
-      // includes those completed rows and only residuals must be added.
-      if (!usageSnapshot || (latestRealTs != null && (!Number.isFinite(snapshotTs) || latestRealTs > snapshotTs + 1000))) {
-        events.push(...fromUpdates);
-        hadRealUsage = fromUpdates.some((e) => !e.estimated);
-      } else {
-        events.push(...fromUpdates.filter((e) => e.estimated));
-      }
-    }
   }
 
-  if (usageSnapshot && !events.some((e) => !e.estimated)) {
+  // 2a) Legacy turns[] usage.json export — per-turn events are the
+  // authoritative source when present (never emit session rollup too).
+  const persisted = await parsePersistedUsage(usagePath, {
+    sessionId,
+    model,
+    workspace,
+    fallbackTs: ts,
+  });
+  const realUpdates = fromUpdates.filter((e) => !e.estimated);
+  if (
+    persisted.events.length > 0 &&
+    (realUpdates.length === 0 || persistedUsageIsRicher(persisted, realUpdates))
+  ) {
+    events.push(...persisted.events);
+    // Keep only usage written after the persisted rollup (active turn only).
+    if (persisted.updatedAt) {
+      events.push(
+        ...fromUpdates.filter((e) => isAfterTimestamp(e.timestamp, persisted.updatedAt!)),
+      );
+    }
+  } else if (fromUpdates.length > 0) {
+    const latestRealTs = latestEventTimestamp(fromUpdates.filter((e) => !e.estimated));
+    const snapshotTs = usageSnapshot ? Date.parse(usageSnapshot.timestamp) : NaN;
+    // If usage.json is older than a completed update, the update file is the
+    // safer complete source for this session. Otherwise the snapshot already
+    // includes those completed rows and only residuals must be added.
+    if (!usageSnapshot || (latestRealTs != null && (!Number.isFinite(snapshotTs) || latestRealTs > snapshotTs + 1000))) {
+      events.push(...fromUpdates);
+    } else {
+      events.push(...fromUpdates.filter((e) => e.estimated));
+    }
+  }
+  hadRealUsage = events.some((e) => !e.estimated);
+
+  if (usageSnapshot && !hadRealUsage) {
     events.unshift(usageSnapshot);
     hadRealUsage = true;
   }
@@ -801,6 +823,8 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
 }
 
 function modelFromUsage(usage: Record<string, unknown>, fallback: string): string {
+  const primary = usage.primaryModelId ?? usage.primary_model_id;
+  if (typeof primary === "string" && primary) return primary;
   const modelUsage = usage.modelUsage as Record<string, unknown> | undefined;
   if (!modelUsage || typeof modelUsage !== "object") return fallback;
   const keys = Object.keys(modelUsage);
@@ -863,6 +887,149 @@ function extractText(content: unknown): string {
   return "";
 }
 
+
+function validTimestamp(value: unknown): string | null {
+  if (typeof value === "string" && value.trim() && !Number.isNaN(Date.parse(value))) {
+    return new Date(value).toISOString();
+  }
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const ms = value > 1e12 ? value : value * 1000;
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return null;
+}
+
+function persistedUsageIsRicher(
+  persisted: PersistedGrokUsage,
+  updates: UsageEvent[],
+): boolean {
+  let updateTokens = 0;
+  let updateCost = 0;
+  for (const e of updates) {
+    updateTokens += Number(e.totalTokens) || 0;
+    updateCost += Number(e.estimatedCost) || 0;
+  }
+  if (persisted.tokenWeight > updateTokens * 1.001) return true;
+  if (updateTokens > persisted.tokenWeight * 1.001) return false;
+  return persisted.routerCost > updateCost * 1.001;
+}
+
+function isAfterTimestamp(timestamp: string, boundary: string): boolean {
+  const a = Date.parse(timestamp);
+  const b = Date.parse(boundary);
+  return Number.isFinite(a) && Number.isFinite(b) && a > b;
+}
+
+// ===== Best-of-both merge: persisted usage.json turns[] (from feat branch) =====
+
+type PersistedGrokUsage = {
+  events: UsageEvent[];
+  updatedAt: string | null;
+  tokenWeight: number;
+  routerCost: number;
+};
+
+async function parsePersistedUsage(
+  file: string,
+  ctx: {
+    sessionId: string;
+    model: string;
+    workspace: string | null;
+    fallbackTs: string;
+  },
+): Promise<PersistedGrokUsage> {
+  const empty: PersistedGrokUsage = {
+    events: [],
+    updatedAt: null,
+    tokenWeight: 0,
+    routerCost: 0,
+  };
+  const text = await readText(file);
+  if (!text) return empty;
+
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+    raw = parsed as Record<string, unknown>;
+  } catch {
+    return empty;
+  }
+
+  const updatedAt = validTimestamp(raw.updatedAt) || validTimestamp(raw.updated_at);
+  const turns = Array.isArray(raw.turns) ? raw.turns : [];
+  const events: UsageEvent[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    if (!turn || typeof turn !== "object" || Array.isArray(turn)) continue;
+    const row = turn as Record<string, unknown>;
+    const buckets = bucketsFromUsage(row);
+    if (!buckets) continue;
+    const { routerCost, ...tokenBuckets } = buckets;
+    const turnNumber =
+      typeof row.turnNumber === "number" || typeof row.turn_number === "number"
+        ? String(row.turnNumber ?? row.turn_number)
+        : String(i + 1);
+    const timestamp =
+      validTimestamp(row.endedAt) ||
+      validTimestamp(row.ended_at) ||
+      validTimestamp(row.updatedAt) ||
+      updatedAt ||
+      ctx.fallbackTs;
+    events.push(
+      applyPricing({
+        id: stableId("grok", ctx.sessionId, "usage-turn", turnNumber),
+        agent: "grok",
+        model: modelFromUsage(row, ctx.model),
+        timestamp,
+        ...tokenBuckets,
+        ...(routerCost != null ? { routerCost } : {}),
+        workspace: ctx.workspace,
+        sourcePath: file,
+        estimated: false,
+      }),
+    );
+  }
+
+  // If the export has no per-turn list, retain the session rollup as one
+  // event. Never emit both session and turns: session is cumulative.
+  if (events.length === 0) {
+    const session =
+      raw.session && typeof raw.session === "object" && !Array.isArray(raw.session)
+        ? (raw.session as Record<string, unknown>)
+        : null;
+    if (session) {
+      const buckets = bucketsFromUsage(session);
+      if (buckets) {
+        const { routerCost, ...tokenBuckets } = buckets;
+        events.push(
+          applyPricing({
+            id: stableId("grok", ctx.sessionId, "usage-session"),
+            agent: "grok",
+            model: modelFromUsage(session, ctx.model),
+            timestamp: updatedAt || ctx.fallbackTs,
+            ...tokenBuckets,
+            ...(routerCost != null ? { routerCost } : {}),
+            workspace: ctx.workspace,
+            sourcePath: file,
+            estimated: false,
+          }),
+        );
+      }
+    }
+  }
+
+  let tokenWeight = 0;
+  let routerCost = 0;
+  for (const e of events) {
+    tokenWeight += Number(e.totalTokens) || 0;
+    // applyPricing stores a positive router-reported cost in estimatedCost;
+    // UsageEvent intentionally has no separate routerCost field.
+    routerCost += Number(e.estimatedCost) || 0;
+  }
+  return { events, updatedAt, tokenWeight, routerCost };
+}
 export const agent: AgentModule = {
   id: "grok",
   label: "Grok (xAI)",

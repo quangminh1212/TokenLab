@@ -669,7 +669,9 @@ test("buildPeriodStats covers byModel + byAgent for all dashboard periods", () =
 });
 
 test("buildGistRestoreRollups uses hour buckets for recent, day for older", () => {
-  const now = Date.now();
+  // Pin `now` at HH:15 so the 30-minute-old and 20-minute-old events always
+  // share the same hour bucket regardless of wall-clock minute drift.
+  const now = new Date(`${new Date().toISOString().slice(0, 10)}T12:15:00.000Z`).getTime();
   const events = [
     evt({
       id: "r1",
