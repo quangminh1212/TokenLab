@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Live-rate engine** — rewritten rate computation (`live-rate.ts`) with faster
   per-period queries and a period filter index (sorted events + parallel ms
   index for O(log n) range scans).
+- **Node engines requirement raised to `>=22.5.0`** — the parser stack reads
+  agent state DBs via the built-in `node:sqlite` module (Node 22.5+).
 - **Claude Code cache reconciliation** — fresh source rows now replace
   pre-dedupe cache rows (`replaceFreshAgentSourceEvents`), fixing historical
   over-counting from one-id-per-content-block cache versions.
