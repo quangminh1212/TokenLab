@@ -264,7 +264,16 @@ function notePromptPeak(line: string, promptPeak: Map<string, PromptPeak>): void
   const prev = promptPeak.get(promptId) ?? { total: 0, cached: 0, outChars: 0 };
   let changed = false;
 
-  if (line.includes("totalTokens") || line.includes("cachedReadTokens")) {
+  if (
+    line.includes("totalTokens") ||
+    line.includes("cachedReadTokens") ||
+    line.includes("cached_input_tokens") ||
+    line.includes("cachedInputTokens") ||
+    line.includes("cache_read_input_tokens") ||
+    line.includes("cacheReadInputTokens") ||
+    line.includes("cached_tokens") ||
+    line.includes("cache_read_tokens")
+  ) {
     const tm = line.match(/"totalTokens"\s*:\s*(\d+)/);
     if (tm) {
       const tt = Number(tm[1]);
@@ -274,10 +283,9 @@ function notePromptPeak(line: string, promptPeak: Map<string, PromptPeak>): void
       }
     }
     // Stream meta sometimes reports cache hits before turn_completed.usage
-    const cm =
-      line.match(/"cachedReadTokens"\s*:\s*(\d+)/) ??
-      line.match(/"cached_tokens"\s*:\s*(\d+)/) ??
-      line.match(/"cache_read_tokens"\s*:\s*(\d+)/);
+    const cm = line.match(
+      /"(?:cachedReadTokens|cached_input_tokens|cachedInputTokens|cache_read_input_tokens|cacheReadInputTokens|cached_tokens|cache_read_tokens)"\s*:\s*(\d+)/,
+    );
     if (cm) {
       const cr = Number(cm[1]);
       if (Number.isFinite(cr) && cr > prev.cached) {
@@ -382,10 +390,18 @@ async function parseUpdatesUsage(
             if (Number.isFinite(tt) && tt > maxStreamTokens) maxStreamTokens = tt;
           }
         }
-        if (line.includes("cachedReadTokens") || line.includes("cached_tokens")) {
-          const cm =
-            line.match(/"cachedReadTokens"\s*:\s*(\d+)/) ??
-            line.match(/"cached_tokens"\s*:\s*(\d+)/);
+        if (
+          line.includes("cachedReadTokens") ||
+          line.includes("cached_input_tokens") ||
+          line.includes("cachedInputTokens") ||
+          line.includes("cache_read_input_tokens") ||
+          line.includes("cacheReadInputTokens") ||
+          line.includes("cached_tokens") ||
+          line.includes("cache_read_tokens")
+        ) {
+          const cm = line.match(
+            /"(?:cachedReadTokens|cached_input_tokens|cachedInputTokens|cache_read_input_tokens|cacheReadInputTokens|cached_tokens|cache_read_tokens)"\s*:\s*(\d+)/,
+          );
           if (cm) {
             const cr = Number(cm[1]);
             if (Number.isFinite(cr) && cr > maxStreamCached) maxStreamCached = cr;
@@ -567,7 +583,12 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
   // Reasoning is usually already folded into outputTokens (total = input + output).
   // Only fill from reasoning when output is missing or clearly smaller than reasoning alone.
   const reasoning = num(
-    usage.reasoningTokens ?? usage.reasoning_tokens ?? usage.thinking_tokens,
+    usage.reasoningTokens ??
+      usage.reasoning_tokens ??
+      usage.reasoning_output_tokens ??
+      usage.reasoningOutputTokens ??
+      usage.thinking_tokens ??
+      usage.thinkingOutputTokens,
   );
   if (reasoning > 0) {
     if (output <= 0) output = reasoning;
@@ -577,17 +598,23 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
 
   const cacheRead = num(
     usage.cachedReadTokens ??
+      usage.cached_input_tokens ??
+      usage.cachedInputTokens ??
       usage.cache_read_input_tokens ??
       usage.cacheReadInputTokens ??
       usage.cache_read_tokens ??
       usage.cacheReadTokens ??
-      usage.cached_tokens,
+      usage.cached_tokens ??
+      usage.cached_content_token_count ??
+      usage.cachedContentTokenCount,
   );
   // Grok CLI field is cacheCreationTokens (not cache_creation_input_tokens)
   const cacheWrite = num(
     usage.cacheCreationTokens ??
       usage.cache_creation_tokens ??
       usage.cache_creation_input_tokens ??
+      usage.cache_write_input_tokens ??
+      usage.cacheWriteInputTokens ??
       usage.cacheWriteTokens ??
       usage.cache_write_tokens ??
       usage.cachedWriteTokens,

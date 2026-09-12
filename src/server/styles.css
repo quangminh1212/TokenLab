@@ -610,17 +610,11 @@ html.dark {
 .fetch-spin.hidden { display: none; }
 @keyframes u-spin { to { transform: rotate(360deg); } }
 
-/* Overview cards - 6 col (incl. live Req/min 3m) */
+/* Overview cards - 2 rows × 3 columns on desktop */
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
-}
-@media (max-width: 1280px) {
-  .overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-@media (max-width: 1100px) {
-  .overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

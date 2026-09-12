@@ -5,6 +5,8 @@ export interface TokenBuckets {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** Some providers report prompt/input as a full value that already includes cache reads. */
+  inputIncludesCache?: boolean;
 }
 
 /** Extract token buckets from heterogeneous vendor usage objects. */
@@ -35,7 +37,7 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       nested.total_input_tokens ??
       nested.input_other,
   );
-  const outputTokens = num(
+  const explicitOutputTokens = num(
     nested.output_tokens ??
       nested.outputTokens ??
       nested.completion_tokens ??
@@ -45,6 +47,16 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       nested.total_output_tokens ??
       nested.completion,
   );
+  // Codex/Orca can emit reasoning_output_tokens alongside (or instead of)
+  // output_tokens. In the normal shape reasoning is already included in
+  // output_tokens, so only use it as a fallback when output is absent/zero.
+  const reasoningOutputTokens = num(
+    nested.reasoning_output_tokens ??
+      nested.reasoningOutputTokens ??
+      nested.reasoning_tokens ??
+      nested.reasoningTokens,
+  );
+  const outputTokens = explicitOutputTokens > 0 ? explicitOutputTokens : reasoningOutputTokens;
   // Nested OpenAI / LiteLLM shapes: prompt_tokens_details.cached_tokens
   const promptDetails =
     (nested.prompt_tokens_details && typeof nested.prompt_tokens_details === "object"
@@ -58,7 +70,9 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       : null);
 
   const cacheReadTokens = num(
-    nested.cache_read_input_tokens ??
+    nested.cached_input_tokens ??
+      nested.cachedInputTokens ??
+      nested.cache_read_input_tokens ??
       nested.cache_read_tokens ??
       nested.cacheReadTokens ??
       nested.cachedReadTokens ??
@@ -74,23 +88,46 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
       promptDetails?.cached_tokens ??
       promptDetails?.cache_read_tokens ??
       promptDetails?.cachedTokens ??
-      promptDetails?.cache_read_input_tokens,
+      promptDetails?.cache_read_input_tokens ??
+      promptDetails?.cached_input_tokens ??
+      promptDetails?.cachedInputTokens,
   );
   const cacheWriteTokens = num(
-    nested.cache_creation_input_tokens ??
+    nested.cache_write_input_tokens ??
+      nested.cacheWriteInputTokens ??
+      nested.cache_creation_input_tokens ??
+      nested.cacheCreationInputTokens ??
+      nested.cache_creation_tokens ??
+      nested.cacheCreationTokens ??
       nested.cache_write_tokens ??
       nested.cacheWriteTokens ??
       nested.cache_write ??
-      nested.cache_creation_tokens ??
       nested.cachedWriteTokens ??
       nested.input_cache_creation ??
       nested.total_cache_write_tokens ??
       promptDetails?.cache_write_tokens ??
-      promptDetails?.cache_creation_input_tokens,
+      promptDetails?.cache_creation_input_tokens ??
+      promptDetails?.cache_write_input_tokens ??
+      promptDetails?.cacheWriteInputTokens,
   );
 
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) return null;
-  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+  const inputIncludesCache =
+    nested.cached_input_tokens != null ||
+    nested.cachedInputTokens != null ||
+    nested.cached_content_token_count != null ||
+    nested.cachedContentTokenCount != null ||
+    promptDetails?.cached_tokens != null ||
+    promptDetails?.cachedTokens != null ||
+    promptDetails?.cached_input_tokens != null ||
+    promptDetails?.cachedInputTokens != null;
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    ...(inputIncludesCache ? { inputIncludesCache: true } : {}),
+  };
 }
 
 export function extractModel(...candidates: unknown[]): string | null {
