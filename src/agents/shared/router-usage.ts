@@ -49,6 +49,46 @@ function prioritizeRouterRoots(roots: string[], agent: AgentId): string[] {
   return [...roots].sort((a, b) => score(b) - score(a));
 }
 
+/**
+ * Resolve the display model for router data.
+ *
+ * LiteLLM stores both the provider-native model (for example
+ * `openai/openclaw`) and, in SpendLogs, the public model group
+ * (`model_group=glm-5.3`). The public group is what TokenLab should show.
+ * Older LiteLLM rows may contain only `openclaw`, so keep a narrowly scoped
+ * compatibility alias for the LiteLLM agent.
+ */
+function routerModelFromRecord(
+  agent: AgentId,
+  record: Record<string, unknown>,
+  fallback?: unknown,
+): string | null {
+  const candidates = [
+    record.model_group,
+    record.modelGroup,
+    record.displayModel,
+    record.display_model,
+    record.model,
+    record.modelId,
+    record.model_id,
+    record.model_name,
+    record.rawModel,
+    fallback,
+  ];
+  let model: string | null = null;
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !candidate.trim()) continue;
+    model = normalizeModelName(candidate);
+    if (model) break;
+  }
+  if (!model) return null;
+
+  if (agent === "litellm" && model.toLowerCase() === "openclaw") {
+    return "glm-5.3";
+  }
+  return model;
+}
+
 export async function parseRouterUsage(
   roots: string[],
   agent: AgentId,
@@ -442,11 +482,7 @@ function gapFillDailyDeficits(
     if (!mraw || typeof mraw !== "object") continue;
     const m = mraw as Record<string, unknown>;
     const model =
-      normalizeModelName(
-        (typeof m.rawModel === "string" && m.rawModel) ||
-          modelKey.split("|")[0] ||
-          modelKey,
-      ) || "mixed";
+      routerModelFromRecord(agent, m, modelKey.split("|")[0] || modelKey) || "mixed";
     const dailyReq = num(m.requests);
     const dailyIn = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
     const dailyOut = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
@@ -582,7 +618,7 @@ async function parseSqliteUsage(
       try {
         rows = db
           .prepare(
-            `SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint,
+            `SELECT id, timestamp, provider, model, model_group, connectionId, apiKey, endpoint,
                     promptTokens, completionTokens, cost, status, tokens, meta
              FROM usageHistory
              ORDER BY id DESC
@@ -836,11 +872,7 @@ function expandOneDay(
       if (!mraw || typeof mraw !== "object") continue;
       const m = mraw as Record<string, unknown>;
       const model =
-        normalizeModelName(
-          (typeof m.rawModel === "string" && m.rawModel) ||
-            modelKey.split("|")[0] ||
-            modelKey,
-        ) || "mixed";
+        routerModelFromRecord(agent, m, modelKey.split("|")[0] || modelKey) || "mixed";
       const provider = typeof m.provider === "string" ? m.provider : null;
       const inputTokens = num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
       const outputTokens = num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
@@ -1114,11 +1146,7 @@ function rowToEvent(
     return null;
   }
 
-  const model = normalizeModelName(
-    (typeof r.model === "string" && r.model) ||
-      (typeof r.rawModel === "string" && r.rawModel) ||
-      null,
-  );
+  const model = routerModelFromRecord(agent, r);
   const provider = typeof r.provider === "string" ? r.provider : null;
   // Prefer clean model id; never append provider/connection id into the label
   const modelLabel = model;
