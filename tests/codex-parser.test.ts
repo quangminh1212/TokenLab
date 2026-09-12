@@ -292,4 +292,56 @@ describe("parseCodex", () => {
       "full prompt totals should be preserved without duplicate snapshots",
     );
   });
+
+  it("keeps Codex cache fields and removes token_usage_record mirror duplicates", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tokenlab-codex-cache-"));
+    temps.push(root);
+    const sessions = path.join(root, "sessions");
+    await mkdir(sessions, { recursive: true });
+    const rollout = path.join(sessions, "rollout-cache.jsonl");
+    const usage = {
+      input_tokens: 1000,
+      cached_input_tokens: 800,
+      cache_write_input_tokens: 120,
+      output_tokens: 25,
+    };
+    const lines = [
+      {
+        timestamp: "2026-08-02T03:00:00.000Z",
+        type: "token_usage_record",
+        payload: { usage },
+      },
+      {
+        timestamp: "2026-08-02T03:00:00.500Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: usage,
+            total_token_usage: usage,
+          },
+        },
+      },
+    ];
+    await writeFile(rollout, lines.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf8");
+
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "tokenlab-data-cache-"));
+    temps.push(dataDir);
+    process.env.TOKENLAB_DATA_DIR = dataDir;
+    try {
+      const events = await parseCodex([root]);
+      assert.equal(events.length, 1, "token_usage_record and token_count must be one request");
+      assert.deepEqual(
+        {
+          input: events[0]!.inputTokens,
+          output: events[0]!.outputTokens,
+          cacheRead: events[0]!.cacheReadTokens,
+          cacheWrite: events[0]!.cacheWriteTokens,
+        },
+        { input: 200, output: 25, cacheRead: 800, cacheWrite: 120 },
+      );
+    } finally {
+      delete process.env.TOKENLAB_DATA_DIR;
+    }
+  });
 });

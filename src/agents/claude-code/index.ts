@@ -56,10 +56,13 @@ export async function parseClaudeCode(roots: string[]): Promise<UsageEvent[]> {
 
         if (input + output + cacheRead + cacheWrite <= 0) continue;
 
-        const model =
+        const rawModel =
           (typeof msg.model === "string" && msg.model) ||
           (typeof r.model === "string" && r.model) ||
           null;
+        // The LiteLLM route exposes its internal alias as `openclaw`, but this
+        // Claude Code route is actually backed by GLM 5.3.
+        const model = rawModel?.toLowerCase() === "openclaw" ? "glm-5.3" : rawModel;
         const ts =
           (typeof r.timestamp === "string" && r.timestamp) ||
           (typeof r.ts === "string" && r.ts) ||
