@@ -481,6 +481,110 @@ export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEven
   );
 }
 
+function normalizedSourcePath(sourcePath: unknown): string {
+  return typeof sourcePath === "string" ? sourcePath.replace(/\\/g, "/").toLowerCase() : "";
+}
+
+const SESSION_SOURCE_NAMES = new Set([
+  "summary.json",
+  "usage.json",
+  "updates.jsonl",
+  "chat_history.jsonl",
+]);
+
+/**
+ * Remove previous local rows for source files that were freshly parsed.
+ *
+ * Parser ids are deliberately stable, but older cache versions may contain
+ * one row per Claude content block. A plain union would retain those legacy
+ * ids forever and keep the over-count alive. Source replacement lets a fresh
+ * authoritative parse migrate that agent without touching other agents or
+ * other source files.
+ */
+export function dropPreviousAgentSourceEvents(
+  previous: UsageEvent[],
+  fresh: UsageEvent[],
+  agent: string,
+): UsageEvent[] {
+  const wantedAgent = normalizeAgentId(agent);
+  const freshPaths = new Set<string>();
+  for (const e of fresh || []) {
+    if (normalizeAgentId(e?.agent) !== wantedAgent) continue;
+    const source = normalizedSourcePath(e?.sourcePath);
+    if (source) freshPaths.add(source);
+  }
+  if (freshPaths.size === 0) return previous || [];
+  return (previous || []).filter(
+    (e) =>
+      normalizeAgentId(e?.agent) !== wantedAgent ||
+      !freshPaths.has(normalizedSourcePath(e?.sourcePath)),
+  );
+}
+
+/** Fresh-source replacement followed by the normal richer-row merge. */
+export function replaceFreshAgentSourceEvents(
+  fresh: UsageEvent[],
+  previous: UsageEvent[],
+  agent: string,
+): UsageEvent[] {
+  return mergeEventsByIdPreferRicher(
+    fresh || [],
+    dropPreviousAgentSourceEvents(previous || [], fresh || [], agent),
+  );
+}
+
+function sourceSessionPath(sourcePath: unknown): string {
+  const source = normalizedSourcePath(sourcePath);
+  const metaMarker = "/session-meta.json#";
+  const metaIndex = source.lastIndexOf(metaMarker);
+  if (metaIndex >= 0) return source.slice(metaIndex + metaMarker.length);
+  const slash = source.lastIndexOf("/");
+  if (slash < 0) return "";
+  const name = source.slice(slash + 1);
+  if (!SESSION_SOURCE_NAMES.has(name)) return "";
+  const sessionPath = source.slice(0, slash);
+  const sessionSlash = sessionPath.lastIndexOf("/");
+  return sessionPath.slice(sessionSlash + 1);
+}
+
+/**
+ * Remove previous rows from sessions that were freshly parsed for an agent.
+ * Grok's usage.json and updates.jsonl have different ids for the same turn;
+ * replacing the session is required when the parser switches from the
+ * persisted rollup to the detailed update log (or back again).
+ */
+export function dropPreviousAgentSessionEvents(
+  previous: UsageEvent[],
+  fresh: UsageEvent[],
+  agent: string,
+): UsageEvent[] {
+  const wantedAgent = normalizeAgentId(agent);
+  const freshSessions = new Set<string>();
+  for (const e of fresh || []) {
+    if (normalizeAgentId(e?.agent) !== wantedAgent || e?.estimated) continue;
+    const session = sourceSessionPath(e?.sourcePath);
+    if (session) freshSessions.add(session);
+  }
+  if (freshSessions.size === 0) return previous || [];
+  return (previous || []).filter(
+    (e) =>
+      normalizeAgentId(e?.agent) !== wantedAgent ||
+      !freshSessions.has(sourceSessionPath(e?.sourcePath)),
+  );
+}
+
+/** Fresh-session replacement followed by the normal richer-row merge. */
+export function replaceFreshAgentSessionEvents(
+  fresh: UsageEvent[],
+  previous: UsageEvent[],
+  agent: string,
+): UsageEvent[] {
+  return mergeEventsByIdPreferRicher(
+    fresh || [],
+    dropPreviousAgentSessionEvents(previous || [], fresh || [], agent),
+  );
+}
+
 /**
  * Windsurf progressive rescans mint new ids for the same .pb when tokens grow.
  * Keep the richest row per file. Do NOT collapse Grok by timestamp — turns can
@@ -1377,7 +1481,10 @@ export async function saveScanCache(
       try {
         const existing = await loadScanCacheMainOnly();
         if (existing.length > 0) {
-          const merged = enforceMonotonicAgentDays(existing, clean);
+          const merged = enforceMonotonicAgentDays(
+            dropPreviousAgentSourceEvents(existing, clean, "claude-code"),
+            clean,
+          );
           clean = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
           );

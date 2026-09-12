@@ -480,3 +480,117 @@ test("parseGrok falls back to chat estimate when updates has no usage", async ()
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("parseGrok reads persisted usage.json when updates are unavailable", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-persisted-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-persisted");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "usage.json"),
+      JSON.stringify({
+        sessionId: "sess-persisted",
+        updatedAt: "2026-09-13T02:00:00.000Z",
+        session: {
+          inputTokens: 3_200,
+          outputTokens: 120,
+          cachedReadTokens: 700,
+          cacheCreationTokens: 11,
+          totalTokens: 3_320,
+          costUsdTicks: 2_000_000_000,
+        },
+        turns: [
+          {
+            turnNumber: 1,
+            endedAt: "2026-09-13T01:59:00.000Z",
+            inputTokens: 1_000,
+            outputTokens: 90,
+            cachedReadTokens: 700,
+            cacheCreationTokens: 11,
+            costUsdTicks: 1_250_000_000,
+            primaryModelId: "grok-4.6-build",
+          },
+          {
+            turnNumber: 2,
+            endedAt: "2026-09-13T02:00:00.000Z",
+            inputTokens: 2_200,
+            outputTokens: 30,
+            cachedReadTokens: 0,
+            cacheCreationTokens: 0,
+            costUsdTicks: 750_000_000,
+            primaryModelId: "grok-4.6-build",
+          },
+        ],
+      }),
+    );
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 2);
+    assert.ok(events.every((event) => event.estimated === false));
+    assert.ok(events.every((event) => event.sourcePath.endsWith("usage.json")));
+    assert.equal(events[0]!.model, "grok-4.6-build");
+    assert.equal(events[0]!.inputTokens, 300);
+    assert.equal(events[0]!.cacheReadTokens, 700);
+    assert.equal(events[0]!.cacheWriteTokens, 11);
+    assert.equal(events[0]!.totalTokens, 1_101);
+    assert.equal(events.reduce((sum, event) => sum + event.totalTokens, 0), 3_331);
+    assert.ok(Math.abs((events[0]!.estimatedCost ?? 0) - 0.125) < 1e-9);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGrok does not double-count usage.json with matching updates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-grok-persisted-dedupe-"));
+  try {
+    const sessionDir = path.join(root, "sessions", "proj", "sess-persisted-dedupe");
+    await mkdir(sessionDir, { recursive: true });
+    const timestamp = "2026-09-13T03:00:00.000Z";
+    await writeFile(
+      path.join(sessionDir, "summary.json"),
+      JSON.stringify({
+        info: { id: "sess-persisted-dedupe", cwd: "C:\\Dev\\Demo" },
+        current_model_id: "grok-4.6-build",
+        updated_at: timestamp,
+      }),
+    );
+    const usage = {
+      inputTokens: 1_000,
+      outputTokens: 90,
+      cachedReadTokens: 700,
+      cacheCreationTokens: 11,
+      costUsdTicks: 1_250_000_000,
+    };
+    await writeFile(
+      path.join(sessionDir, "updates.jsonl"),
+      JSON.stringify({
+        timestamp,
+        method: "session/update",
+        params: {
+          sessionId: "sess-persisted-dedupe",
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: "prompt-1",
+            usage,
+          },
+        },
+      }) + "\n",
+    );
+    await writeFile(
+      path.join(sessionDir, "usage.json"),
+      JSON.stringify({
+        sessionId: "sess-persisted-dedupe",
+        updatedAt: timestamp,
+        turns: [{ turnNumber: 1, endedAt: timestamp, ...usage }],
+      }),
+    );
+
+    const events = await parseGrok([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.sourcePath.endsWith("updates.jsonl"), true);
+    assert.equal(events[0]!.totalTokens, 1_101);
+    assert.ok(Math.abs((events[0]!.estimatedCost ?? 0) - 0.125) < 1e-9);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

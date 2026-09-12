@@ -22,7 +22,7 @@ import {
  * Grok Build CLI: ~/.grok/sessions/<cwd>/<id>/
  *
  * Policy: prefer over-count over missing usage.
- * - Discover sessions via summary.json OR updates.jsonl OR chat_history.jsonl
+ * - Discover sessions via summary.json, usage.json, updates.jsonl, or chat_history.jsonl
  * - Prefer turn_completed.usage (input includes cache; split cache for pricing)
  * - Stream totalTokens floor for in-progress turns
  * - Chat text estimate only when no real counters (include synthetics — they are billed)
@@ -39,7 +39,10 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
     const markers = await walkFiles(sessionsRoot, {
       maxDepth: 14,
       match: (n) =>
-        n === "summary.json" || n === "updates.jsonl" || n === "chat_history.jsonl",
+        n === "summary.json" ||
+        n === "updates.jsonl" ||
+        n === "chat_history.jsonl" ||
+        n === "usage.json",
     });
     const sessionDirs = unique(markers.map((m) => path.dirname(m)));
 
@@ -97,25 +100,49 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
     (typeof info.id === "string" && info.id) || path.basename(dir);
 
   // 1) Real usage from updates.jsonl
-  let hadRealUsage = false;
   const updatesPath = path.join(dir, "updates.jsonl");
+  let fromUpdates: UsageEvent[] = [];
   // parseUpdatesUsage no-ops on missing file via stream error → empty; check first
   if (await pathExists(updatesPath)) {
-    const fromUpdates = await parseUpdatesUsage(updatesPath, {
+    fromUpdates = await parseUpdatesUsage(updatesPath, {
       sessionId,
       model,
       workspace,
       fallbackTs: ts,
     });
-    if (fromUpdates.length > 0) {
-      events.push(...fromUpdates);
-      hadRealUsage = true;
-    }
   }
 
-  // 2) Explicit usage on summary
+  // 2) Persisted usage.json is the CLI's authoritative fallback. Normally
+  // updates.jsonl has the same counters at finer granularity, so prefer it
+  // when totals match; use usage.json when updates were rotated/incomplete.
+  const persisted = await parsePersistedUsage(path.join(dir, "usage.json"), {
+    sessionId,
+    model,
+    workspace,
+    fallbackTs: ts,
+  });
+  const realUpdates = fromUpdates.filter((e) => !e.estimated);
+  if (
+    persisted.events.length > 0 &&
+    (realUpdates.length === 0 || persistedUsageIsRicher(persisted, realUpdates))
+  ) {
+    events.push(...persisted.events);
+    // Keep only usage that was written after the persisted rollup. This covers
+    // an active/new turn without replaying the same completed turns twice.
+    if (persisted.updatedAt) {
+      events.push(
+        ...fromUpdates.filter((e) => isAfterTimestamp(e.timestamp, persisted.updatedAt!)),
+      );
+    }
+  } else {
+    events.push(...fromUpdates);
+  }
+
+  if (events.some((e) => !e.estimated)) return events;
+
+  // 3) Explicit usage on summary
   const usage = (summary.usage ?? summary.token_usage) as Record<string, unknown> | undefined;
-  if (!hadRealUsage && usage) {
+  if (usage) {
     const buckets = bucketsFromUsage(usage);
     if (buckets) {
       const { routerCost, ...tokenBuckets } = buckets;
@@ -131,12 +158,15 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
           sourcePath: summaryPath,
         }),
       );
-      hadRealUsage = true;
+      return events;
     }
   }
 
-  // 3) Chat text estimate only when no real counters
-  if (hadRealUsage) return events;
+  // updates/usage.json may contain only an in-progress estimate. Do not add a
+  // second chat estimate on top of it.
+  if (events.length > 0) return events;
+
+  // 4) Chat text estimate only when no real counters
 
   const chatPath = path.join(dir, "chat_history.jsonl");
   const chatText = await readText(chatPath);
@@ -227,6 +257,172 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
     );
   }
   return events;
+}
+
+type PersistedGrokUsage = {
+  events: UsageEvent[];
+  updatedAt: string | null;
+  tokenWeight: number;
+  routerCost: number;
+};
+
+async function parsePersistedUsage(
+  file: string,
+  ctx: {
+    sessionId: string;
+    model: string;
+    workspace: string | null;
+    fallbackTs: string;
+  },
+): Promise<PersistedGrokUsage> {
+  const empty: PersistedGrokUsage = {
+    events: [],
+    updatedAt: null,
+    tokenWeight: 0,
+    routerCost: 0,
+  };
+  const text = await readText(file);
+  if (!text) return empty;
+
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+    raw = parsed as Record<string, unknown>;
+  } catch {
+    return empty;
+  }
+
+  const updatedAt = validTimestamp(raw.updatedAt) || validTimestamp(raw.updated_at);
+  const turns = Array.isArray(raw.turns) ? raw.turns : [];
+  const events: UsageEvent[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    if (!turn || typeof turn !== "object" || Array.isArray(turn)) continue;
+    const row = turn as Record<string, unknown>;
+    const buckets = bucketsFromUsage(row);
+    if (!buckets) continue;
+    const { routerCost, ...tokenBuckets } = buckets;
+    const turnNumber =
+      typeof row.turnNumber === "number" || typeof row.turn_number === "number"
+        ? String(row.turnNumber ?? row.turn_number)
+        : String(i + 1);
+    const timestamp =
+      validTimestamp(row.endedAt) ||
+      validTimestamp(row.ended_at) ||
+      validTimestamp(row.updatedAt) ||
+      updatedAt ||
+      ctx.fallbackTs;
+    events.push(
+      applyPricing({
+        id: stableId("grok", ctx.sessionId, "usage-turn", turnNumber),
+        agent: "grok",
+        model: modelFromUsage(row, ctx.model),
+        timestamp,
+        ...tokenBuckets,
+        ...(routerCost != null ? { routerCost } : {}),
+        workspace: ctx.workspace,
+        sourcePath: file,
+        estimated: false,
+      }),
+    );
+  }
+
+  // If the export has no per-turn list, retain the session rollup as one
+  // event. Never emit both session and turns: session is cumulative.
+  if (events.length === 0) {
+    const session =
+      raw.session && typeof raw.session === "object" && !Array.isArray(raw.session)
+        ? (raw.session as Record<string, unknown>)
+        : null;
+    if (session) {
+      const buckets = bucketsFromUsage(session);
+      if (buckets) {
+        const { routerCost, ...tokenBuckets } = buckets;
+        events.push(
+          applyPricing({
+            id: stableId("grok", ctx.sessionId, "usage-session"),
+            agent: "grok",
+            model: modelFromUsage(session, ctx.model),
+            timestamp: updatedAt || ctx.fallbackTs,
+            ...tokenBuckets,
+            ...(routerCost != null ? { routerCost } : {}),
+            workspace: ctx.workspace,
+            sourcePath: file,
+            estimated: false,
+          }),
+        );
+      }
+    }
+  }
+
+  let tokenWeight = 0;
+  let routerCost = 0;
+  for (const e of events) {
+    tokenWeight += Number(e.totalTokens) || 0;
+    // applyPricing stores a positive router-reported cost in estimatedCost;
+    // UsageEvent intentionally has no separate routerCost field.
+    routerCost += Number(e.estimatedCost) || 0;
+  }
+  return { events, updatedAt, tokenWeight, routerCost };
+}
+
+function persistedUsageIsRicher(
+  persisted: PersistedGrokUsage,
+  updates: UsageEvent[],
+): boolean {
+  let updateTokens = 0;
+  let updateCost = 0;
+  for (const e of updates) {
+    updateTokens += Number(e.totalTokens) || 0;
+    updateCost += Number(e.estimatedCost) || 0;
+  }
+  if (persisted.tokenWeight > updateTokens * 1.001) return true;
+  if (updateTokens > persisted.tokenWeight * 1.001) return false;
+  return persisted.routerCost > updateCost * 1.001;
+}
+
+function isAfterTimestamp(timestamp: string, boundary: string): boolean {
+  const a = Date.parse(timestamp);
+  const b = Date.parse(boundary);
+  return Number.isFinite(a) && Number.isFinite(b) && a > b;
+}
+
+function validTimestamp(value: unknown): string | null {
+  if (typeof value === "string" && value.trim() && !Number.isNaN(Date.parse(value))) {
+    return new Date(value).toISOString();
+  }
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const ms = value > 1e12 ? value : value * 1000;
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return null;
+}
+
+function modelFromUsage(usage: Record<string, unknown>, fallback: string): string {
+  const primary = usage.primaryModelId ?? usage.primary_model_id;
+  if (typeof primary === "string" && primary) return primary;
+  const modelUsage = usage.modelUsage ?? usage.model_usage;
+  if (modelUsage && typeof modelUsage === "object" && !Array.isArray(modelUsage)) {
+    const keys = Object.keys(modelUsage as Record<string, unknown>);
+    if (keys.length === 1 && keys[0]) return keys[0];
+    let best = fallback;
+    let bestTotal = -1;
+    for (const key of keys) {
+      const row = (modelUsage as Record<string, unknown>)[key];
+      const total =
+        row && typeof row === "object" && !Array.isArray(row)
+          ? num((row as Record<string, unknown>).totalTokens ?? (row as Record<string, unknown>).inputTokens)
+          : 0;
+      if (total > bestTotal) {
+        bestTotal = total;
+        best = key;
+      }
+    }
+    return best;
+  }
+  return fallback;
 }
 
 /** Best-effort workspace from encoded session folder path. */
@@ -438,25 +634,7 @@ async function parseUpdatesUsage(
         usage && typeof usage === "object" ? bucketsFromUsage(usage) : null;
 
       if (buckets) {
-        const modelUsage = usage!.modelUsage as Record<string, unknown> | undefined;
-        let model = ctx.model;
-        if (modelUsage && typeof modelUsage === "object") {
-          const keys = Object.keys(modelUsage);
-          if (keys.length === 1 && keys[0]) model = keys[0];
-          else if (keys.length > 1) {
-            let best = keys[0];
-            let bestTot = -1;
-            for (const k of keys) {
-              const mu = modelUsage[k] as Record<string, unknown> | undefined;
-              const t = num(mu?.totalTokens ?? mu?.inputTokens);
-              if (t > bestTot) {
-                bestTot = t;
-                best = k;
-              }
-            }
-            if (best) model = best;
-          }
-        }
+        const model = modelFromUsage(usage!, ctx.model);
 
         const { routerCost, ...tokenBuckets } = buckets;
         events.push(
