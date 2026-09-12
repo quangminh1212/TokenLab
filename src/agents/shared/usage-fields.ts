@@ -61,6 +61,8 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
     nested.cache_read_input_tokens ??
       nested.cache_read_tokens ??
       nested.cacheReadTokens ??
+      nested.cached_input_tokens ??
+      nested.cachedInputTokens ??
       nested.cachedReadTokens ??
       nested.cacheReadInputTokens ??
       nested.cache_read ??
@@ -78,7 +80,9 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
   );
   const cacheWriteTokens = num(
     nested.cache_creation_input_tokens ??
+      nested.cache_write_input_tokens ??
       nested.cache_write_tokens ??
+      nested.cacheWriteInputTokens ??
       nested.cacheWriteTokens ??
       nested.cache_write ??
       nested.cache_creation_tokens ??
@@ -101,7 +105,20 @@ export function extractModel(...candidates: unknown[]): string | null {
     }
     if (c && typeof c === "object") {
       const o = c as Record<string, unknown>;
-      for (const key of ["model", "modelId", "model_id", "model_name", "rawModel"] as const) {
+      // Gateways such as LiteLLM expose the public model group separately from
+      // the provider-native model path. Prefer that public identity when it is
+      // available (for example openai/openclaw + model_group=glm-5.3).
+      for (const key of [
+        "model_group",
+        "modelGroup",
+        "displayModel",
+        "display_model",
+        "model",
+        "modelId",
+        "model_id",
+        "model_name",
+        "rawModel",
+      ] as const) {
         if (typeof o[key] === "string" && (o[key] as string).trim()) {
           const n = normalizeModelName(o[key] as string);
           if (n) return n;

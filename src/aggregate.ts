@@ -18,22 +18,15 @@ function emptyTotals(currency = "USD"): TokenTotals {
   };
 }
 
-function add(t: TokenTotals, e: UsageEvent): void {
-  t.inputTokens += e.inputTokens;
-  t.outputTokens += e.outputTokens;
-  t.cacheReadTokens += e.cacheReadTokens;
-  t.cacheWriteTokens += e.cacheWriteTokens;
-  t.totalTokens += e.totalTokens;
+type CostParts = { inputCost: number; cacheCost: number; outputCost: number };
+
+function addWithParts(t: TokenTotals, e: UsageEvent, parts: CostParts): void {
+  t.inputTokens += e.inputTokens || 0;
+  t.outputTokens += e.outputTokens || 0;
+  t.cacheReadTokens += e.cacheReadTokens || 0;
+  t.cacheWriteTokens += e.cacheWriteTokens || 0;
+  t.totalTokens += e.totalTokens || 0;
   t.estimatedCost += e.estimatedCost ?? 0;
-  // Rate-weighted parts (cache uses cacheRead/Write rates, not input rate)
-  const parts = priceCostParts(
-    e.model,
-    e.inputTokens || 0,
-    e.outputTokens || 0,
-    e.cacheReadTokens || 0,
-    e.cacheWriteTokens || 0,
-    e.estimatedCost,
-  );
   t.inputCost = (t.inputCost || 0) + parts.inputCost;
   t.cacheCost = (t.cacheCost || 0) + parts.cacheCost;
   t.outputCost = (t.outputCost || 0) + parts.outputCost;
@@ -42,7 +35,19 @@ function add(t: TokenTotals, e: UsageEvent): void {
   t.eventCount += typeof reqs === "number" && Number.isFinite(reqs) && reqs > 0 ? Math.floor(reqs) : 1;
 }
 
-function groupKey(e: UsageEvent, by: GroupBy): string {
+function add(t: TokenTotals, e: UsageEvent): void {
+  const parts = priceCostParts(
+    e.model,
+    e.inputTokens || 0,
+    e.outputTokens || 0,
+    e.cacheReadTokens || 0,
+    e.cacheWriteTokens || 0,
+    e.estimatedCost,
+  );
+  addWithParts(t, e, parts);
+}
+
+function groupKey(e: UsageEvent, by: GroupBy, tsMs?: number): string {
   if (by === "agent") return e.agent;
   if (by === "model") {
     // Strip provider suffixes; always lowercase so kimi-k3 ≡ Kimi-k3
@@ -50,8 +55,9 @@ function groupKey(e: UsageEvent, by: GroupBy): string {
     // Label missing model with agent so "unknown" is not a mystery model name
     return (m || `unknown (${e.agent})`).toLowerCase();
   }
-  const d = new Date(e.timestamp);
-  if (Number.isNaN(d.getTime())) return "unknown";
+  const t = tsMs != null && Number.isFinite(tsMs) ? tsMs : Date.parse(e.timestamp);
+  if (!Number.isFinite(t)) return "unknown";
+  const d = new Date(t);
   if (by === "day") return d.toISOString().slice(0, 10);
   return `${d.toISOString().slice(0, 13)}:00`;
 }
@@ -62,19 +68,33 @@ export function aggregate(
   sort: "tokens" | "cost" = "cost",
   since: string | null = null,
   until: string | null = null,
+  /** Optional parallel ms timestamps (same length) — avoids re-parse for day/hour keys */
+  timestampsMs?: number[] | null,
 ): StatsResult {
   const totals = emptyTotals();
   const map = new Map<string, GroupRow>();
+  const n = events.length;
+  const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
 
-  for (const e of events) {
-    add(totals, e);
-    const key = groupKey(e, groupBy);
+  for (let i = 0; i < n; i++) {
+    const e = events[i]!;
+    // priceCostParts once per event (was 2× — totals + group row)
+    const parts = priceCostParts(
+      e.model,
+      e.inputTokens || 0,
+      e.outputTokens || 0,
+      e.cacheReadTokens || 0,
+      e.cacheWriteTokens || 0,
+      e.estimatedCost,
+    );
+    addWithParts(totals, e, parts);
+    const key = groupKey(e, groupBy, useTs ? timestampsMs![i] : undefined);
     let row = map.get(key);
     if (!row) {
       row = { key, ...emptyTotals() };
       map.set(key, row);
     }
-    add(row, e);
+    addWithParts(row, e, parts);
   }
 
   const groups = [...map.values()].sort((a, b) =>

@@ -33,7 +33,16 @@ import {
 import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
 import { writeHeartbeat } from "../process-guard.js";
 import type { AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
-import { filterByPeriod, normalizeModelName, pathExists, startOfDayInTimeZone } from "../util.js";
+import {
+  filterByPeriod,
+  filterByPeriodSorted,
+  filterByPeriodSortedDetailed,
+  normalizeModelName,
+  parseSince,
+  pathExists,
+  sortEventsByTime,
+  startOfDayInTimeZone,
+} from "../util.js";
 import { VERSION } from "../version.js";
 
 function configuredTimeZone(): string {
@@ -68,13 +77,127 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const startedAt = Date.now();
 
   let cache: UsageEvent[] = [];
+  /** Parallel ms timestamps for O(log n) period filter (null while unsorted/dirty). */
+  let cacheTs: number[] | null = null;
+  /**
+   * Stable read snapshot. Progressive scans replace `cache` several times while
+   * parsers finish; dashboard/API reads must keep using the last sorted snapshot
+   * instead of filtering a partial unsorted array on every request.
+   */
+  let readCache: UsageEvent[] = [];
+  let readCacheTs: number[] | null = null;
+  /** Period aggregate memo: invalidated on scan / pricing changes. */
+  const periodStatsMemo = new Map<
+    string,
+    { stats: ReturnType<typeof aggregate>; usageRpm: ReturnType<typeof computeActiveUsageRpm> }
+  >();
+  /** Live RPM memo — shared across double /api/stats fetches on period switch. */
+  let liveRateMemo: {
+    at: number;
+    scanRevision: number;
+    windowMinutes: number;
+    value: Awaited<ReturnType<typeof computeDashboardLiveRate>>;
+  } | null = null;
+  const LIVE_RATE_TTL_MS = 2_500;
+
+  async function getLiveRateCached(windowMinutes = 3): Promise<
+    Awaited<ReturnType<typeof computeDashboardLiveRate>>
+  > {
+    const mins = Math.max(1, Math.min(60, Math.floor(windowMinutes) || 3));
+    const now = Date.now();
+    if (
+      liveRateMemo &&
+      liveRateMemo.scanRevision === scanRevision &&
+      liveRateMemo.windowMinutes === mins &&
+      now - liveRateMemo.at < LIVE_RATE_TTL_MS
+    ) {
+      return liveRateMemo.value;
+    }
+    const source = scanning ? readCache : cache;
+    const sourceTs = scanning ? readCacheTs : cacheTs;
+    writeHeartbeat();
+    const value = await computeDashboardLiveRate(source, mins, now, {
+      timestampsMs: sourceTs,
+    });
+    writeHeartbeat();
+    liveRateMemo = { at: now, scanRevision, windowMinutes: mins, value };
+    return value;
+  }
+
+  /**
+   * Replace in-memory event cache. When `sorted` is false (mid-scan progressive),
+   * defer the O(n log n) sort until the first period query or scan finalize.
+   */
+  function setCache(events: UsageEvent[], opts: { sorted?: boolean } = {}): void {
+    if (opts.sorted) {
+      cache = events;
+      cacheTs = events.length
+        ? (() => {
+            const ts = new Array<number>(events.length);
+            for (let i = 0; i < events.length; i++) {
+              const t = Date.parse(events[i]!.timestamp);
+              ts[i] = Number.isNaN(t) ? 0 : t;
+            }
+            return ts;
+          })()
+        : [];
+      // Publish only complete, timestamp-indexed snapshots to readers.
+      readCache = cache;
+      readCacheTs = cacheTs;
+    } else {
+      cache = events;
+      cacheTs = null;
+    }
+    periodStatsMemo.clear();
+    liveRateMemo = null;
+  }
+
+  function ensureCacheSorted(): { events: UsageEvent[]; timestampsMs: number[] } {
+    if (cacheTs && cacheTs.length === cache.length) {
+      return { events: cache, timestampsMs: cacheTs };
+    }
+    const sorted = sortEventsByTime(cache);
+    cache = sorted.events;
+    cacheTs = sorted.timestampsMs;
+    return { events: cache, timestampsMs: cacheTs };
+  }
+
+  function eventsInPeriod(since: string | null, until: string | null): UsageEvent[] {
+    return eventsInPeriodDetailed(since, until).events;
+  }
+
+  function eventsInPeriodDetailed(
+    since: string | null,
+    until: string | null,
+  ): { events: UsageEvent[]; timestampsMs: number[] | null } {
+    // While scanning, read the last complete snapshot. This keeps period tabs
+    // responsive while a large local parser is still producing fresh events.
+    const source = scanning ? readCache : cache;
+    const sourceTs = scanning ? readCacheTs : cacheTs;
+    if (!sourceTs || sourceTs.length !== source.length) {
+      return {
+        events: filterByPeriod(source, since, until, configuredTimeZone()),
+        timestampsMs: null,
+      };
+    }
+    return filterByPeriodSortedDetailed(source, sourceTs, since, until, configuredTimeZone());
+  }
+
+  /** Reprice keeps timestamps/order — retain sort index, only invalidate period memo. */
+  function repriceCache(forceTable: boolean): void {
+    cache = repriceEvents(cache, { forceTable });
+    readCache = cache;
+    periodStatsMemo.clear();
+    liveRateMemo = null;
+  }
+
   /** Events from other machines / restore — survive local rescan (merged by id). */
   let importedEvents: UsageEvent[] = await loadImportedEvents();
   /** Last local scan snapshot — unioned so incomplete/timeout passes never wipe known usage. */
   const diskScanCache = await loadScanCache();
   // Union import + disk, then collapse so xlabrouter/routerlab never double-count
   // and day totals never shrink vs either source.
-  cache = collapseExactUsageDuplicates(
+  const warmMerged = collapseExactUsageDuplicates(
     collapseSourcePathRollups(
       collapseRouterDailyEvents(
         enforceMonotonicAgentDays(
@@ -84,6 +207,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       ),
     ),
   );
+  // Disk saves write timestamp-sorted; sort once more for safety then index.
+  setCache(sortEventsByTime(warmMerged).events, { sorted: true });
   if (diskScanCache.length > 0) {
     console.log(`[tokenlab] loaded ${diskScanCache.length} cached scan events`);
   }
@@ -170,17 +295,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
    * Full pass still covers every agent — keeps periodic work small & UI snappy.
    */
   const PERIODIC_LIGHT_AGENTS = new Set<string>([
+    "codex",
     "9router",
     "routerlab",
     "xlabrouter",
     "litellm",
-    "hermes",
-    "qwencoder",
-    "cursor",
-    "claude-code",
-    "codex",
-    "opencode",
-    "grok",
   ]);
 
   /** Safe log — never throw EPIPE into uncaughtException mid-scan. */
@@ -190,6 +309,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     } catch {
       /* EPIPE etc. */
     }
+  };
+
+  const grokReplacedSessions = new Set<string>();
+  const grokSessionKey = (sourcePath: unknown): string => {
+    if (typeof sourcePath !== "string") return "";
+    const tagged = sourcePath.match(/#([0-9a-f]{8}-[0-9a-f-]{27,})$/i);
+    if (tagged?.[1]) return tagged[1].toLowerCase();
+    const onDisk = sourcePath.match(
+      /[\\/]sessions[\\/][^\\/]+[\\/]([^\\/]+)[\\/](?:usage|updates|chat_history)\.json(?:l)?$/i,
+    );
+    return onDisk?.[1]?.toLowerCase() || "";
   };
 
   /**
@@ -215,22 +345,54 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if ((routerAgent || antigravityAgent) && fresh.length >= 5) {
       return fresh;
     }
+    // Codex light scans re-read only files whose mtime changed. Replace the
+    // previous rows for those files before unioning, otherwise a growing
+    // rollout would retain stale partial rows alongside the fresh snapshot.
+    const codexAgent = fresh[0]?.agent === "codex";
+    if (codexAgent) {
+      const sourceKey = (sourcePath: unknown): string => {
+        if (typeof sourcePath !== "string") return "";
+        return sourcePath
+          .split(" ← ", 1)[0]!
+          .replace(/\\/g, "/")
+          .toLowerCase();
+      };
+      const freshPaths = new Set(
+        fresh.map((e) => sourceKey(e.sourcePath)).filter((p): p is string => Boolean(p)),
+      );
+      if (freshPaths.size > 0) {
+        prev = prev.filter((e) => !freshPaths.has(sourceKey(e.sourcePath)));
+      }
+    }
     // Grok: drop prev estimated residual ghosts for session files re-scanned this pass.
     // Old residual ids baked peak totals into the hash so they never got replaced when
     // turn_completed.usage arrived (same path, different id → double-count + out=0 UI).
     let prevForMerge = prev;
     if (fresh[0]?.agent === "grok") {
+      const snapshotSessions = new Set<string>();
       const freshPaths = new Set<string>();
       for (const e of fresh) {
         if (typeof e.sourcePath === "string" && e.sourcePath) {
-          freshPaths.add(e.sourcePath.replace(/\\/g, "/").toLowerCase());
+          const source = e.sourcePath.replace(/\\/g, "/").toLowerCase();
+          freshPaths.add(source);
+          if (source.endsWith("usage.json") || source.includes("session-meta.json#")) {
+            const session = grokSessionKey(e.sourcePath);
+            if (session) snapshotSessions.add(session);
+          }
         }
       }
+      for (const session of snapshotSessions) grokReplacedSessions.add(session);
       prevForMerge = prev.filter((e) => {
-        if (e.agent !== "grok" || !e.estimated) return true;
-        if ((Number(e.outputTokens) || 0) > 0) return true;
+        if (e.agent !== "grok") return true;
         const sp =
           typeof e.sourcePath === "string" ? e.sourcePath.replace(/\\/g, "/").toLowerCase() : "";
+        const session = grokSessionKey(e.sourcePath);
+        // A usage.json/session-meta snapshot replaces every older per-turn row
+        // for that session; otherwise the aggregate would be added on top of
+        // the previous updates.jsonl rows during the warm-cache merge.
+        if (session && snapshotSessions.has(session)) return false;
+        if ((Number(e.outputTokens) || 0) > 0) return true;
+        if (!e.estimated) return true;
         if (!sp || !sp.endsWith("updates.jsonl")) return true;
         // Path re-scanned → fresh is authoritative for residuals on that file
         if (freshPaths.has(sp)) return false;
@@ -252,6 +414,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     // Coalesce concurrent rescans — never return mid-scan empty cache to callers.
     if (scanPromise) return scanPromise;
     const full = opts.full === true;
+    grokReplacedSessions.clear();
     scanning = true;
     // Keep previous cache visible until first progressive batch arrives
     broadcastStream({
@@ -284,6 +447,26 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       let progressBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
       let lastProgressPayload: Record<string, unknown> | null = null;
       let agentsDone = 0;
+      const codexReplacedPaths = new Set<string>();
+      const codexSourceKey = (sourcePath: unknown): string => {
+        if (typeof sourcePath !== "string") return "";
+        return sourcePath
+          .split(" ← ", 1)[0]!
+          .replace(/\\/g, "/")
+          .toLowerCase();
+      };
+      const previousForMonotonic = (): UsageEvent[] => {
+        if (codexReplacedPaths.size === 0 && grokReplacedSessions.size === 0) return prev;
+        return prev.filter((e) => {
+          if (e.agent === "codex" && codexReplacedPaths.has(codexSourceKey(e.sourcePath))) {
+            return false;
+          }
+          if (e.agent === "grok" && grokReplacedSessions.has(grokSessionKey(e.sourcePath))) {
+            return false;
+          }
+          return true;
+        });
+      };
 
       const rebuild = (force = false, finalize = false): void => {
         const now = Date.now();
@@ -306,7 +489,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
           // Never let a thinner rescan shrink per-agent day totals vs previous cache.
-          scanned = enforceMonotonicAgentDays(prev, scanned);
+          scanned = enforceMonotonicAgentDays(previousForMonotonic(), scanned);
           scanned = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
@@ -315,12 +498,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // Then high-water again so imported history cannot be wiped by a partial local day.
         let merged = mergeLocalPreferOverGistRollups(scanned, importedEvents);
         if (finalize) {
-          merged = enforceMonotonicAgentDays(prev, merged);
+          merged = enforceMonotonicAgentDays(previousForMonotonic(), merged);
           merged = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
           );
+          // Final pass: sort once for O(log n) period queries + sorted disk persist.
+          setCache(sortEventsByTime(merged).events, { sorted: true });
+        } else {
+          // Mid-scan: mark index dirty (no O(n log n) sort every agent).
+          setCache(merged, { sorted: false });
         }
-        cache = merged;
       };
 
       const scheduleProgressBroadcast = (payload: Record<string, unknown>): void => {
@@ -350,6 +537,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
         await scanAll({
           enabled,
+          light: !full,
           // Light agents first (scanAll); 4-wide balances speed vs disk contention on Windows.
           concurrency: full ? 4 : 4,
           // Full: no timeout. Periodic: 90s soft cap (prev data kept on miss).
@@ -383,6 +571,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               // Parser returned empty but we already had data — keep previous
             } else {
               // Light by-id merge mid-scan (no router collapse) — big lag win.
+              if (agent === "codex") {
+                for (const e of events) {
+                  const source = codexSourceKey(e.sourcePath);
+                  if (source) codexReplacedPaths.add(source);
+                }
+              }
               byAgent.set(agent, mergeAgentScanLight(events, prevForAgent));
               rebuild(false, false);
             }
@@ -604,7 +798,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         node: process.version,
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         agentsDetected: agents.filter((a) => a.detected).map((a) => a.id),
-        eventCount: cache.length,
+        // Keep the dashboard's visible count stable while a progressive scan
+        // is replacing the write-side cache.
+        eventCount: scanning ? readCache.length : cache.length,
         scanning,
         scanRevision,
         scanUpdatedAt,
@@ -620,29 +816,48 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const until = url.searchParams.get("until");
       const groupBy = (url.searchParams.get("groupBy") || "agent") as GroupBy;
       const sort = (url.searchParams.get("sort") || "cost") as "tokens" | "cost";
+      // live=0: skip hot-mirror RPM (chart series second fetch) — period switch speed win
+      const wantLive = url.searchParams.get("live") !== "0";
       if (!["agent", "model", "day", "hour"].includes(groupBy)) {
         return json(res, 400, {
           error: { code: "INVALID_QUERY", message: "groupBy must be one of: agent, model, day, hour" },
         });
       }
-      const events = filterByPeriod(cache, since, until, configuredTimeZone());
-      const stats = aggregate(events, groupBy, sort, since, until);
-      // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
-      const usageRpm = computeActiveUsageRpm(events);
-      // Live RPM: cache live rows + hot 9router/RouterLab history tails (not period filter)
-      const live = await computeDashboardLiveRate(cache, 3);
-      return json(res, 200, { ...stats, usageRpm, live });
+      writeHeartbeat();
+      // Memo period aggregates across dashboard double-fetch (agent + day series).
+      const memoKey = `${scanRevision}|${pricingRevision}|${since || ""}|${until || ""}|${groupBy}|${sort}`;
+      let periodPart = periodStatsMemo.get(memoKey);
+      if (!periodPart) {
+        if (!scanning) ensureCacheSorted();
+        const { events, timestampsMs } = eventsInPeriodDetailed(since, until);
+        writeHeartbeat();
+        const stats = aggregate(events, groupBy, sort, since, until, timestampsMs);
+        // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
+        const usageRpm = computeActiveUsageRpm(events);
+        periodPart = { stats, usageRpm };
+        // Cap memo size (period × groupBy combos are small; defend against abuse)
+        if (periodStatsMemo.size > 64) periodStatsMemo.clear();
+        periodStatsMemo.set(memoKey, periodPart);
+      }
+      writeHeartbeat();
+      if (!wantLive) {
+        return json(res, 200, { ...periodPart.stats, usageRpm: periodPart.usageRpm });
+      }
+      // Live RPM: short TTL memo + only recent cache rows (not full 50k history)
+      const live = await getLiveRateCached(3);
+      return json(res, 200, { ...periodPart.stats, usageRpm: periodPart.usageRpm, live });
     }
 
     if (req.method === "GET" && pathname === "/api/rpm") {
       const mins = Math.min(30, Math.max(1, Number(url.searchParams.get("minutes") || 3)));
-      return json(res, 200, await computeDashboardLiveRate(cache, mins));
+      return json(res, 200, await getLiveRateCached(mins));
     }
 
     if (req.method === "GET" && pathname === "/api/cost") {
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
-      const events = filterByPeriod(cache, since, until, configuredTimeZone());
+      if (!scanning) ensureCacheSorted();
+      const events = eventsInPeriod(since, until);
       return json(res, 200, costReport(events, since, until));
     }
 
@@ -655,25 +870,41 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // only real per-call rows (no 298M-token estimated day blobs).
       const liveOnly = url.searchParams.get("live") !== "0";
       if (liveOnly) {
-        const liveList = await buildRecentLiveEvents(cache, {
-          limit: Math.min(2000, Math.max(limit * 4, 100)),
+        writeHeartbeat();
+        if (!scanning) ensureCacheSorted();
+        const source = scanning ? readCache : cache;
+        const sourceTs = scanning ? readCacheTs : cacheTs;
+        const sinceDate = parseSince(since, configuredTimeZone());
+        const untilDate = until ? new Date(until) : null;
+        const sinceMs = sinceDate ? sinceDate.getTime() : null;
+        const untilMs =
+          untilDate && !Number.isNaN(untilDate.getTime()) ? untilDate.getTime() : null;
+        // Server already filters by sinceMs — no second full-list filterByPeriod needed
+        let list = await buildRecentLiveEvents(source, {
+          limit: Math.min(200, Math.max(limit, 40)),
           agent: agent || null,
           nowMs: Date.now(),
+          sinceMs,
+          untilMs,
+          timestampsMs: sourceTs,
         });
-        let list = filterByPeriod(liveList, since, until, configuredTimeZone());
+        writeHeartbeat();
         if (agent) list = list.filter((e) => e.agent === agent);
-        list = list
-          .slice()
-          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-          .slice(0, limit);
+        list = list.slice(0, limit);
         return json(res, 200, { events: list, count: list.length, liveOnly: true });
       }
-      let list = filterByPeriod(cache, since, until, configuredTimeZone());
+      if (!scanning) ensureCacheSorted();
+      let list = eventsInPeriod(since, until);
       if (agent) list = list.filter((e) => e.agent === agent);
-      list = list
-        .slice()
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-        .slice(0, limit);
+      // Cache is ascending; recent page = tail (avoid full re-sort when no agent filter).
+      if (!agent && cacheTs && cacheTs.length === cache.length && list.length > limit) {
+        list = list.slice(list.length - limit).reverse();
+      } else {
+        list = list
+          .slice()
+          .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+          .slice(0, limit);
+      }
       return json(res, 200, { events: list, count: list.length, liveOnly: false });
     }
 
@@ -930,7 +1161,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       }
       const cfg = await setCustomRates(normalized, replace);
       // Force table reprice so new rates apply immediately to all events
-      cache = repriceEvents(cache, { forceTable: true });
+      repriceCache(true);
       bumpPricing(live ? "live" : "save");
       const totals = aggregate(cache, "agent", "cost", null, null).totals;
       return json(res, 200, {
@@ -1075,14 +1306,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           importedEvents = mergeEventsByIdPreferRicher(importedEvents, result.events);
           await saveImportedEvents(importedEvents);
           // Prefer real local rows over Gist rollups for the same day×agent×model
-          cache = repriceEvents(mergeLocalPreferOverGistRollups(cache, importedEvents), {
+          const restored = repriceEvents(mergeLocalPreferOverGistRollups(cache, importedEvents), {
             forceTable: result.config.pricing?.preferRouterCost === false,
           });
+          setCache(sortEventsByTime(restored).events, { sorted: true });
           bumpScan("restore");
         } else {
-          cache = repriceEvents(cache, {
-            forceTable: result.config.pricing?.preferRouterCost === false,
-          });
+          repriceCache(result.config.pricing?.preferRouterCost === false);
         }
         bumpPricing("restore");
         return json(res, 200, {
@@ -1141,7 +1371,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         },
       });
       // Reprice when preferRouterCost flips
-      cache = repriceEvents(cache, { forceTable: next.pricing?.preferRouterCost === false });
+      repriceCache(next.pricing?.preferRouterCost === false);
       bumpPricing("config");
       return json(res, 200, {
         ok: true,
@@ -1241,7 +1471,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         const script = await resolveSyncScript();
         if (!script) return false;
         const ok = await new Promise<boolean>((resolve) => {
-          const child = spawn("python", [script], {
+          // python.exe still creates a console host on this Windows install
+          // even with windowsHide, which flashes a CMD window on every sync.
+          // pythonw.exe has no console subsystem; keep python on other hosts.
+          const python = process.platform === "win32" ? "pythonw.exe" : "python";
+          const child = spawn(python, [script], {
             stdio: "ignore",
             windowsHide: true,
             env: { ...process.env },
@@ -1276,13 +1510,28 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     return mirrorSyncPromise;
   }
 
-  // Boot: sync remote 9router usage then full scan so first paint is not stale.
+  // Boot: serve the warm cache first. A full local scan can take minutes on a
+  // machine with large Codex/Claude/Grok histories, so do not compete with the
+  // first dashboard paint when a valid scan cache already exists.
   void syncVpsMirrors("boot", 120_000)
     .catch(() => false)
     .finally(() => {
-      void rescan({ full: true }).catch((err) => {
-        console.error("[tokenlab] initial full scan failed:", err instanceof Error ? err.message : err);
-      });
+      if (cache.length === 0) {
+        void rescan({ full: true }).catch((err) => {
+          console.error("[tokenlab] initial full scan failed:", err instanceof Error ? err.message : err);
+        });
+        return;
+      }
+      // Give the browser a short quiet window to render the warm snapshot,
+      // then refresh only hot remote mirrors. Manual Refresh remains the
+      // explicit full historical scan for local agents.
+      const bootLightScan = setTimeout(() => {
+        void rescan({ full: false }).catch((err) => {
+          console.error("[tokenlab] initial light scan failed:", err instanceof Error ? err.message : err);
+        });
+      }, 2_500);
+      bootLightScan.unref?.();
+      console.log("[tokenlab] warm cache served; deferred full local scan (use Refresh for a full scan)");
     });
 
   let periodicTick = 0;

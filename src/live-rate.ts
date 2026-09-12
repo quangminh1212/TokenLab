@@ -142,9 +142,21 @@ export function isLiveRequestEvent(e: UsageEvent | null | undefined): boolean {
   return true;
 }
 
+/** Process-local hot-mirror cache — period switches must not re-read multi-MB jsonl each time. */
+let hotMirrorCache: {
+  at: number;
+  lookbackMinutes: number;
+  tailBytes: number;
+  events: UsageEvent[];
+} | null = null;
+
+const HOT_MIRROR_TTL_MS = 3_000;
+
 /**
  * Live per-call events from router mirrors (always fresh after VPS sync).
  * Used so RPM / RECENT EVENTS do not show only daily rollup blobs.
+ *
+ * Results are memoized ~3s so dashboard double-fetch (stats×2 + events) shares one disk pass.
  */
 export async function loadHotMirrorLiveEvents(
   nowMs: number = Date.now(),
@@ -152,12 +164,28 @@ export async function loadHotMirrorLiveEvents(
   lookbackMinutes = 30,
   tailBytes = 512 * 1024,
 ): Promise<UsageEvent[]> {
-  const start = nowMs - Math.max(1, lookbackMinutes) * 60_000;
+  const mins = Math.max(1, lookbackMinutes);
+  const bytes = Math.max(64 * 1024, tailBytes);
+  // Reuse if same-or-wider prior read is still fresh
+  if (
+    hotMirrorCache &&
+    nowMs - hotMirrorCache.at < HOT_MIRROR_TTL_MS &&
+    hotMirrorCache.lookbackMinutes >= mins &&
+    hotMirrorCache.tailBytes >= bytes
+  ) {
+    const start = nowMs - mins * 60_000;
+    return hotMirrorCache.events.filter((e) => {
+      const t = Date.parse(e.timestamp);
+      return Number.isFinite(t) && t >= start && t <= nowMs + 5_000;
+    });
+  }
+
+  const start = nowMs - mins * 60_000;
   const out: UsageEvent[] = [];
   const seen = new Set<string>();
 
   for (const { agent, file } of hotHistoryFiles()) {
-    const lines = await readJsonlTail(file, tailBytes);
+    const lines = await readJsonlTail(file, bytes);
     for (const line of lines) {
       let row: unknown;
       try {
@@ -175,12 +203,16 @@ export async function loadHotMirrorLiveEvents(
       out.push(e);
     }
   }
+  hotMirrorCache = { at: nowMs, lookbackMinutes: mins, tailBytes: bytes, events: out };
   return out;
 }
 
 /**
  * Build a newest-first RECENT EVENTS list: live cache rows + hot router history.
  * Daily estimated rollups (multi-million-token "events") are never included.
+ *
+ * Optimized for dashboard period switches: UI only shows ~25 rows, so we never
+ * re-parse multi-day / multi-MB history tails for every 30D/All click.
  */
 export async function buildRecentLiveEvents(
   cache: UsageEvent[],
@@ -190,18 +222,23 @@ export async function buildRecentLiveEvents(
     untilMs?: number | null;
     agent?: string | null;
     nowMs?: number;
+    /** Parallel ms index (ascending) when cache is time-sorted */
+    timestampsMs?: number[] | null;
   } = {},
 ): Promise<UsageEvent[]> {
   const limit = Math.min(1000, Math.max(1, opts.limit ?? 50));
   const nowMs = opts.nowMs ?? Date.now();
   const sinceMs = opts.sinceMs ?? null;
   const untilMs = opts.untilMs ?? null;
-  // Pull enough history for "today"/24h feeds (1.5MB tail ≈ many hundreds of RQs)
-  const lookbackMin =
+  // RECENT list needs newest rows only — cap hot lookback to 24h and modest tail.
+  // (Was 7d + 1.5MB×6 files on every 30D click → multi-second freezes.)
+  const lookbackMin = Math.min(
+    24 * 60,
     sinceMs != null && Number.isFinite(sinceMs)
-      ? Math.min(7 * 24 * 60, Math.max(60, Math.ceil((nowMs - sinceMs) / 60_000) + 30))
-      : 24 * 60;
-  const hot = await loadHotMirrorLiveEvents(nowMs, lookbackMin, 1.5 * 1024 * 1024);
+      ? Math.max(60, Math.ceil((nowMs - sinceMs) / 60_000) + 15)
+      : 6 * 60,
+  );
+  const hot = await loadHotMirrorLiveEvents(nowMs, lookbackMin, 256 * 1024);
 
   const inPeriod = (e: UsageEvent): boolean => {
     const t = Date.parse(e.timestamp);
@@ -225,15 +262,26 @@ export async function buildRecentLiveEvents(
     ].join("|");
   };
 
-  for (const e of cache) {
-    if (!isLiveRequestEvent(e) || !inPeriod(e)) continue;
-    byKey.set(keyOf(e), e);
+  // Prefer reverse scan of sorted cache (newest first) — stop once we have enough.
+  const ts = opts.timestampsMs;
+  const sortedAsc = Array.isArray(ts) && ts.length === cache.length && cache.length > 0;
+  const need = Math.max(limit * 4, 80);
+  if (sortedAsc) {
+    for (let i = cache.length - 1; i >= 0 && byKey.size < need; i--) {
+      const e = cache[i]!;
+      if (!isLiveRequestEvent(e) || !inPeriod(e)) continue;
+      byKey.set(keyOf(e), e);
+    }
+  } else {
+    for (const e of cache) {
+      if (!isLiveRequestEvent(e) || !inPeriod(e)) continue;
+      byKey.set(keyOf(e), e);
+    }
   }
   for (const e of hot) {
     if (!inPeriod(e)) continue;
     const k = keyOf(e);
-    const prev = byKey.get(k);
-    if (!prev) byKey.set(k, e);
+    if (!byKey.has(k)) byKey.set(k, e);
   }
 
   return [...byKey.values()]
@@ -242,29 +290,64 @@ export async function buildRecentLiveEvents(
 }
 
 /**
- * Merge scan-cache + hot mirror live rows, then compute APM sliding-window RPM.
+ * Merge recent scan-cache + hot mirror live rows, then compute APM sliding-window RPM.
  * Also reports last live request time so UI can explain idle zeros.
+ *
+ * Critical: do NOT scan the full multi-day cache on every /api/stats — that blocked
+ * the event loop for seconds and made period switches feel frozen.
  */
 export async function computeDashboardLiveRate(
   cache: UsageEvent[],
   windowMinutes = 3,
   nowMs: number = Date.now(),
+  opts: { timestampsMs?: number[] | null } = {},
 ): Promise<ReturnType<typeof computeLiveRequestRate> & { lastRequestAt: string | null; lastRequestAgeSec: number | null }> {
-  const hot = await loadHotMirrorLiveEvents(nowMs, Math.max(30, windowMinutes * 4));
-  // Prefer cache live rows + hot mirror; computeLiveRequestRate skips estimated.
-  const rate = computeLiveRequestRate([...cache, ...hot], windowMinutes, nowMs);
+  const mins = Math.max(1, Math.min(60, Math.floor(windowMinutes) || 3));
+  // Hot mirrors: short lookback only (RPM is 3m window)
+  const hot = await loadHotMirrorLiveEvents(nowMs, Math.max(30, mins * 4), 256 * 1024);
+
+  // Only feed computeLiveRequestRate rows that can fall inside the window (+skew).
+  // Spreading 50k+ full-history events was the period-switch bottleneck.
+  const windowStart = nowMs - mins * 60_000 - 5_000;
+  const recent: UsageEvent[] = [];
+  const ts = opts.timestampsMs;
+  const sortedAsc = Array.isArray(ts) && ts.length === cache.length && cache.length > 0;
 
   let lastMs = 0;
-  const consider = (e: UsageEvent) => {
-    // Include single-turn estimates (Antigravity IDE) so "last request" updates
-    // when traffic is not proxied; still skip fat daily rollups.
+  const considerLast = (e: UsageEvent) => {
     if (!isLiveRequestEvent(e)) return;
     const t = Date.parse(e.timestamp);
     if (!Number.isFinite(t) || t > nowMs + 5_000) return;
     if (t > lastMs) lastMs = t;
   };
-  for (const e of cache) consider(e);
-  for (const e of hot) consider(e);
+
+  if (sortedAsc) {
+    // Ascending: walk from the end for recent window + lastRequestAt in one pass
+    for (let i = cache.length - 1; i >= 0; i--) {
+      const t = ts![i]!;
+      if (!Number.isFinite(t) || t > nowMs + 5_000) continue;
+      if (t > lastMs) {
+        const e = cache[i]!;
+        if (isLiveRequestEvent(e)) lastMs = t;
+      }
+      if (t < windowStart) break; // older than rate window
+      const e = cache[i]!;
+      if (!e.estimated) recent.push(e);
+    }
+  } else {
+    for (const e of cache) {
+      considerLast(e);
+      if (e.estimated) continue;
+      const t = Date.parse(e.timestamp);
+      if (Number.isFinite(t) && t >= windowStart && t <= nowMs + 5_000) recent.push(e);
+    }
+  }
+  for (const e of hot) {
+    considerLast(e);
+    recent.push(e);
+  }
+
+  const rate = computeLiveRequestRate(recent, mins, nowMs);
 
   return {
     ...rate,

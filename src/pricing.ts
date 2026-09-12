@@ -1,6 +1,6 @@
 import type { ModelRate, UsageEvent } from "./types.js";
 import { getConfigSync } from "./config.js";
-import { lookupOpenRouterRate } from "./openrouter-models.js";
+import { getOpenRouterFetchedAt, lookupOpenRouterRate } from "./openrouter-models.js";
 import { normalizeModelName } from "./util.js";
 
 /**
@@ -110,6 +110,10 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "glm-5.2": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26 },
   "glm-5-2": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26 },
   "glm-4.5": { inputPer1M: 0.6, outputPer1M: 2.2 },
+  // GLM 5.3 — same official tier as 5.1/5.2 ($1.4 / $4.4 / cache read $0.26).
+  // Claude Code reaches it through the local LiteLLM alias `openclaw`.
+  "glm-5.3": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26 },
+  "glm-5-3": { inputPer1M: 1.4, outputPer1M: 4.4, cacheReadPer1M: 0.26 },
 
   // --- MiniMax / Moonshot ---
   // MiniMax paygo (≤512k, 50% promo): $0.30 / $1.20 / cache $0.06
@@ -119,8 +123,12 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41 },
   "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025 },
   // Hermes / 9router gateway aliases for Kimi K3 family
-  "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5 },
-  "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
+  "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
+  // Hermes gateway profile name (routes via 9router/RouterLab) — NOT Claude default $3/$15.
+  // Approx blended route cost (kimi-class); real backend model often hidden behind the alias.
+  xlab: { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
+  "vip-kimi": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
   // Qwen max family (approx OpenRouter-class rates when Hermes/9router labels them)
   "qwen3.7-max": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
   "qwen3.8-max-preview": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
@@ -199,6 +207,8 @@ const ALIASES: Record<string, string> = {
   "grok-4-latest": "grok-4",
   "grok-code-fast-1-0825": "grok-code-fast-1",
   "kimi-k3": "kimi-k3",
+  xlab: "xlab",
+  "vip-kimi": "vip-kimi",
   "qwen3.7-max": "qwen3.7-max",
   "qwen3.8-max-preview": "qwen3.8-max-preview",
   "qwen3-coder-next": "qwen3-coder-next",
@@ -218,6 +228,27 @@ const ALIASES: Record<string, string> = {
 
 function customRates(): Record<string, ModelRate> {
   return getConfigSync().pricing?.customRates || {};
+}
+
+/**
+ * Pricing is resolved once per model, not once per event. Dashboard period
+ * aggregates can contain hundreds of thousands of rows; repeatedly scanning
+ * the OpenRouter catalog for every row made 30D/All needlessly expensive.
+ */
+type RateLookup = ReturnType<typeof getRateForModel>;
+const rateLookupCache = new Map<string, RateLookup>();
+let rateLookupCustomRates: Record<string, ModelRate> | null = null;
+let rateLookupCatalogAt = -1;
+
+function cachedRateLookupState(): Record<string, ModelRate> {
+  const custom = customRates();
+  const catalogAt = getOpenRouterFetchedAt();
+  if (custom !== rateLookupCustomRates || catalogAt !== rateLookupCatalogAt) {
+    rateLookupCache.clear();
+    rateLookupCustomRates = custom;
+    rateLookupCatalogAt = catalogAt;
+  }
+  return custom;
 }
 
 /** Resolve to a rate table key (bundled or custom). */
@@ -284,19 +315,32 @@ export function getRateForModel(model: string | null | undefined): {
   rate: ModelRate;
   source: "custom" | "bundled" | "openrouter" | "default";
 } {
+  cachedRateLookupState();
+  const cacheKey = model == null ? "" : String(model).trim().toLowerCase();
+  const cached = rateLookupCache.get(cacheKey);
+  if (cached) return cached;
+
   const raw = (normalizeModelName(model) || model || "").trim().toLowerCase();
   const custom = customRates();
   if (raw && custom[raw]) {
-    return { key: raw, rate: custom[raw], source: "custom" };
+    const result = { key: raw, rate: custom[raw], source: "custom" as const };
+    rateLookupCache.set(cacheKey, result);
+    return result;
   }
   // Custom keyed by full OpenRouter id
   if (model) {
     const full = String(model).trim().toLowerCase();
-    if (full && custom[full]) return { key: full, rate: custom[full], source: "custom" };
+    if (full && custom[full]) {
+      const result = { key: full, rate: custom[full], source: "custom" as const };
+      rateLookupCache.set(cacheKey, result);
+      return result;
+    }
   }
   const key = resolveModelKey(model);
   if (key && custom[key.toLowerCase()]) {
-    return { key, rate: custom[key.toLowerCase()], source: "custom" };
+    const result = { key, rate: custom[key.toLowerCase()], source: "custom" as const };
+    rateLookupCache.set(cacheKey, result);
+    return result;
   }
 
   // OpenRouter live catalog BEFORE bundled — Antigravity Gemini 3.x etc. must not
@@ -307,18 +351,28 @@ export function getRateForModel(model: string | null | undefined): {
     (key ? lookupOpenRouterRate(key) : null);
   if (or) {
     if (custom[or.key.toLowerCase()]) {
-      return { key: or.key, rate: custom[or.key.toLowerCase()], source: "custom" };
+      const result = { key: or.key, rate: custom[or.key.toLowerCase()], source: "custom" as const };
+      rateLookupCache.set(cacheKey, result);
+      return result;
     }
     if (custom[or.entry.slug.toLowerCase()]) {
-      return { key: or.entry.slug, rate: custom[or.entry.slug.toLowerCase()], source: "custom" };
+      const result = { key: or.entry.slug, rate: custom[or.entry.slug.toLowerCase()], source: "custom" as const };
+      rateLookupCache.set(cacheKey, result);
+      return result;
     }
-    return { key: or.key, rate: or.rate, source: "openrouter" };
+    const result = { key: or.key, rate: or.rate, source: "openrouter" as const };
+    rateLookupCache.set(cacheKey, result);
+    return result;
   }
 
   if (key && BUNDLED_RATES[key]) {
-    return { key, rate: BUNDLED_RATES[key], source: "bundled" };
+    const result = { key, rate: BUNDLED_RATES[key], source: "bundled" as const };
+    rateLookupCache.set(cacheKey, result);
+    return result;
   }
-  return { key: key || "default", rate: BUNDLED_RATES.default, source: "default" };
+  const result = { key: key || "default", rate: BUNDLED_RATES.default, source: "default" as const };
+  rateLookupCache.set(cacheKey, result);
+  return result;
 }
 
 /**

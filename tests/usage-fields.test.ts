@@ -62,3 +62,18 @@ test("extractTokenBuckets reads cached_tokens and prompt_tokens_details", () => 
   assert.equal(nested?.inputTokens, 500);
   assert.equal(nested?.cacheReadTokens, 400);
 });
+
+test("extractTokenBuckets reads Codex cached_input_tokens fields", () => {
+  const b = extractTokenBuckets({
+    input_tokens: 1000,
+    cached_input_tokens: 800,
+    cache_write_input_tokens: 120,
+    output_tokens: 25,
+  });
+  assert.deepEqual(b, {
+    inputTokens: 1000,
+    outputTokens: 25,
+    cacheReadTokens: 800,
+    cacheWriteTokens: 120,
+  });
+});

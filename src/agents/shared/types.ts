@@ -7,6 +7,8 @@ export interface AgentModule {
   roots: () => string[];
   /** Parse usage events from existing roots. */
   parse: (roots: string[]) => Promise<UsageEvent[]>;
+  /** Optional cheap parser for hot/recent data during the server's light tick. */
+  parseLight?: (roots: string[]) => Promise<UsageEvent[]>;
 }
 
 export interface AgentPathSpec {

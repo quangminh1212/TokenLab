@@ -14,7 +14,12 @@ import {
   stableId,
   walkFiles,
 } from "../../util.js";
-import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
+import {
+  extractModel,
+  extractTimestamp,
+  extractTokenBuckets,
+  type TokenBuckets,
+} from "../shared/usage-fields.js";
 import { liteLlmRoots } from "../litellm/index.js";
 import { nineRouterRoots } from "../9router/index.js";
 
@@ -69,18 +74,44 @@ interface TurnBucket {
  *     attribute matching LiteLLM/9Router history by turn windows, else estimate from content
  * - cwd/workspace from session meta when present
  */
+interface ParseCodexOptions {
+  recentOnly?: boolean;
+  recentWindowMs?: number;
+}
+
 export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
+  return parseCodexInternal(roots);
+}
+
+/**
+ * Cheap hot-path parser used by the server's 60s tick. Codex appends to the
+ * current rollout file, so checking only recently modified files is enough to
+ * pick up new turns without re-reading the entire ~/.codex tree.
+ */
+export async function parseCodexLight(roots: string[]): Promise<UsageEvent[]> {
+  return parseCodexInternal(roots, { recentOnly: true, recentWindowMs: 15 * 60_000 });
+}
+
+async function parseCodexInternal(
+  roots: string[],
+  options: ParseCodexOptions = {},
+): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   const seen = new Set<string>();
   const seenRollouts = new Set<string>();
   const proxyIndex = await loadProxyUsageIndex();
   const claimedProxyIds = new Set<string>();
+  const recentCutoffMs = options.recentOnly
+    ? Date.now() - (options.recentWindowMs ?? 15 * 60_000)
+    : Number.NEGATIVE_INFINITY;
 
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
     // Newer Codex: SQLite state (threads + tokens_used) even when sessions/ is empty
-    events.push(...(await parseCodexSqliteState(root, seenRollouts, proxyIndex, claimedProxyIds)));
+    if (!options.recentOnly) {
+      events.push(...(await parseCodexSqliteState(root, seenRollouts, proxyIndex, claimedProxyIds)));
+    }
 
     // Prefer real session trees; only fall back to root when those are absent
     const preferred = [
@@ -102,7 +133,9 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
       if (!(await pathExists(base))) continue;
       if (isNoisePath(base)) continue;
       const files = await walkFiles(base, {
-        maxDepth: 12,
+        // In light mode the root itself is only for immediate files; the
+        // session/history directories above still get their full depth.
+        maxDepth: options.recentOnly && base === root ? 1 : 12,
         match: (n, full) => {
           if (isNoisePath(full)) return false;
           return (
@@ -112,6 +145,18 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
           );
         },
       });
+      // The Codex app keeps the active rollout file open and, on Windows, may
+      // not update its filesystem mtime for every append. Keep the newest few
+      // rollout files from the session directory in the light pass as a
+      // fallback to mtime filtering.
+      const hotRolloutFiles = options.recentOnly
+        ? new Set(
+            files
+              .filter((file) => path.basename(file).startsWith("rollout-"))
+              .sort()
+              .slice(-4),
+          )
+        : new Set<string>();
 
       for (const file of files) {
         if (seen.has(file) || seenRollouts.has(file.toLowerCase())) continue;
@@ -127,6 +172,7 @@ export async function parseCodex(roots: string[]): Promise<UsageEvent[]> {
         } catch {
           // ignore
         }
+        if (fileMtime.getTime() < recentCutoffMs && !hotRolloutFiles.has(file)) continue;
 
         if (file.endsWith(".json") && !file.endsWith(".jsonl")) {
           try {
@@ -379,6 +425,26 @@ function parseJsonlFile(
   claimedProxyIds: Set<string>,
 ): void {
   const rows = parseJsonl(text);
+  // Codex currently writes both token_usage_record.payload.usage and a
+  // following event_msg/token_count.info.last_token_usage for the same turn.
+  // Index the former so the latter can be ignored when it is just the mirror
+  // record; if token_usage_record is absent, the token_count record is still
+  // accepted below.
+  const tokenUsageRecords: Array<{ tsMs: number; buckets: TokenBuckets }> = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const type = String(r.type ?? r.event_type ?? r.kind ?? "");
+    if (type !== "token_usage_record") continue;
+    const payload =
+      r.payload && typeof r.payload === "object" ? (r.payload as Record<string, unknown>) : null;
+    const usage = payload?.usage ?? r.usage;
+    const buckets = extractTokenBuckets(usage);
+    if (!buckets) continue;
+    const tsMs = Date.parse(extractTimestamp(r, r.payload, usage, fileMtime));
+    if (Number.isFinite(tsMs)) tokenUsageRecords.push({ tsMs, buckets });
+  }
+
   let idx = 0;
   let lastIn = 0;
   let lastOut = 0;
@@ -401,6 +467,10 @@ function parseJsonlFile(
     const payload =
       r.payload && typeof r.payload === "object" ? (r.payload as Record<string, unknown>) : null;
     const payloadType = payload ? String(payload.type ?? "") : "";
+    const info =
+      payload && payload.info && typeof payload.info === "object"
+        ? (payload.info as Record<string, unknown>)
+        : null;
     const rowTs = extractTimestamp(r, r.payload, fileMtime);
     const rowMs = Date.parse(rowTs);
     if (Number.isFinite(rowMs)) {
@@ -462,21 +532,40 @@ function parseJsonlFile(
       }
     }
 
-    const usageObj = findUsageObject(r, type);
-    if (!usageObj) continue;
+    const usageResult = findUsageObject(r, type);
+    if (!usageResult) continue;
+    const { obj: usageObj, isPerCall } = usageResult;
 
     const buckets = extractTokenBuckets(usageObj);
     if (!buckets) continue;
 
+    // token_count carries both last_token_usage and total_token_usage. When a
+    // matching token_usage_record was written within the same turn, it is a
+    // duplicate of the same request rather than an additional request.
+    const isTokenCountMirror =
+      payloadType === "token_count" && !!info?.last_token_usage && !!info?.total_token_usage;
+    if (
+      isTokenCountMirror &&
+      tokenUsageRecords.some(
+        (record) =>
+          Math.abs(record.tsMs - rowMs) <= 2_000 && sameTokenBuckets(record.buckets, buckets),
+      )
+    ) {
+      continue;
+    }
+
     let { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = buckets;
 
     // Detect cumulative counters (common in Codex token_count streams)
+    // Skip cumulative detection when usage object is already per-call (e.g. info.last_token_usage)
     const looksCumulative =
-      cumulativeMode === true ||
-      (inputTokens >= lastIn &&
-        outputTokens >= lastOut &&
-        (inputTokens > lastIn || outputTokens > lastOut) &&
-        (lastIn > 0 || lastOut > 0 || type.includes("token")));
+      !isPerCall && (
+        cumulativeMode === true ||
+        (inputTokens >= lastIn &&
+          outputTokens >= lastOut &&
+          (inputTokens > lastIn || outputTokens > lastOut) &&
+          (lastIn > 0 || lastOut > 0))
+      );
 
     if (looksCumulative && (inputTokens >= lastIn || outputTokens >= lastOut)) {
       cumulativeMode = true;
@@ -683,6 +772,15 @@ function contentCharLen(content: unknown): number {
   return String(content).length;
 }
 
+function sameTokenBuckets(a: TokenBuckets, b: TokenBuckets): boolean {
+  return (
+    a.inputTokens === b.inputTokens &&
+    a.outputTokens === b.outputTokens &&
+    a.cacheReadTokens === b.cacheReadTokens &&
+    a.cacheWriteTokens === b.cacheWriteTokens
+  );
+}
+
 function normalizeModelKey(model: string | null | undefined): string {
   if (!model) return "";
   let m = model.trim().toLowerCase();
@@ -824,7 +922,9 @@ function proxyRowFromObject(o: Record<string, unknown>, sourcePath: string): Pro
   };
 }
 
-function findUsageObject(r: Record<string, unknown>, type: string): unknown {
+type UsageResult = { obj: unknown; isPerCall: boolean };
+
+function findUsageObject(r: Record<string, unknown>, type: string): UsageResult | null {
   const payload = (r.payload && typeof r.payload === "object" ? r.payload : null) as Record<
     string,
     unknown
@@ -839,32 +939,38 @@ function findUsageObject(r: Record<string, unknown>, type: string): unknown {
       : r.response && typeof r.response === "object"
         ? (r.response as Record<string, unknown>)
         : null;
+  const directUsageIsPerCall = type === "token_usage_record";
 
-  const candidates = [
-    r.usage,
-    r.token_count,
-    r.tokenCount,
-    payload?.usage,
-    payload?.token_count,
-    payload?.tokenCount,
-    info?.usage,
-    info?.token_count,
-    info?.total_token_usage,
-    info?.last_token_usage,
-    response?.usage,
+  // last_token_usage is a per-turn delta (not cumulative) — caller should NOT
+  // apply cumulative detection to it.  total_token_usage is cumulative.
+  const candidates: Array<{ val: unknown; perCall: boolean }> = [
+    { val: r.usage, perCall: directUsageIsPerCall },
+    { val: r.token_count, perCall: false },
+    { val: r.tokenCount, perCall: false },
+    { val: payload?.usage, perCall: directUsageIsPerCall },
+    { val: payload?.token_count, perCall: false },
+    { val: payload?.tokenCount, perCall: false },
+    { val: info?.usage, perCall: false },
+    { val: info?.token_count, perCall: false },
+    // Prefer last_token_usage (per-turn delta) over total_token_usage (cumulative session total)
+    { val: info?.last_token_usage, perCall: true },
+    { val: info?.total_token_usage, perCall: false },
+    { val: response?.usage, perCall: false },
     // whole payload if event type hints tokens
-    type.includes("token") || type.includes("usage") ? payload : null,
-    type.includes("token") || type.includes("usage") ? r : null,
+    { val: type.includes("token") || type.includes("usage") ? payload : null, perCall: false },
+    { val: type.includes("token") || type.includes("usage") ? r : null, perCall: false },
   ];
 
   for (const c of candidates) {
-    if (c && typeof c === "object" && extractTokenBuckets(c)) return c;
+    if (c.val && typeof c.val === "object" && extractTokenBuckets(c.val))
+      return { obj: c.val, isPerCall: c.perCall };
   }
   // Nested total_token_usage under info (Codex sometimes stores cumulative here)
   if (info) {
     for (const key of ["total_token_usage", "last_token_usage", "token_usage"] as const) {
       const nested = info[key];
-      if (nested && typeof nested === "object" && extractTokenBuckets(nested)) return nested;
+      if (nested && typeof nested === "object" && extractTokenBuckets(nested))
+        return { obj: nested, isPerCall: key === "last_token_usage" };
     }
   }
   return null;
@@ -929,4 +1035,5 @@ export const agent: AgentModule = {
     ]);
   },
   parse: parseCodex,
+  parseLight: parseCodexLight,
 };
