@@ -28,7 +28,6 @@ function isNoisePath(full: string): boolean {
   const n = full.replace(/\\/g, "/").toLowerCase();
   const bad = [
     "/.tmp/",
-    "/tmp/",
     "/fixtures/",
     "/fixture/",
     "/plugin-eval/",
