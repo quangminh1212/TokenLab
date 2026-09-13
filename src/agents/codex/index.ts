@@ -893,14 +893,22 @@ function modelsCompatible(a: string, b: string): boolean {
 async function loadProxyUsageIndex(): Promise<ProxyUsageRow[]> {
   const rows: ProxyUsageRow[] = [];
   const seenIds = new Set<string>();
-  const roots = unique([
-    ...liteLlmRoots(),
-    ...nineRouterRoots(),
-    path.join(appDataDir(), "tokenlab", "mirrors", "litellm"),
-    path.join(appDataDir(), "tokenlab", "mirrors", "9router"),
-    path.join(homeDir(), ".tokenlab", "mirrors", "litellm"),
-    path.join(homeDir(), ".tokenlab", "mirrors", "9router"),
-  ]);
+  // TOKENLAB_DATA_DIR override (tests + portable installs) isolates the proxy
+  // index to the override dir only — default appData/home roots are skipped so
+  // tests never pick up the developer's real LiteLLM mirrors (same convention
+  // as legacyDataRoot()/dataRoot() in backup.ts).
+  const envDataDir =
+    process.env.TOKENLAB_DATA_DIR?.trim() || process.env.XLAB_TOKEN_DATA_DIR?.trim() || "";
+  const roots = envDataDir
+    ? [path.join(envDataDir, "mirrors", "litellm"), path.join(envDataDir, "mirrors", "9router")]
+    : unique([
+        ...liteLlmRoots(),
+        ...nineRouterRoots(),
+        path.join(appDataDir(), "tokenlab", "mirrors", "litellm"),
+        path.join(appDataDir(), "tokenlab", "mirrors", "9router"),
+        path.join(homeDir(), ".tokenlab", "mirrors", "litellm"),
+        path.join(homeDir(), ".tokenlab", "mirrors", "9router"),
+      ]);
 
   const historyNames = [
     "usage-history.jsonl",
