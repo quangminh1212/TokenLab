@@ -26,6 +26,12 @@ HOST = "36.50.26.247"
 USER = "root"
 PASSWORD = "a7xe$zZ#NM@2yP8X"
 
+# A local TokenLab timeout can disconnect SSH while the remote command keeps
+# running. Serialize the remote export and bound its lifetime so retries do
+# not pile up expensive full-table Postgres scans.
+REMOTE_EXPORT_LOCK = "/tmp/xlab_export_mirror.lock"
+REMOTE_EXPORT_TIMEOUT_SECONDS = 120
+
 EXPORT_PY = r'''
 import json, os, sqlite3, shutil
 from pathlib import Path
@@ -874,7 +880,12 @@ def main() -> int:
 
     with sftp.file("/tmp/xlab_export_mirror.py", "w") as rf:
         rf.write(EXPORT_PY)
-    _stdin, stdout, stderr = client.exec_command("python3 /tmp/xlab_export_mirror.py", timeout=180)
+    remote_cmd = (
+        f"flock -n {REMOTE_EXPORT_LOCK} "
+        f"timeout --signal=TERM --kill-after=10s {REMOTE_EXPORT_TIMEOUT_SECONDS}s "
+        "python3 /tmp/xlab_export_mirror.py"
+    )
+    _stdin, stdout, stderr = client.exec_command(remote_cmd, timeout=180)
     print(stdout.read().decode("utf-8", "ignore"))
     err = stderr.read().decode("utf-8", "ignore")
     if err:
