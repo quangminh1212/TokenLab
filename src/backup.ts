@@ -53,6 +53,9 @@ export const BACKUP_FORMAT_VERSION = 3 as const;
 
 export type BackupScope = "settings" | "full" | "period-stats";
 
+const LOCAL_MACHINE_SCOPE = "local";
+const FOREIGN_IMPORTED_SCOPE = "foreign-import";
+
 /** Dashboard periods mirrored into Gist backups */
 export type GistPeriodKey = "today" | "24h" | "7d" | "30d" | "all";
 
@@ -174,6 +177,38 @@ export function buildPortableConfig(): PortableBackupConfig {
 export function dataRoot(): string {
   // Backward compat: pre-rename env var still wins (so existing installs don't lose data).
   return process.env.TOKENLAB_DATA_DIR || process.env.XLAB_TOKEN_DATA_DIR || path.join(appDataDir(), "tokenlab");
+}
+
+/**
+ * Return the provenance scope used by cache reconciliation.
+ *
+ * Imported full-event restores often predate machine-id tagging, so they are
+ * explicitly marked by `markImportedEvents` before entering the combined
+ * cache. Gist rollups with a machine id retain that id as a fallback scope.
+ */
+function usageMachineScope(e: UsageEvent): string {
+  const explicit = typeof e.machineScope === "string" ? e.machineScope.trim() : "";
+  if (explicit) return explicit;
+  if (isGistRollupEvent(e)) {
+    const machineId = machineIdFromEvent(e);
+    if (machineId) return `machine:${machineId}`;
+  }
+  return LOCAL_MACHINE_SCOPE;
+}
+
+/** Mark events loaded from imported/restore storage as foreign-machine usage. */
+export function markImportedEvents(events: UsageEvent[]): UsageEvent[] {
+  return (events || []).map((e) => {
+    const machineId = machineIdFromEvent(e);
+    const existing = typeof e.machineScope === "string" ? e.machineScope.trim() : "";
+    const scope =
+      existing && existing !== LOCAL_MACHINE_SCOPE
+        ? existing
+        : machineId
+          ? `machine:${machineId}`
+          : FOREIGN_IMPORTED_SCOPE;
+    return e.machineScope === scope ? e : { ...e, machineScope: scope };
+  });
 }
 
 /**
@@ -453,7 +488,8 @@ export function mergeEventsById(...lists: UsageEvent[][]): UsageEvent[] {
     if (!Array.isArray(list)) continue;
     for (const e of list) {
       if (!e || typeof e.id !== "string" || !e.id) continue;
-      if (!byId.has(e.id)) byId.set(e.id, e);
+      const key = `${usageMachineScope(e)}|${e.id}`;
+      if (!byId.has(key)) byId.set(key, e);
     }
   }
   return [...byId.values()];
@@ -470,20 +506,19 @@ export function mergeEventsByIdPreferRicher(...lists: UsageEvent[][]): UsageEven
     if (!Array.isArray(list)) continue;
     for (const e of list) {
       if (!e || typeof e.id !== "string" || !e.id) continue;
-      const prev = byId.get(e.id);
+      const key = `${usageMachineScope(e)}|${e.id}`;
+      const prev = byId.get(key);
       if (!prev) {
-        byId.set(e.id, e);
+        byId.set(key, e);
         continue;
       }
-      byId.set(e.id, preferRicherEvent(prev, e));
+      byId.set(key, preferRicherEvent(prev, e));
     }
   }
   // Policy: thà tính thừa còn hơn bỏ sót — usage chỉ tăng, không bao giờ giảm.
   // collapseRouterDailyEvents deduplicates same-provider daily rollups that
-  // have different ids (e.g. scanned vs imported/Gist). It collapses by
-  // day+model+workspace so different providers are kept separate. Events with
-  // null workspace use their id as key (never collapsed — could be different
-  // providers, keep all to avoid undercount).
+  // have different ids within one machine scope. Foreign-machine rows retain
+  // a separate scope and are summed.
   return collapseExactUsageDuplicates(
     collapseSourcePathRollups(collapseRouterDailyEvents([...byId.values()])),
   );
@@ -617,7 +652,7 @@ export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
     const sp = e.sourcePath.replace(/\\/g, "/").toLowerCase();
     // Only Windsurf cascade files: one logical session per .pb, keep richest.
     if (e.agent === "windsurf" && sp.endsWith(".pb")) {
-      const key = `ws|${sp}`;
+      const key = `ws|${usageMachineScope(e)}|${sp}`;
       const prev = best.get(key);
       best.set(key, prev ? preferRicherEvent(prev, e) : e);
       continue;
@@ -778,7 +813,7 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       nonRouter.push(e);
       continue;
     }
-    const key = `${e.agent}|${day}`;
+    const key = `${usageMachineScope(e)}|${e.agent}|${day}`;
     let bucket = byAgentDay.get(key);
     if (!bucket) {
       bucket = { dailies: [], requests: [] };
@@ -990,22 +1025,23 @@ export function dropGrokStaleResiduals(events: UsageEvent[]): UsageEvent[] {
     if (typeof e.sourcePath !== "string" || !e.sourcePath) continue;
     const sp = norm(e.sourcePath);
     if (!sp.endsWith("updates.jsonl")) continue;
-    let info = byPath.get(sp);
+    const key = `${usageMachineScope(e)}|${sp}`;
+    let info = byPath.get(key);
     if (!info) {
       info = { hasReal: false, hasEstOutPos: false, outZeroEst: [] };
-      byPath.set(sp, info);
+      byPath.set(key, info);
     }
     if (!e.estimated) info.hasReal = true;
     else if ((Number(e.outputTokens) || 0) > 0) info.hasEstOutPos = true;
     else info.outZeroEst.push(e);
   }
 
-  const dropIds = new Set<string>();
+  const dropKeys = new Set<string>();
   for (const [, info] of byPath) {
     if (info.outZeroEst.length === 0) continue;
     if (info.hasReal || info.hasEstOutPos) {
       // Better row exists for this session file — drop all out=0 residuals
-      for (const g of info.outZeroEst) dropIds.add(g.id);
+      for (const g of info.outZeroEst) dropKeys.add(`${usageMachineScope(g)}|${g.id}`);
       continue;
     }
     // Pure out=0 stack (in-progress / old ghosts only): keep single richest
@@ -1021,13 +1057,13 @@ export function dropGrokStaleResiduals(events: UsageEvent[]): UsageEvent[] {
         }
       }
       for (const g of info.outZeroEst) {
-        if (g.id !== best.id) dropIds.add(g.id);
+        if (g.id !== best.id) dropKeys.add(`${usageMachineScope(g)}|${g.id}`);
       }
     }
   }
 
-  if (dropIds.size === 0) return events;
-  return events.filter((e) => !e || !dropIds.has(e.id));
+  if (dropKeys.size === 0) return events;
+  return events.filter((e) => !e || !dropKeys.has(`${usageMachineScope(e)}|${e.id}`));
 }
 
 /**
@@ -1078,7 +1114,10 @@ export function enforceMonotonicAgentDays(
       if (!e || typeof e.agent !== "string") continue;
       const agent = normalizeAgentId(e.agent);
       const day = (e.timestamp || "").slice(0, 10);
-      const key = /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${agent}|${day}` : `${agent}|__noday__|${e.id}`;
+      const scope = usageMachineScope(e);
+      const key = /^\d{4}-\d{2}-\d{2}$/.test(day)
+        ? `${scope}|${agent}|${day}`
+        : `${scope}|${agent}|__noday__|${e.id}`;
       let b = map.get(key);
       if (!b) {
         b = { events: [], tok: 0, cost: 0, req: 0, live: 0, estOutPos: 0 };
@@ -1164,6 +1203,7 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
       e.agent === "litellm";
     const key = isRouter
       ? [
+          usageMachineScope(e),
           e.agent,
           (e.timestamp || "").slice(0, 19),
           e.model || "",
@@ -1172,6 +1212,7 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
           e.workspace || "",
         ].join("|")
       : [
+          usageMachineScope(e),
           e.agent,
           e.timestamp || "",
           e.model || "",
@@ -1216,13 +1257,13 @@ export async function loadImportedEvents(): Promise<UsageEvent[]> {
   } catch (err) {
     logError("loadImportedEvents legacy fallback failed:", err instanceof Error ? err.message : err);
   }
-  return events;
+  return markImportedEvents(events);
 }
 
 export async function saveImportedEvents(events: UsageEvent[]): Promise<void> {
   const p = importedEventsPath();
   await mkdir(path.dirname(p), { recursive: true });
-  const clean = sanitizeEvents(events) || [];
+  const clean = sanitizeEvents(markImportedEvents(events)) || [];
   await writeFile(p, JSON.stringify(clean), "utf8");
   log("saveImportedEvents:", clean.length, "→", p);
 }
@@ -1889,6 +1930,9 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
       workspace: e.workspace == null ? null : String(e.workspace),
       sourcePath: typeof e.sourcePath === "string" ? e.sourcePath : "backup",
       estimated: Boolean(e.estimated),
+      ...(typeof e.machineScope === "string" && e.machineScope.trim()
+        ? { machineScope: e.machineScope.trim() }
+        : {}),
       ...(requestCount != null ? { requestCount } : {}),
     });
   }
@@ -1936,7 +1980,8 @@ export async function restoreBackup(raw: unknown): Promise<RestoreResult> {
     },
   });
 
-  const events = sanitizeEvents(raw.events);
+  const restoredEvents = sanitizeEvents(raw.events);
+  const events = restoredEvents ? markImportedEvents(restoredEvents) : restoredEvents;
   const openrouterRestored = await restoreOpenrouter(raw.openrouter);
   const mirrorsRestored = await restoreMirrors(raw.mirrors);
   const scope: BackupScope =
@@ -2206,7 +2251,8 @@ export function mergeLocalPreferOverGistRollups(
 ): UsageEvent[] {
   // Fast path: no imports → no allocation / merge cost
   if (!imported || imported.length === 0) return local || [];
-  if (!local || local.length === 0) return imported;
+  const importedScoped = markImportedEvents(imported);
+  if (!local || local.length === 0) return importedScoped;
 
   const mid = sanitizeMachineId(machineId || getMachineId());
   const covered = new Set<string>();
@@ -2215,7 +2261,7 @@ export function mergeLocalPreferOverGistRollups(
     if (isGistRollupEvent(e)) continue;
     covered.add(gistCoverageKey(e));
   }
-  const filteredImported = imported.filter((e) => {
+  const filteredImported = importedScoped.filter((e) => {
     if (!e || typeof e.agent !== "string") return false;
     if (!isGistRollupEvent(e)) return true;
     const eventMid = machineIdFromEvent(e);

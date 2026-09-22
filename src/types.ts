@@ -71,6 +71,11 @@ export interface UsageEvent {
   sourcePath: string;
   estimated?: boolean;
   /**
+   * Runtime/persisted provenance scope used to keep foreign-machine restores
+   * separate from local usage during deduplication and high-water merges.
+   */
+  machineScope?: string;
+  /**
    * Real API request count represented by this row.
    * Per-call history rows = 1; daily byModel rollups = that model's `requests`.
    * Aggregate `eventCount` sums this (defaults to 1 when omitted).

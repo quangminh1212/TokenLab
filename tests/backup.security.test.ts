@@ -15,6 +15,7 @@ import {
   mergeLocalPreferOverGistRollups,
   mergeMultiMachineGistRollups,
   collapseRouterDailyEvents,
+  enforceMonotonicAgentDays,
   loadScanCache,
   loadScanCacheMainOnly,
   restoreBackup,
@@ -770,6 +771,42 @@ test("mergeLocalPreferOverGistRollups drops only same-machine gist when local co
   assert.ok(merged.some((e) => e.id === "gist-other"), "other machine always kept");
   assert.ok(merged.some((e) => e.id === "gist-2"), "uncovered agent kept");
   assert.ok(!merged.some((e) => e.id === "gist-same"), "same-machine covered rollup dropped");
+});
+
+test("foreign imported router usage remains additive through reconciliation", () => {
+  const local = [
+    evt({
+      id: "local-router",
+      agent: "routerlab",
+      model: "gpt-5.5",
+      timestamp: "2026-07-15T12:00:00.000Z",
+      inputTokens: 100,
+      totalTokens: 110,
+      estimatedCost: 10,
+      sourcePath: "C:/local/router.json",
+      estimated: true,
+    }),
+  ];
+  const imported = [
+    evt({
+      id: "foreign-router",
+      agent: "xlabrouter",
+      model: "gpt-5.5",
+      timestamp: "2026-07-15T12:00:00.000Z",
+      inputTokens: 200,
+      totalTokens: 220,
+      estimatedCost: 20,
+      sourcePath: "C:/other-machine/router.json",
+      estimated: true,
+    }),
+  ];
+
+  const merged = mergeLocalPreferOverGistRollups(local, imported, "pc-local");
+  const highWater = enforceMonotonicAgentDays(local, merged);
+  const totalCost = highWater.reduce((sum, e) => sum + (e.estimatedCost || 0), 0);
+
+  assert.equal(totalCost, 30, "local and foreign-machine usage must be summed");
+  assert.ok(highWater.some((e) => e.machineScope === "foreign-import"));
 });
 
 test("mergeMultiMachineGistRollups sums two hosts and replaces same host", () => {
