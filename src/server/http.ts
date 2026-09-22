@@ -263,8 +263,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let importedEvents: UsageEvent[] = await loadImportedEvents();
   /** Last local scan snapshot — unioned so incomplete/timeout passes never wipe known usage. */
   const diskScanCache = await loadScanCache();
-  // Union import + disk, then collapse so xlabrouter/routerlab never double-count
-  // and day totals never shrink vs either source.
+  // Union import + disk, then collapse within machine scope: local clones collapse
+  // while foreign-machine usage remains additive and day totals never shrink.
   const warmMerged = collapseExactUsageDuplicates(
     collapseSourcePathRollups(
       collapseRouterDailyEvents(
