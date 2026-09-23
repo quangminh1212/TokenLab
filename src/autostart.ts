@@ -50,31 +50,23 @@ export interface AutostartResult {
   status: AutostartStatus;
 }
 
-/** Resolve node + CLI entry used for serve (global npm + local dist/tsx). */
+/** Resolve a Node-runnable CLI entry; never hand raw TypeScript to node.exe. */
 export function resolveServeInvocation(): { node: string; cli: string; args: string[] } {
   const node = process.execPath;
   const here = path.dirname(fileURLToPath(import.meta.url));
   const argv1 = process.argv[1] ? path.resolve(process.argv[1]) : "";
-  // Prefer real CLI entry. Never treat autostart.js (or other helpers) as serve target —
-  // launchSupervisorNow can be imported from tests/evals and argv[1] is then wrong.
+  // Prefer the packaged build. When setup runs through tsx, argv1 is src/cli.ts;
+  // a Windows supervisor later invokes node.exe directly and cannot resolve the
+  // source tree's .js imports. The adjacent installer build is the stable entry.
   const candidates = [
-    argv1,
     path.join(here, "cli.js"),
-    path.join(here, "cli.ts"),
-    path.join(here, "..", "src", "cli.ts"),
+    path.resolve(here, "..", "installer", "dist", "cli.js"),
+    path.resolve(here, "..", "..", "installer", "dist", "cli.js"),
+    argv1.toLowerCase().endsWith(".js") ? argv1 : "",
   ].filter(Boolean);
-  let cli = candidates.find((p) => {
-    const base = path.basename(p).toLowerCase();
-    return (base === "cli.js" || base === "cli.ts" || base === "cli.mjs" || base === "tokenlab" || base === "xlab-token") && fs.existsSync(p);
-  });
+  const cli = candidates.find((candidate) => fs.existsSync(candidate));
   if (!cli) {
-    // Last resort: argv1 only if it exists and is not this module
-    const self = fileURLToPath(import.meta.url);
-    if (argv1 && fs.existsSync(argv1) && path.resolve(argv1) !== path.resolve(self)) {
-      cli = argv1;
-    } else {
-      cli = path.join(here, "cli.js");
-    }
+    throw new Error(`Built TokenLab CLI not found next to ${here}; run npm run build first`);
   }
   log("Resolved serve invocation:", { node, cli });
   return { node, cli, args: [cli, "serve"] };
@@ -465,6 +457,19 @@ async function installWindows(): Promise<AutostartResult> {
     return {
       ok: false,
       message: `Failed to write registry Run key: ${msg}`,
+      status: await getAutostartStatus(),
+    };
+  }
+
+  // A running wscript has already loaded the old VBS into memory; rewriting
+  // autostart.vbs alone does not refresh that process. Restart only the
+  // supervisor so it adopts the current serve process (if any) with new paths.
+  const supervisor = await launchSupervisorNow({ forceRestart: true });
+  if (!supervisor.ok) {
+    logError("Autostart registered but supervisor refresh failed:", supervisor.message);
+    return {
+      ok: false,
+      message: `Autostart was registered, but the supervisor could not be refreshed: ${supervisor.message}`,
       status: await getAutostartStatus(),
     };
   }

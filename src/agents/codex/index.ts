@@ -1,7 +1,7 @@
 import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
-import { readdir, stat } from "node:fs/promises";
+import { open, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
@@ -62,6 +62,11 @@ interface TurnBucket {
   model: string | null;
 }
 
+// Minute light scans must not keep reparsing duplicated, unchanged Codex/Orca
+// histories. Full scans bypass this signature cache and remain authoritative.
+const LIGHT_RESCAN_SKIP_BYTES = 8 * 1024 * 1024;
+const lightFileSignatures = new Map<string, string>();
+
 /**
  * Deep Codex support:
  * - ~/.codex/sessions (rollout-*.jsonl date tree) — classic layout
@@ -98,7 +103,8 @@ async function parseCodexInternal(
   const events: UsageEvent[] = [];
   const seen = new Set<string>();
   const seenRollouts = new Set<string>();
-  const proxyIndex = await loadProxyUsageIndex();
+  const seenFileSignatures = new Set<string>();
+  const proxyIndex = await loadProxyUsageIndex(Boolean(options.recentOnly));
   const claimedProxyIds = new Set<string>();
   const recentCutoffMs = options.recentOnly
     ? Date.now() - (options.recentWindowMs ?? 15 * 60_000)
@@ -161,17 +167,38 @@ async function parseCodexInternal(
         if (seen.has(file) || seenRollouts.has(file.toLowerCase())) continue;
         if (isNoisePath(file)) continue;
         seen.add(file);
-        const text = await readText(file);
-        if (!text) continue;
-
         let fileMtime = new Date(0);
+        let fileSize = -1;
         try {
           const st = await stat(file);
           fileMtime = st.mtime;
+          fileSize = st.size;
         } catch {
           // ignore
         }
         if (fileMtime.getTime() < recentCutoffMs && !hotRolloutFiles.has(file)) continue;
+
+        let signature = "";
+        if (fileSize >= 0) {
+          let relative = path.relative(root, file).replace(/\\/g, "/");
+          if (process.platform === "win32") relative = relative.toLowerCase();
+          signature = `${relative}|${fileSize}|${Math.trunc(fileMtime.getTime())}`;
+          // The same relative rollout often exists under both .codex and Orca
+          // roots. Read it once per scan when size and mtime match.
+          if (seenFileSignatures.has(signature)) continue;
+          seenFileSignatures.add(signature);
+          const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
+          if (
+            options.recentOnly &&
+            fileSize > LIGHT_RESCAN_SKIP_BYTES &&
+            lightFileSignatures.get(fileKey) === signature
+          ) {
+            continue;
+          }
+        }
+
+        const text = await readText(file);
+        if (!text) continue;
 
         if (file.endsWith(".json") && !file.endsWith(".jsonl")) {
           try {
@@ -180,10 +207,18 @@ async function parseCodexInternal(
           } catch {
             // ignore
           }
+          if (options.recentOnly && fileSize > LIGHT_RESCAN_SKIP_BYTES && signature) {
+            const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
+            lightFileSignatures.set(fileKey, signature);
+          }
           continue;
         }
 
         parseJsonlFile(events, text, file, fileMtime, proxyIndex, claimedProxyIds);
+        if (options.recentOnly && fileSize > LIGHT_RESCAN_SKIP_BYTES && signature) {
+          const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
+          lightFileSignatures.set(fileKey, signature);
+        }
       }
     }
   }
@@ -889,7 +924,7 @@ function modelsCompatible(a: string, b: string): boolean {
  * Load per-request proxy history (LiteLLM + 9Router mirrors) for attribution.
  * Caps to recent tail of large jsonl files for scan performance.
  */
-async function loadProxyUsageIndex(): Promise<ProxyUsageRow[]> {
+async function loadProxyUsageIndex(recentOnly = false): Promise<ProxyUsageRow[]> {
   const rows: ProxyUsageRow[] = [];
   const seenIds = new Set<string>();
   // TOKENLAB_DATA_DIR override (tests + portable installs) isolates the proxy
@@ -921,10 +956,28 @@ async function loadProxyUsageIndex(): Promise<ProxyUsageRow[]> {
       const p = path.join(root, name);
       if (!(await pathExists(p))) continue;
       try {
-        let text = await readText(p);
+        let text: string | null;
+        const maxBytes = 4 * 1024 * 1024;
+        const fileStat = await stat(p);
+        if (recentOnly && fileStat.size > maxBytes) {
+          const handle = await open(p, "r");
+          try {
+            const start = Math.max(0, fileStat.size - maxBytes);
+            const buffer = Buffer.alloc(Math.min(fileStat.size, maxBytes));
+            const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+            text = buffer.subarray(0, bytesRead).toString("utf8");
+            if (start > 0) {
+              const firstNewline = text.indexOf("\n");
+              if (firstNewline >= 0) text = text.slice(firstNewline + 1);
+            }
+          } finally {
+            await handle.close();
+          }
+        } else {
+          text = await readText(p);
+        }
         if (!text) continue;
         // Keep last ~4MB for large histories (recent traffic matters for live Codex)
-        const maxBytes = 4 * 1024 * 1024;
         if (text.length > maxBytes) {
           const slice = text.slice(-maxBytes);
           const nl = slice.indexOf("\n");

@@ -61,4 +61,5 @@ export const agent: AgentModule = {
   label: "RouterLab",
   roots: xlabRouterRoots,
   parse: (roots) => parseRouterUsage(roots, "routerlab"),
+  parseLight: (roots) => parseRouterUsage(roots, "routerlab", { recentOnly: true }),
 };

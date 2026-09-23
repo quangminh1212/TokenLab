@@ -92,6 +92,7 @@ function routerModelFromRecord(
 export async function parseRouterUsage(
   roots: string[],
   agent: AgentId,
+  options: { recentOnly?: boolean } = {},
 ): Promise<UsageEvent[]> {
   const eventLevel: UsageEvent[] = [];
   const seenIds = new Set<string>();
@@ -216,7 +217,11 @@ export async function parseRouterUsage(
         const dbPath = path.join(root, dbRel);
         if (!(await pathExists(dbPath))) continue;
         // Prefer a larger recent window so RECENT EVENTS can list individual RQs
-        const rows = await parseSqliteUsage(dbPath, agent, hasDailyForRoot ? 5_000 : 20_000);
+        const rows = await parseSqliteUsage(
+          dbPath,
+          agent,
+          options.recentOnly ? 1_000 : hasDailyForRoot ? 5_000 : 20_000,
+        );
         if (rows.length) {
           pushEvents(rows);
           gotHistory = true;
@@ -261,9 +266,15 @@ export async function parseRouterUsage(
           try {
             const { stat } = await import("node:fs/promises");
             const st = await stat(p);
-            const maxBytes = 12 * 1024 * 1024;
+            const maxBytes = options.recentOnly ? 1 * 1024 * 1024 : 12 * 1024 * 1024;
             if (st.size > maxBytes) {
-              pushEvents(await parseHistoryExportTail(p, agent, 2 * 1024 * 1024));
+              pushEvents(
+                await parseHistoryExportTail(
+                  p,
+                  agent,
+                  options.recentOnly ? 512 * 1024 : 2 * 1024 * 1024,
+                ),
+              );
             } else {
               pushEvents(await parseHistoryExport(p, agent));
             }

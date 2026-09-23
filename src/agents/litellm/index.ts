@@ -44,4 +44,5 @@ export const agent: AgentModule = {
   label: "LiteLLM",
   roots: liteLlmRoots,
   parse: (roots) => parseRouterUsage(roots, "litellm"),
+  parseLight: (roots) => parseRouterUsage(roots, "litellm", { recentOnly: true }),
 };
