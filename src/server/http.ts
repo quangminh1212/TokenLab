@@ -476,6 +476,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // one-per-content-block parsing cannot survive a rescan.
       prevForMerge = dropPreviousAgentSourceEvents(prevForMerge, fresh, "claude-code");
     }
+    if (fresh[0]?.agent === "opencode") {
+      // OpenCode session rollups and message rows can change after compaction.
+      // Replace every freshly read database/JSON source so stale gap events do not linger.
+      prevForMerge = dropPreviousAgentSourceEvents(prevForMerge, fresh, "opencode");
+    }
     // Union by id; keep higher token/cost row when same id reappears.
     // Also keeps prev-only rows (already-scanned history) so we only *add*
     // newly seen ids from this pass rather than re-baselining the agent.
@@ -571,7 +576,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           // session rows superseded by this scan, so stale cache cannot survive.
           scanned = enforceMonotonicAgentDays(
             dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
+              dropPreviousAgentSourceEvents(
+                dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
+                scanned,
+                "opencode",
+              ),
               scanned,
               "grok",
             ),
@@ -587,7 +596,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         if (finalize) {
           merged = enforceMonotonicAgentDays(
             dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
+              dropPreviousAgentSourceEvents(
+                dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
+                merged,
+                "opencode",
+              ),
               merged,
               "openclaw",
             ),

@@ -146,7 +146,7 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | **Windsurf** | `windsurf` | Codeium / Windsurf app data | Yes |
 | **Claude Code** | `claude-code` | `~/.claude/projects` JSONL | Yes |
 | Gemini CLI | `gemini` | `~/.gemini/tmp/**/chats` | Yes |
-| OpenCode | `opencode` | local share / storage | Yes |
+| OpenCode | `opencode` | local share / `opencode.db` (SQLite messages + session rollups) and legacy storage JSON | Yes |
 | GitHub Copilot | `copilot` | `~/.copilot/otel` JSONL | Yes |
 | Pi / Oh My Pi | `pi` | `~/.pi` / `~/.omp` sessions | Yes |
 | Kimi CLI | `kimi` | `~/.kimi/**/wire.jsonl` | Yes |
