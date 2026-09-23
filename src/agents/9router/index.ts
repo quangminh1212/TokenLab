@@ -40,4 +40,5 @@ export const agent: AgentModule = {
   label: "9Router",
   roots: nineRouterRoots,
   parse: (roots) => parseRouterUsage(roots, "9router"),
+  parseLight: (roots) => parseRouterUsage(roots, "9router", { recentOnly: true }),
 };

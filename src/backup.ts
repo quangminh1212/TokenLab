@@ -1483,8 +1483,10 @@ export type SaveScanCacheOpts = {
   /**
    * - full (default): collapse + .bak + archive (shutdown / end of full scan)
    * - quick: skip heavy collapse + archive (progressive mid-scan) — less CPU/RAM/disk
-   */
+  */
   mode?: "full" | "quick";
+  /** Agents successfully rescanned by a full pass; replace their stale disk rows. */
+  replaceAgents?: readonly string[];
 };
 
 export async function saveScanCache(
@@ -1492,6 +1494,7 @@ export async function saveScanCache(
   opts: SaveScanCacheOpts = {},
 ): Promise<void> {
   const mode = opts.mode === "quick" ? "quick" : "full";
+  const replaceAgents = new Set((opts.replaceAgents || []).map((agent) => String(agent).toLowerCase()));
   const p = scanCachePath();
   const bak = scanCacheBackupPath();
   await mkdir(path.dirname(p), { recursive: true });
@@ -1530,8 +1533,12 @@ export async function saveScanCache(
       try {
         const existing = await loadScanCacheMainOnly();
         if (existing.length > 0) {
+          const prior =
+            replaceAgents.size === 0
+              ? existing
+              : existing.filter((event) => !replaceAgents.has(String(event.agent).toLowerCase()));
           const merged = enforceMonotonicAgentDays(
-            dropPreviousAgentSourceEvents(existing, clean, "claude-code"),
+            dropPreviousAgentSourceEvents(prior, clean, "claude-code"),
             clean,
           );
           clean = collapseExactUsageDuplicates(

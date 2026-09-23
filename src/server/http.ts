@@ -290,16 +290,36 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let scanCacheSaveTimer: ReturnType<typeof setTimeout> | null = null;
   /** Progressive disk writes use quick mode; final flush uses full collapse+archive. */
   let pendingSaveMode: "full" | "quick" = "quick";
-  const scheduleSaveScanCache = (mode: "full" | "quick" = "quick"): void => {
+  let pendingSaveReplaceAgents = new Set<string>();
+  /** Light scans find few changes, while the serialized cache can be hundreds of MB. */
+  const QUICK_SAVE_MIN_MS = 5 * 60_000;
+  let lastQuickSaveAt = 0;
+  const scheduleSaveScanCache = (
+    mode: "full" | "quick" = "quick",
+    replaceAgents: readonly string[] = [],
+  ): void => {
     // Promote to full if any waiter asked for full
-    if (mode === "full") pendingSaveMode = "full";
+    if (mode === "full") {
+      pendingSaveMode = "full";
+      for (const agent of replaceAgents) pendingSaveReplaceAgents.add(agent.toLowerCase());
+    }
+    // Do not reset an already-pending light save every minute. Later changes
+    // coalesce behind the five-minute floor instead of repeatedly serializing
+    // the whole cache.
+    if (scanCacheSaveTimer && mode !== "full") return;
     if (scanCacheSaveTimer) clearTimeout(scanCacheSaveTimer);
-    const delay = pendingSaveMode === "full" ? 800 : 5_000;
+    const delay =
+      pendingSaveMode === "full"
+        ? 800
+        : Math.max(5_000, QUICK_SAVE_MIN_MS - (Date.now() - lastQuickSaveAt));
     scanCacheSaveTimer = setTimeout(() => {
       scanCacheSaveTimer = null;
       const saveMode = pendingSaveMode;
+      const saveReplaceAgents = [...pendingSaveReplaceAgents];
       pendingSaveMode = "quick";
-      void saveScanCache(cache, { mode: saveMode }).catch((err) => {
+      pendingSaveReplaceAgents = new Set<string>();
+      lastQuickSaveAt = Date.now();
+      void saveScanCache(cache, { mode: saveMode, replaceAgents: saveReplaceAgents }).catch((err) => {
         console.warn(
           "[tokenlab] save scan cache failed:",
           err instanceof Error ? err.message : err,
@@ -402,18 +422,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   function mergeAgentScanLight(fresh: UsageEvent[], prev: UsageEvent[]): UsageEvent[] {
     if (fresh.length === 0) return prev;
     if (prev.length === 0) return fresh;
-    // Router agents (9router / RouterLab / LiteLLM): full re-parse of mirrors is
-    // authoritative for that pass. Union-by-id kept prev noon-stamped dailies
-    // alongside new SpendLogs RQs and collapse then discarded the live rows.
-    const routerAgent =
-      fresh[0]?.agent === "9router" ||
-      fresh[0]?.agent === "routerlab" ||
-      fresh[0]?.agent === "xlabrouter" ||
-      fresh[0]?.agent === "litellm";
     // Antigravity: full re-parse is authoritative (model ids get refined; union would
     // keep stale bare "gemini" rows forever because tokens/cost stay the same).
     const antigravityAgent = fresh[0]?.agent === "antigravity";
-    if ((routerAgent || antigravityAgent) && fresh.length >= 5) {
+    // Light router parsers read only bounded recent request history. Preserve
+    // older cached rows and merge by id; only Antigravity's current snapshot is
+    // complete enough to replace its previous agent rows here.
+    if (antigravityAgent && fresh.length >= 5) {
       return fresh;
     }
     // Codex light scans re-read only files whose mtime changed. Replace the
@@ -515,8 +530,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const prev = cache;
       const byAgent = new Map<string, UsageEvent[]>();
       const agentStats: Array<{ agent: string; events: number; durationMs: number; error?: string }> = [];
-      // Seed with previous events so UI does not flash to 0 while scanning
+      const authoritativeAgents = new Set<string>();
+      // Full scans retain the old snapshot until each agent returns a complete
+      // replacement. Light scans only index hot agents and keep the rest in prev.
       for (const e of prev) {
+        if (!full && !PERIODIC_LIGHT_AGENTS.has(e.agent)) continue;
         const list = byAgent.get(e.agent) ?? [];
         list.push(e);
         byAgent.set(e.agent, list);
@@ -538,8 +556,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           .toLowerCase();
       };
       const previousForMonotonic = (): UsageEvent[] => {
-        if (codexReplacedPaths.size === 0 && grokReplacedSessions.size === 0) return prev;
+        if (
+          codexReplacedPaths.size === 0 &&
+          grokReplacedSessions.size === 0 &&
+          (!full || authoritativeAgents.size === 0)
+        ) {
+          return prev;
+        }
         return prev.filter((e) => {
+          if (full && authoritativeAgents.has(String(e.agent).toLowerCase())) return false;
           if (e.agent === "codex" && codexReplacedPaths.has(codexSourceKey(e.sourcePath))) {
             return false;
           }
@@ -558,10 +583,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         }
         rebuildDirty = false;
         lastRebuildAt = now;
-        let total = 0;
+        const unchangedPrev = full
+          ? []
+          : prev.filter((e) => !PERIODIC_LIGHT_AGENTS.has(e.agent));
+        let total = unchangedPrev.length;
         for (const list of byAgent.values()) total += list.length;
         let scanned: UsageEvent[] = new Array(total);
         let i = 0;
+        for (const e of unchangedPrev) scanned[i++] = e;
         for (const list of byAgent.values()) {
           for (const e of list) scanned[i++] = e;
         }
@@ -645,8 +674,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         await scanAll({
           enabled,
           light: !full,
-          // Light agents first (scanAll); 4-wide balances speed vs disk contention on Windows.
-          concurrency: full ? 4 : 4,
+          // Keep historical scans serial; two light workers limit disk contention.
+          concurrency: full ? 1 : 2,
           // Full: no timeout. Periodic: 90s soft cap (prev data kept on miss).
           timeoutMs: full ? 0 : 90_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
@@ -684,8 +713,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
                   if (source) codexReplacedPaths.add(source);
                 }
               }
-              byAgent.set(agent, mergeAgentScanLight(events, prevForAgent));
-              rebuild(false, false);
+              if (full && !error && events.length > 0) {
+                byAgent.set(agent, events);
+                authoritativeAgents.add(agent.toLowerCase());
+              } else {
+                byAgent.set(agent, mergeAgentScanLight(events, prevForAgent));
+              }
+              if (full) rebuild(false, false);
             }
             agentStats.push({
               agent,
@@ -720,10 +754,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           clearTimeout(progressBroadcastTimer);
           progressBroadcastTimer = null;
         }
-        // Final rebuild with full collapse + one disk write (not every agent).
-        rebuild(true, true);
+        // Full passes collapse/authoritatively replace once. Light passes only
+        // merge the hot-agent snapshot and defer the expensive full save.
+        rebuild(true, full);
         bumpScan(full ? "complete-full" : "complete");
-        scheduleSaveScanCache("full");
+        scheduleSaveScanCache(full ? "full" : "quick", full ? [...authoritativeAgents] : []);
         if (full) {
           const failed = agentStats.filter((s) => s.error);
           slog(
@@ -748,7 +783,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         return cache.length;
       } catch (err) {
         // Keep last progressive cache rather than wiping
-        if (rebuildDirty) rebuild(true, true);
+        if (rebuildDirty) rebuild(true, full);
         bumpScan("error");
         throw err;
       } finally {
@@ -1676,11 +1711,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
 
   let periodicTick = 0;
-  // Every 60s: pull remote mirrors + light rescan. Full all-agent scan every 30 min.
+  // Every 60s: pull remote mirrors + light rescan. Full all-agent scan every 6h.
   // Sync → scan so aggregate/dashboard reflects just-pulled usageDaily.
   const timer = setInterval(() => {
     periodicTick += 1;
-    const doFull = periodicTick % 30 === 0;
+    const doFull = periodicTick % 360 === 0;
     void (async () => {
       await syncVpsMirrors(doFull ? "periodic-full" : "periodic", 55_000);
       // Skip starting another scan if one is already running (rescan coalesces too).
