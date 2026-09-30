@@ -505,6 +505,63 @@ test("saveScanCache round-trips and loadScanCache recovers from .bak when main i
   }
 });
 
+test("saveScanCache keeps the prior agent/day high-water during a full scan save", async () => {
+  const root = path.join(process.cwd(), ".test-scan-cache-high-water-" + Date.now());
+  const prev = process.env.XLAB_TOKEN_DATA_DIR;
+  process.env.XLAB_TOKEN_DATA_DIR = root;
+  try {
+    await mkdir(root, { recursive: true });
+    const previous = evt({
+      id: "full-scan-prior-high-water",
+      agent: "routerlab",
+      model: "mixed",
+      estimated: true,
+      inputTokens: 5_000_000,
+      totalTokens: 5_100_000,
+      estimatedCost: 100,
+      timestamp: "2026-05-25T12:00:00.000Z",
+    });
+    const rescanned = evt({
+      id: "full-scan-thinner-result",
+      agent: "routerlab",
+      model: "mixed",
+      estimated: true,
+      inputTokens: 100_000,
+      totalTokens: 110_000,
+      estimatedCost: 2,
+      timestamp: "2026-05-25T12:00:00.000Z",
+    });
+
+    await saveScanCache([previous], { mode: "full" });
+    // Older full-scan callers supplied this hint and accidentally excluded
+    // that agent's old rows from the high-water comparison.
+    const legacyFullScanOptions = {
+      mode: "full",
+      replaceAgents: ["routerlab"],
+    } as unknown as NonNullable<Parameters<typeof saveScanCache>[1]>;
+    await saveScanCache([rescanned], legacyFullScanOptions);
+
+    const loaded = await loadScanCache();
+    const sameDay = loaded.filter(
+      (event) =>
+        event.agent === "routerlab" &&
+        event.timestamp.slice(0, 10) === "2026-05-25",
+    );
+    assert.ok(
+      sameDay.reduce((sum, event) => sum + Number(event.totalTokens || 0), 0) >= 5_100_000,
+      "full scan must retain the previous daily token high-water",
+    );
+    assert.ok(
+      sameDay.reduce((sum, event) => sum + Number(event.estimatedCost || 0), 0) >= 100,
+      "full scan must retain the previous daily cost high-water",
+    );
+  } finally {
+    if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
+    else process.env.XLAB_TOKEN_DATA_DIR = prev;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("saveScanCache skips identical rewrite and persists timestamp-sorted", async () => {
   const root = path.join(process.cwd(), ".test-scan-cache-skip-" + Date.now());
   const prev = process.env.XLAB_TOKEN_DATA_DIR;

@@ -290,19 +290,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let scanCacheSaveTimer: ReturnType<typeof setTimeout> | null = null;
   /** Progressive disk writes use quick mode; final flush uses full collapse+archive. */
   let pendingSaveMode: "full" | "quick" = "quick";
-  let pendingSaveReplaceAgents = new Set<string>();
   /** Light scans find few changes, while the serialized cache can be hundreds of MB. */
   const QUICK_SAVE_MIN_MS = 5 * 60_000;
   let lastQuickSaveAt = 0;
-  const scheduleSaveScanCache = (
-    mode: "full" | "quick" = "quick",
-    replaceAgents: readonly string[] = [],
-  ): void => {
+  const scheduleSaveScanCache = (mode: "full" | "quick" = "quick"): void => {
     // Promote to full if any waiter asked for full
-    if (mode === "full") {
-      pendingSaveMode = "full";
-      for (const agent of replaceAgents) pendingSaveReplaceAgents.add(agent.toLowerCase());
-    }
+    if (mode === "full") pendingSaveMode = "full";
     // Do not reset an already-pending light save every minute. Later changes
     // coalesce behind the five-minute floor instead of repeatedly serializing
     // the whole cache.
@@ -315,11 +308,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     scanCacheSaveTimer = setTimeout(() => {
       scanCacheSaveTimer = null;
       const saveMode = pendingSaveMode;
-      const saveReplaceAgents = [...pendingSaveReplaceAgents];
       pendingSaveMode = "quick";
-      pendingSaveReplaceAgents = new Set<string>();
       lastQuickSaveAt = Date.now();
-      void saveScanCache(cache, { mode: saveMode, replaceAgents: saveReplaceAgents }).catch((err) => {
+      void saveScanCache(cache, { mode: saveMode }).catch((err) => {
         console.warn(
           "[tokenlab] save scan cache failed:",
           err instanceof Error ? err.message : err,
@@ -530,9 +521,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const prev = cache;
       const byAgent = new Map<string, UsageEvent[]>();
       const agentStats: Array<{ agent: string; events: number; durationMs: number; error?: string }> = [];
-      const authoritativeAgents = new Set<string>();
-      // Full scans retain the old snapshot until each agent returns a complete
-      // replacement. Light scans only index hot agents and keep the rest in prev.
+      // Full scans collect fresh rows per agent; final aggregation compares them
+      // with prev so a thinner parser cannot erase history. Light scans only
+      // index hot agents and keep the rest in prev.
       for (const e of prev) {
         if (!full && !PERIODIC_LIGHT_AGENTS.has(e.agent)) continue;
         const list = byAgent.get(e.agent) ?? [];
@@ -556,15 +547,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           .toLowerCase();
       };
       const previousForMonotonic = (): UsageEvent[] => {
-        if (
-          codexReplacedPaths.size === 0 &&
-          grokReplacedSessions.size === 0 &&
-          (!full || authoritativeAgents.size === 0)
-        ) {
+        if (codexReplacedPaths.size === 0 && grokReplacedSessions.size === 0) {
           return prev;
         }
         return prev.filter((e) => {
-          if (full && authoritativeAgents.has(String(e.agent).toLowerCase())) return false;
           if (e.agent === "codex" && codexReplacedPaths.has(codexSourceKey(e.sourcePath))) {
             return false;
           }
@@ -600,9 +586,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
           // Never let a thinner rescan shrink per-agent day totals vs previous cache.
-          // Union semantics: previousForMonotonic() drops prev rows replaced by
-          // fresh codex/openclaw passes; then drop claude-code source rows and openclaw
-          // session rows superseded by this scan, so stale cache cannot survive.
+          // Source/session replacements are filtered explicitly below; full
+          // agent rescans still retain prev as the high-water comparison baseline.
           scanned = enforceMonotonicAgentDays(
             dropPreviousAgentSessionEvents(
               dropPreviousAgentSourceEvents(
@@ -715,7 +700,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               }
               if (full && !error && events.length > 0) {
                 byAgent.set(agent, events);
-                authoritativeAgents.add(agent.toLowerCase());
               } else {
                 byAgent.set(agent, mergeAgentScanLight(events, prevForAgent));
               }
@@ -758,7 +742,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // merge the hot-agent snapshot and defer the expensive full save.
         rebuild(true, full);
         bumpScan(full ? "complete-full" : "complete");
-        scheduleSaveScanCache(full ? "full" : "quick", full ? [...authoritativeAgents] : []);
+        scheduleSaveScanCache(full ? "full" : "quick");
         if (full) {
           const failed = agentStats.filter((s) => s.error);
           slog(
