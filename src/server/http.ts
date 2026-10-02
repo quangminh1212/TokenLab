@@ -62,6 +62,24 @@ function configuredTimeZone(): string {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** Agents refreshed every minute so current usage reaches the dashboard promptly. */
+const PERIODIC_LIGHT_AGENTS = new Set<AgentId>([
+  "codex",
+  "9router",
+  "routerlab",
+  "xlabrouter",
+  "litellm",
+  "hermes",
+]);
+
+export function periodicLightScanEnabled(): Partial<Record<AgentId, boolean>> {
+  const enabled: Partial<Record<AgentId, boolean>> = {};
+  for (const mod of AGENTS) {
+    enabled[mod.id] = PERIODIC_LIGHT_AGENTS.has(mod.id);
+  }
+  return enabled;
+}
+
 export interface ServerOptions {
   host?: string;
   port?: number;
@@ -372,18 +390,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
   }
 
-  /**
-   * Agents re-parsed on the 60s light tick (hot usage sources).
-   * Full pass still covers every agent — keeps periodic work small & UI snappy.
-   */
-  const PERIODIC_LIGHT_AGENTS = new Set<string>([
-    "codex",
-    "9router",
-    "routerlab",
-    "xlabrouter",
-    "litellm",
-  ]);
-
   /** Safe log — never throw EPIPE into uncaughtException mid-scan. */
   const slog = (...args: unknown[]): void => {
     try {
@@ -650,10 +656,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // Light periodic: only hot agents (mirrors + common IDEs). Full: everyone.
         let enabled: Partial<Record<AgentId, boolean>> | undefined;
         if (!full) {
-          enabled = {};
-          for (const mod of AGENTS) {
-            enabled[mod.id] = PERIODIC_LIGHT_AGENTS.has(mod.id);
-          }
+          enabled = periodicLightScanEnabled();
         }
 
         await scanAll({
