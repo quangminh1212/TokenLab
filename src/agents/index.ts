@@ -179,6 +179,44 @@ function yieldEventLoop(): Promise<void> {
 }
 
 /**
+ * OpenClaw can mirror a response already recorded by Hermes. Keep the Hermes
+ * row when per-request totals match within one second; it carries the cache
+ * token split needed for accurate pricing.
+ */
+export function dedupeMirroredOpenClawEvents(
+  openclawEvents: UsageEvent[],
+  hermesEvents: UsageEvent[],
+): UsageEvent[] {
+  const hermesByModel = new Map<string, Array<{ timestamp: number; event: UsageEvent }>>();
+  for (const event of hermesEvents) {
+    if ((event.requestCount ?? 1) !== 1 || !event.model) continue;
+    const timestamp = Date.parse(event.timestamp);
+    if (!Number.isFinite(timestamp)) continue;
+    const model = event.model.trim().toLowerCase();
+    const rows = hermesByModel.get(model) ?? [];
+    rows.push({ timestamp, event });
+    hermesByModel.set(model, rows);
+  }
+
+  return openclawEvents.filter((event) => {
+    if ((event.requestCount ?? 1) !== 1 || !event.model) return true;
+    const timestamp = Date.parse(event.timestamp);
+    if (!Number.isFinite(timestamp)) return true;
+    const candidates = hermesByModel.get(event.model.trim().toLowerCase());
+    if (!candidates) return true;
+
+    const fullInput = event.inputTokens + event.cacheReadTokens + event.cacheWriteTokens;
+    return !candidates.some(
+      ({ timestamp: hermesTimestamp, event: hermes }) =>
+        Math.abs(timestamp - hermesTimestamp) <= 1_000 &&
+        event.outputTokens === hermes.outputTokens &&
+        event.totalTokens === hermes.totalTokens &&
+        fullInput === hermes.inputTokens + hermes.cacheReadTokens + hermes.cacheWriteTokens,
+    );
+  });
+}
+
+/**
  * Scan all enabled agents. Runs parsers in parallel (bounded concurrency) so a
  * single heavy agent (9router/devin) does not block the rest for tens of seconds.
  * Does not sort the full list (callers that need newest-first sort a slice).
@@ -254,7 +292,14 @@ export async function scanAll(
 
   const workers = Array.from({ length: Math.min(concurrency, jobs.length || 1) }, () => worker());
   await Promise.all(workers);
-  return all;
+  if (!collectAll) return all;
+  const retainedOpenClaw = new Set(
+    dedupeMirroredOpenClawEvents(
+      all.filter((event) => event.agent === "openclaw"),
+      all.filter((event) => event.agent === "hermes"),
+    ),
+  );
+  return all.filter((event) => event.agent !== "openclaw" || retainedOpenClaw.has(event));
 }
 
 export async function detectAgents(events: UsageEvent[] = []): Promise<AgentStatus[]> {

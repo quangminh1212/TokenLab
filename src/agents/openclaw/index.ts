@@ -16,6 +16,7 @@ import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/u
 export async function parseOpenClaw(roots: string[]): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   const seenFiles = new Set<string>();
+  const seenDatabases = new Set<string>();
 
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
@@ -53,8 +54,116 @@ export async function parseOpenClaw(roots: string[]): Promise<UsageEvent[]> {
       if (path.basename(file) === "sessions.json") continue;
       await parseSessionFile(events, file, seenFiles);
     }
+
+    // Current OpenClaw stores session transcripts in a SQLite event log.
+    const databases = await walkFiles(root, {
+      maxDepth: 10,
+      match: (name) => name === "openclaw-agent.sqlite",
+    });
+    for (const database of databases) {
+      const key = path.resolve(database).toLowerCase();
+      if (seenDatabases.has(key)) continue;
+      seenDatabases.add(key);
+      events.push(...(await parseOpenClawDatabase(database)));
+    }
   }
 
+  return events;
+}
+
+async function parseOpenClawDatabase(dbPath: string): Promise<UsageEvent[]> {
+  const events: UsageEvent[] = [];
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all() as Array<{ name: string }>;
+      if (!tables.some((table) => table.name === "transcript_events")) return events;
+
+      const sessionModels = new Map<string, string | null>();
+      if (tables.some((table) => table.name === "session_windows")) {
+        try {
+          const columns = db
+            .prepare("PRAGMA table_info(session_windows)")
+            .all() as Array<{ name: string }>;
+          const names = new Set(columns.map((column) => column.name));
+          if (names.has("session_id") && names.has("model")) {
+            const rows = db
+              .prepare("SELECT session_id, model FROM session_windows")
+              .all() as Array<Record<string, unknown>>;
+            for (const row of rows) {
+              const sessionId = String(row.session_id ?? "");
+              const model = typeof row.model === "string" && row.model.trim() ? row.model.trim() : null;
+              if (sessionId && model) sessionModels.set(sessionId, model);
+            }
+          }
+        } catch {
+          // Keep parsing event-local models when the session index differs by version.
+        }
+      }
+
+      const rows = db
+        .prepare("SELECT session_id, seq, event_json, created_at FROM transcript_events ORDER BY created_at, seq")
+        .all() as Array<Record<string, unknown>>;
+      const eventModels = new Map<string, string | null>();
+      for (const row of rows) {
+        const sessionId = String(row.session_id ?? "");
+        if (!sessionId || typeof row.event_json !== "string") continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(row.event_json);
+        } catch {
+          continue;
+        }
+        if (!parsed || typeof parsed !== "object") continue;
+        const record = parsed as Record<string, unknown>;
+        const type = String(record.type ?? record.role ?? record.event ?? "");
+        const currentModel = eventModels.get(sessionId) ?? sessionModels.get(sessionId) ?? null;
+
+        if (type === "model_change" || type === "session_meta" || type === "system") {
+          const model = extractModel(record, record.message, currentModel);
+          if (model) eventModels.set(sessionId, model);
+          continue;
+        }
+
+        const message =
+          record.message && typeof record.message === "object"
+            ? (record.message as Record<string, unknown>)
+            : record;
+        const role = String(message.role ?? record.role ?? "").toLowerCase();
+        if (role && role !== "assistant") continue;
+        const usage = message.usage ?? record.usage ?? record.token_usage;
+        const buckets = extractTokenBuckets(usage ?? message);
+        if (
+          !buckets ||
+          buckets.inputTokens + buckets.outputTokens + buckets.cacheReadTokens + buckets.cacheWriteTokens <= 0
+        ) {
+          continue;
+        }
+
+        const model = extractModel(record, message, currentModel) || null;
+        if (model) eventModels.set(sessionId, model);
+        const seq = String(row.seq ?? "");
+        events.push(
+          applyPricing({
+            id: stableId("openclaw", dbPath, sessionId, seq, String(buckets.inputTokens), String(buckets.outputTokens)),
+            agent: "openclaw",
+            model,
+            timestamp: extractTimestamp(record, message, row.created_at),
+            ...buckets,
+            workspace: typeof record.cwd === "string" ? record.cwd : null,
+            sourcePath: dbPath,
+          }),
+        );
+      }
+    } finally {
+      db.close();
+    }
+  } catch {
+    // node:sqlite may be unavailable or a database may be mid-migration.
+  }
   return events;
 }
 
