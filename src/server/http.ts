@@ -11,7 +11,7 @@ import {
   type PrecomputedPeriodStats,
 } from "../aggregate.js";
 import { buildRecentLiveEvents, computeDashboardLiveRate } from "../live-rate.js";
-import { AGENTS, detectAgents, scanAll } from "../agents/index.js";
+import { AGENTS, dedupeMirroredOpenClawEvents, detectAgents, scanAll } from "../agents/index.js";
 import {
   buildFullBackup,
   buildSettingsBackup,
@@ -734,6 +734,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             }
           },
         });
+        const openclawEvents = byAgent.get("openclaw");
+        if (openclawEvents?.length) {
+          byAgent.set(
+            "openclaw",
+            dedupeMirroredOpenClawEvents(
+              openclawEvents,
+              byAgent.get("hermes") ?? [],
+            ),
+          );
+        }
         if (progressBroadcastTimer) {
           clearTimeout(progressBroadcastTimer);
           progressBroadcastTimer = null;
