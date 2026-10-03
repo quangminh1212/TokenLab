@@ -1017,7 +1017,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           const { events, timestampsMs } = eventsInPeriodDetailed(since, until);
           writeHeartbeat();
           const stats = aggregate(events, groupBy, sort, since, until, timestampsMs);
-          // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
+          // Period RPM: busiest minute in the range (same peak the chart draws per hour).
           const usageRpm = computeActiveUsageRpm(events);
           periodPart = { stats, usageRpm };
         }

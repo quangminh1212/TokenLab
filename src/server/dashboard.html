@@ -67,6 +67,7 @@
           <div class="seg seg-sm" id="chartMode" role="tablist" aria-label="Chart metric">
             <button type="button" class="seg-btn active" data-mode="tokens">Tokens</button>
             <button type="button" class="seg-btn" data-mode="cost">Cost</button>
+            <button type="button" class="seg-btn" data-mode="rpm">RPM</button>
           </div>
         </div>
         <div class="chart-body" id="chartBody">
@@ -389,6 +390,7 @@
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        peakRpm: 0,
       });
       const end = new Date();
       end.setMinutes(0, 0, 0);
@@ -445,13 +447,7 @@
       return 'all';
     }
 
-    /**
-     * RPM over active usage minutes only (idle gaps ignored):
-     *   activeMinutes = distinct minute buckets with ≥1 request
-     *   RPM = totalRequests / activeMinutes
-     * Server computes this in /api/stats.usageRpm (RouterLab-compatible).
-     * Fallback: same formula if only totals are present (activeMinutes unknown → 0).
-     */
+    /** Card RPM is the busiest minute in the selected range (chart peak). */
     function periodRequestRate(totalRequests) {
       const ur = state.usageRpm;
       if (ur && typeof ur === 'object' && Number.isFinite(Number(ur.rpm))) {
@@ -460,7 +456,7 @@
           activeMinutes: Number(ur.activeMinutes) || 0,
           rpm: Number(ur.rpm) || 0,
           rps: Number(ur.rps) || 0,
-          method: ur.method || 'active_minutes_mean',
+          method: ur.method || 'peak_minute',
           unit: 'req/min',
           period: periodLabel(),
         };
@@ -471,7 +467,7 @@
         activeMinutes: 0,
         rpm: 0,
         rps: 0,
-        method: 'active_minutes_mean',
+        method: 'peak_minute',
         unit: 'req/min',
         period: periodLabel(),
       };
@@ -479,14 +475,13 @@
 
     function renderOverview(t, live) {
       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
-      // RPM = requests / active usage minutes (not wall-clock Today/24h)
+      // RPM = busiest minute in the selected range
       const rate = periodRequestRate(t.eventCount || 0);
       const rpmVal = (Math.round(rate.rpm * 10) / 10).toLocaleString(undefined, {
         minimumFractionDigits: 0,
         maximumFractionDigits: 1,
       });
-      // Active-usage mean — no subtitle under RPM
-      const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
+      const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary', 'Peak minute');
       // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout on common widths)
       $('overview').innerHTML = [
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
@@ -590,11 +585,18 @@
         </ul>`;
     }
 
+    function chartValue(d, mode) {
+      if (mode === 'rpm') return Number(d.peakRpm) || 0;
+      if (mode === 'tokens') return d.totalTokens || 0;
+      return d.estimatedCost || 0;
+    }
+
     function renderChart() {
       const series = state.daySeries;
       const mode = state.chartMode;
-      const vals = series.map((d) => mode === 'tokens' ? (d.totalTokens || 0) : (d.estimatedCost || 0));
-      const has = vals.some((v) => v > 0);
+      const vals = series.map((d) => chartValue(d, mode));
+      // RPM still draws a flat zero line, same hour axis as Tokens.
+      const has = mode === 'rpm' ? series.length > 0 : vals.some((v) => v > 0);
       if (!has) {
         $('chartBody').innerHTML = `<div class="chart-empty">${emptyMsg('chart')}</div>`;
         return;
@@ -602,25 +604,22 @@
 
       const W = 640, H = 200, PL = 44, PR = 12, PT = 12, PB = 28;
       const iw = W - PL - PR, ih = H - PT - PB;
-      const max = Math.max(...vals, mode === 'tokens' ? 1 : 0.0001);
+      const max = Math.max(...vals, mode === 'cost' ? 0.0001 : 1);
       const n = series.length;
       const xAt = (i) => PL + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
       const yAt = (v) => PT + ih - (v / max) * ih;
 
-      const pts = series.map((d, i) => {
-        const v = mode === 'tokens' ? (d.totalTokens || 0) : (d.estimatedCost || 0);
-        return [xAt(i), yAt(v)];
-      });
+      const pts = series.map((d, i) => [xAt(i), yAt(chartValue(d, mode))]);
       const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
       const area = line + ` L${pts[pts.length - 1][0].toFixed(1)},${(PT + ih).toFixed(1)} L${pts[0][0].toFixed(1)},${(PT + ih).toFixed(1)} Z`;
-      const stroke = mode === 'tokens' ? 'var(--chart-tokens)' : 'var(--chart-cost)';
-      const fillId = mode === 'tokens' ? 'gradTok' : 'gradCost';
-      const fillFrom = mode === 'tokens' ? 'rgba(99,102,241,0.28)' : 'rgba(245,158,11,0.28)';
+      const stroke = mode === 'rpm' ? 'var(--chart-rpm)' : mode === 'tokens' ? 'var(--chart-tokens)' : 'var(--chart-cost)';
+      const fillId = mode === 'rpm' ? 'gradRpm' : mode === 'tokens' ? 'gradTok' : 'gradCost';
+      const fillFrom = mode === 'rpm' ? 'rgba(34,211,238,0.28)' : mode === 'tokens' ? 'rgba(99,102,241,0.28)' : 'rgba(245,158,11,0.28)';
 
       const yTicks = [0, 0.5, 1].map((t) => {
         const v = max * t;
         const y = yAt(v);
-        const label = mode === 'tokens' ? fmt(v) : money4(v);
+        const label = mode === 'tokens' ? fmt(v) : mode === 'rpm' ? (v >= 1000 ? fmt(v) : String(Math.round(v * 10) / 10)) : money4(v);
         return `<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" class="chart-grid" />
           <text x="${PL - 6}" y="${y + 3}" class="chart-tick" text-anchor="end">${label}</text>`;
       }).join('');
@@ -647,6 +646,10 @@
             <linearGradient id="gradCost" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stop-color="${fillFrom}" />
               <stop offset="95%" stop-color="rgba(245,158,11,0)" />
+            </linearGradient>
+            <linearGradient id="gradRpm" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stop-color="${fillFrom}" />
+              <stop offset="95%" stop-color="rgba(34,211,238,0)" />
             </linearGradient>
           </defs>
           ${yTicks}
@@ -806,7 +809,7 @@
       void meta;
 
       state.totals = stats.totals || {};
-      // Period RPM: active-minutes mean from filtered events (not wall-clock span)
+      // Period RPM: busiest minute in the selected range
       if (stats.usageRpm && typeof stats.usageRpm === 'object') state.usageRpm = stats.usageRpm;
       else if (seriesStats.usageRpm && typeof seriesStats.usageRpm === 'object') state.usageRpm = seriesStats.usageRpm;
       else state.usageRpm = null;

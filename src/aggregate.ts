@@ -75,6 +75,8 @@ export function aggregate(
   const map = new Map<string, GroupRow>();
   const n = events.length;
   const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
+  const trackPeak = groupBy === "hour" || groupBy === "day";
+  const minutes = trackPeak ? new Map<number, number>() : null;
 
   for (let i = 0; i < n; i++) {
     const e = events[i]!;
@@ -95,6 +97,16 @@ export function aggregate(
       map.set(key, row);
     }
     addWithParts(row, e, parts);
+    if (minutes) {
+      const ts = useTs ? timestampsMs![i]! : Date.parse(e.timestamp);
+      bumpMinute(minutes, ts, peakMinuteWeight(e));
+    }
+  }
+
+  if (minutes) {
+    const peaks = peakUsageFromMinutes(minutes);
+    const byBucket = groupBy === "hour" ? peaks.hour : peaks.day;
+    for (const row of map.values()) row.peakRpm = byBucket.get(row.key) || 0;
   }
 
   const groups = [...map.values()].sort((a, b) =>
@@ -137,7 +149,7 @@ export function precomputeDashboardPeriods(
     model: Map<string, GroupRow>;
     day: Map<string, GroupRow>;
     hour: Map<string, GroupRow>;
-    rpmEvents: UsageEvent[];
+    minutes: Map<number, number>;
   };
   const acc = new Map<DashPeriodKey, Acc>();
   for (const k of keys) {
@@ -147,7 +159,7 @@ export function precomputeDashboardPeriods(
       model: new Map(),
       day: new Map(),
       hour: new Map(),
-      rpmEvents: [],
+      minutes: new Map(),
     });
   }
 
@@ -179,6 +191,8 @@ export function precomputeDashboardPeriods(
     const modelKey = (normalizeModelName(e.model) || `unknown (${e.agent})`).toLowerCase();
     const dayKey = new Date(t).toISOString().slice(0, 10);
     const hourKey = `${new Date(t).toISOString().slice(0, 13)}:00`;
+    const weight = peakMinuteWeight(e);
+    const minuteKey = Math.floor(t / 60_000);
 
     for (const pk of keys) {
       const start = bounds[pk];
@@ -191,7 +205,7 @@ export function precomputeDashboardPeriods(
       bump(a.day, dayKey, e, parts);
       // Hour series only needed for today/24h charts
       if (pk === "today" || pk === "24h") bump(a.hour, hourKey, e, parts);
-      a.rpmEvents.push(e);
+      if (weight > 0) bumpMinute(a.minutes, minuteKey * 60_000, weight);
     }
   }
 
@@ -224,6 +238,9 @@ export function precomputeDashboardPeriods(
     dayStats.totals = { ...a.totals };
     const hourStats = finish(a.hour, "hour", "tokens", since);
     hourStats.totals = { ...a.totals };
+    const peaks = peakUsageFromMinutes(a.minutes);
+    for (const row of a.hour.values()) row.peakRpm = peaks.hour.get(row.key) || 0;
+    for (const row of a.day.values()) row.peakRpm = peaks.day.get(row.key) || 0;
     out.set(pk, {
       builtAt: nowMs,
       byGroup: {
@@ -232,7 +249,14 @@ export function precomputeDashboardPeriods(
         day: dayStats,
         hour: hourStats,
       },
-      usageRpm: computeActiveUsageRpm(a.rpmEvents),
+      usageRpm: {
+        requests: peaks.requests,
+        activeMinutes: peaks.activeMinutes,
+        rpm: peaks.rpm,
+        rps: peaks.rps,
+        method: peaks.method,
+        unit: peaks.unit,
+      },
     });
   }
   return out;
@@ -267,45 +291,100 @@ export function countActiveMinutes(events: UsageEvent[]): number {
   return buckets.size;
 }
 
-function eventRequestCount(e: UsageEvent): number {
-  const rc = e.requestCount;
-  if (typeof rc === "number" && Number.isFinite(rc) && rc > 0) return Math.floor(rc);
-  return 1;
+/**
+ * One logged call in this minute.
+ * Session snapshots store a lifetime requestCount on a single timestamp, so that
+ * count is not a burst. Estimated rollups and empty probes are skipped.
+ */
+function peakMinuteWeight(e: UsageEvent): number {
+  return minuteRequestWeight(e) > 0 ? 1 : 0;
 }
 
 /**
- * Period RPM over **active usage minutes only** (not full wall-clock Today/24h/7d).
- *
- *   activeMinutes = |{ floor(ts/60s) for each event }|
- *   RPM = totalRequests / activeMinutes
- *
- * Same definition as RouterLab usage stats. Idle time between bursts is ignored,
- * so 11 requests in 5 busy minutes → 2.2 RPM (not 11 / minutes-since-midnight).
+ * Live-window weight. Estimated rollups and empty probes are skipped.
+ * requestCount counts only for a real batch of 1..100; a session total above that is one row.
+ */
+export function minuteRequestWeight(e: UsageEvent): number {
+  if (!e || e.estimated) return 0;
+  const tok =
+    (Number(e.inputTokens) || 0) +
+    (Number(e.outputTokens) || 0) +
+    (Number(e.cacheReadTokens) || 0) +
+    (Number(e.cacheWriteTokens) || 0);
+  if (tok <= 0 && !(Number(e.estimatedCost) > 0)) return 0;
+  const rc = e.requestCount;
+  if (typeof rc === "number" && Number.isFinite(rc) && rc > 0 && rc <= 100) return Math.floor(rc);
+  return 1;
+}
+
+function bumpMinute(minutes: Map<number, number>, tsMs: number, weight: number): void {
+  if (weight <= 0 || !Number.isFinite(tsMs)) return;
+  const mk = Math.floor(tsMs / 60_000);
+  minutes.set(mk, (minutes.get(mk) || 0) + weight);
+}
+
+function peakUsageFromMinutes(minutes: Map<number, number>): {
+  requests: number;
+  activeMinutes: number;
+  rpm: number;
+  rps: number;
+  method: "peak_minute";
+  unit: "req/min";
+  hour: Map<string, number>;
+  day: Map<string, number>;
+} {
+  let requests = 0;
+  let rpm = 0;
+  const hour = new Map<string, number>();
+  const day = new Map<string, number>();
+  for (const [mk, count] of minutes) {
+    requests += count;
+    if (count > rpm) rpm = count;
+    const d = new Date(mk * 60_000);
+    const hourKey = `${d.toISOString().slice(0, 13)}:00`;
+    const dayKey = d.toISOString().slice(0, 10);
+    if (count > (hour.get(hourKey) || 0)) hour.set(hourKey, count);
+    if (count > (day.get(dayKey) || 0)) day.set(dayKey, count);
+  }
+  return {
+    requests,
+    activeMinutes: minutes.size,
+    rpm,
+    rps: rpm / 60,
+    method: "peak_minute",
+    unit: "req/min",
+    hour,
+    day,
+  };
+}
+
+/**
+ * Period RPM = the busiest single minute in the range (not the mean).
+ * The chart uses the same peak inside each hour or day.
  */
 export function computeActiveUsageRpm(events: UsageEvent[]): {
   requests: number;
   activeMinutes: number;
-  /** RPM = requests / activeMinutes */
+  /** Highest requests in any one minute */
   rpm: number;
   /** RPS equivalent = rpm / 60 */
   rps: number;
-  method: "active_minutes_mean";
+  method: "peak_minute";
   unit: "req/min";
 } {
-  let requests = 0;
+  const minutes = new Map<number, number>();
   for (const e of events) {
     if (!e) continue;
-    requests += eventRequestCount(e);
+    bumpMinute(minutes, Date.parse(e.timestamp), peakMinuteWeight(e));
   }
-  const activeMinutes = countActiveMinutes(events);
-  const rpm = activeMinutes > 0 ? requests / activeMinutes : 0;
+  const peaks = peakUsageFromMinutes(minutes);
   return {
-    requests,
-    activeMinutes,
-    rpm,
-    rps: rpm / 60,
-    method: "active_minutes_mean",
-    unit: "req/min",
+    requests: peaks.requests,
+    activeMinutes: peaks.activeMinutes,
+    rpm: peaks.rpm,
+    rps: peaks.rps,
+    method: peaks.method,
+    unit: peaks.unit,
   };
 }
 
@@ -343,24 +422,11 @@ export function computeLiveRequestRate(
   let total = 0;
   for (const e of events) {
     if (!e) continue;
-    // Estimated daily / model rollups are not live API calls
-    if (e.estimated) continue;
     const t = new Date(e.timestamp).getTime();
     // Open-closed window (start, now] with small clock-skew tolerance
     if (!Number.isFinite(t) || t <= start || t > nowMs + 5_000) continue;
-    // Empty stream probes (0 tokens, no cost) are not billable API usage
-    const tok =
-      (Number(e.inputTokens) || 0) +
-      (Number(e.outputTokens) || 0) +
-      (Number(e.cacheReadTokens) || 0) +
-      (Number(e.cacheWriteTokens) || 0);
-    if (tok <= 0 && !(Number(e.estimatedCost) > 0)) continue;
-    // Live row = one completed request; requestCount only when a true multi-call batch
-    const rc = e.requestCount;
-    const reqs =
-      typeof rc === "number" && Number.isFinite(rc) && rc > 0 && rc <= 100
-        ? Math.floor(rc)
-        : 1;
+    const reqs = minuteRequestWeight(e);
+    if (reqs <= 0) continue;
     total += reqs;
     const ageMs = nowMs - t;
     const ageMin = Math.min(mins - 1, Math.max(0, Math.floor(ageMs / 60_000)));

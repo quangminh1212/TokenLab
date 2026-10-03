@@ -100,6 +100,8 @@ export interface TokenTotals {
 
 export interface GroupRow extends TokenTotals {
   key: string;
+  /** Busiest minute in this hour or day, in requests. */
+  peakRpm?: number;
 }
 
 export interface StatsResult {

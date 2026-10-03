@@ -5,6 +5,7 @@ import {
   computeActiveUsageRpm,
   computeLiveRequestRate,
   countActiveMinutes,
+  precomputeDashboardPeriods,
 } from "../src/aggregate.js";
 import type { UsageEvent } from "../src/types.js";
 
@@ -62,39 +63,80 @@ test("aggregate eventCount sums requestCount (daily rollup style)", () => {
   assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
 });
 
-test("computeActiveUsageRpm uses active minutes only (idle gaps ignored)", () => {
-  // 10 requests across 2 distinct minutes, with a long idle gap between
+test("RPM is the busiest minute in each hour, not the period mean", () => {
+  const row = (
+    id: string,
+    timestamp: string,
+    requestCount: number,
+    extra: Partial<UsageEvent> = {},
+  ): UsageEvent => ({
+    ...sample[0]!,
+    id,
+    timestamp,
+    requestCount,
+    estimated: false,
+    ...extra,
+  });
+  // Session requestCount is not a burst. Three logged calls in one minute beat it.
   const events: UsageEvent[] = [
-    {
-      ...sample[0]!,
-      id: "a1",
-      timestamp: "2026-07-28T01:00:10.000Z",
-      requestCount: 4,
-      estimated: false,
-    },
-    {
-      ...sample[0]!,
-      id: "a2",
-      timestamp: "2026-07-28T01:00:40.000Z", // same minute as a1
-      requestCount: 1,
-      estimated: false,
-    },
-    {
-      ...sample[0]!,
-      id: "b1",
-      timestamp: "2026-07-28T03:15:00.000Z", // different minute, long idle after a*
-      requestCount: 5,
-      estimated: false,
-    },
+    row("a1", "2026-07-28T01:00:10.000Z", 4),
+    row("a2", "2026-07-28T01:00:40.000Z", 1),
+    row("a3", "2026-07-28T01:10:00.000Z", 1),
+    row("fat", "2026-07-28T01:20:00.000Z", 800),
+    row("est", "2026-07-28T01:30:00.000Z", 50, { estimated: true }),
+    row("probe", "2026-07-28T01:40:00.000Z", 40, {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      estimatedCost: 0,
+    }),
+    row("b1", "2026-07-28T03:15:00.000Z", 9),
+    row("c1", "2026-07-28T03:16:01.000Z", 1),
+    row("c2", "2026-07-28T03:16:20.000Z", 1),
+    row("c3", "2026-07-28T03:16:40.000Z", 1),
   ];
-  assert.equal(countActiveMinutes(events), 2);
+  assert.equal(countActiveMinutes(events), 7);
   const r = computeActiveUsageRpm(events);
-  assert.equal(r.method, "active_minutes_mean");
-  assert.equal(r.requests, 10); // 4+1+5
-  assert.equal(r.activeMinutes, 2);
-  // NOT 10 / wall-clock hours — only busy minutes
-  assert.equal(r.rpm, 5); // 10 / 2
-  assert.ok(Math.abs(r.rps - 5 / 60) < 1e-9);
+  assert.equal(r.method, "peak_minute");
+  assert.equal(r.requests, 8); // estimated + probe skipped; each other row counts once
+  assert.equal(r.activeMinutes, 5);
+  assert.equal(r.rpm, 3); // 03:16 has 3 calls, not 4+1 and not 800
+  assert.ok(Math.abs(r.rps - 3 / 60) < 1e-9);
+
+  const byHour = aggregate(events, "hour", "tokens");
+  assert.equal(byHour.groups.find((g) => g.key === "2026-07-28T01:00")?.peakRpm, 2);
+  assert.equal(byHour.groups.find((g) => g.key === "2026-07-28T03:00")?.peakRpm, 3);
+
+  const now = Date.parse("2026-07-28T04:00:00.000Z");
+  const pre = precomputeDashboardPeriods(
+    events,
+    events.map((e) => Date.parse(e.timestamp)),
+    {
+      today: Date.parse("2026-07-28T00:00:00.000Z"),
+      "24h": now - 24 * 3_600_000,
+      "7d": now - 7 * 86_400_000,
+      "30d": now - 30 * 86_400_000,
+      all: null,
+    },
+    now,
+  );
+  const today = pre.get("today")!;
+  assert.equal(today.usageRpm.method, "peak_minute");
+  assert.equal(today.usageRpm.rpm, 3);
+  assert.equal(
+    today.byGroup.hour.groups.find((g) => g.key === "2026-07-28T01:00")?.peakRpm,
+    2,
+  );
+  assert.equal(
+    today.byGroup.hour.groups.find((g) => g.key === "2026-07-28T03:00")?.peakRpm,
+    3,
+  );
+  assert.equal(
+    today.byGroup.day.groups.find((g) => g.key === "2026-07-28")?.peakRpm,
+    3,
+  );
 });
 
 test("computeLiveRequestRate uses sliding-window mean (RPM = N×60/T)", () => {
