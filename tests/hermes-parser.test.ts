@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { parseHermes } from "../src/agents/hermes/index.ts";
+import { replaceFreshAgentSourceEvents } from "../src/backup.ts";
 
 test("parseHermes prefers session_model_usage and does not double-count state.db", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-hermes-"));
@@ -243,6 +244,77 @@ test("parseHermes falls back to sessions when SMU empty", async () => {
     // output 200 + reasoning 80 (over-count policy)
     assert.equal(events[0]!.outputTokens, 280);
     assert.equal(events[0]!.cacheReadTokens, 1000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("hermes SMU id stays stable when tokens grow and request dumps are ignored", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-hermes-stable-"));
+  try {
+    const dbPath = path.join(root, "state.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, model TEXT, started_at TEXT, ended_at TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER
+      );
+      CREATE TABLE session_model_usage (
+        session_id TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+        cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+        api_call_count INTEGER, first_seen TEXT, last_seen TEXT
+      );
+      INSERT INTO sessions VALUES (
+        'sess-live', 'glm-5.3', '2026-10-03T01:00:00Z', '2026-10-03T02:00:00Z',
+        1000, 10, 0
+      );
+      INSERT INTO session_model_usage VALUES (
+        'sess-live', 'glm-5.3', 1000, 10, 0, 0, 0, 1,
+        '2026-10-03T01:00:00Z', '2026-10-03T02:00:00Z'
+      );
+    `);
+    db.close();
+    await mkdir(path.join(root, "sessions"), { recursive: true });
+    await writeFile(
+      path.join(root, "sessions", "request_dump_today.json"),
+      JSON.stringify({
+        timestamp: "2026-10-03T02:00:00Z",
+        model: "glm-5.3",
+        input_tokens: 999999,
+        output_tokens: 1,
+      }),
+    );
+
+    const first = await parseHermes([root]);
+    assert.equal(first.length, 1);
+    assert.equal(first[0]!.inputTokens, 1000);
+
+    const db2 = new DatabaseSync(dbPath);
+    db2.exec(`UPDATE session_model_usage SET input_tokens = 5000, output_tokens = 40 WHERE session_id = 'sess-live'`);
+    db2.close();
+
+    const second = await parseHermes([root], { light: true });
+    assert.equal(second.length, 1);
+    assert.equal(second[0]!.id, first[0]!.id);
+    assert.equal(second[0]!.inputTokens, 5000);
+
+    const stacked = replaceFreshAgentSourceEvents(
+      second,
+      [
+        {
+          ...first[0]!,
+          id: "legacy-token-baked-id",
+          inputTokens: 1000,
+          totalTokens: 1010,
+          estimatedCost: 2,
+        },
+        first[0]!,
+      ],
+      "hermes",
+    );
+    assert.equal(stacked.length, 1);
+    assert.equal(stacked[0]!.inputTokens, 5000);
+    assert.equal(stacked[0]!.id, second[0]!.id);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

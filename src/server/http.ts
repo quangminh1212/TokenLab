@@ -24,6 +24,7 @@ import {
   dropPreviousAgentSourceEvents,
   dropPreviousAgentSessionEvents,
   mergeEventsByIdPreferRicher,
+  replaceFreshAgentSourceEvents,
   mergeLocalPreferOverGistRollups,
   migrateLegacyDataDir,
   restoreBackup,
@@ -493,6 +494,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // Replace every freshly read database/JSON source so stale gap events do not linger.
       prevForMerge = dropPreviousAgentSourceEvents(prevForMerge, fresh, "opencode");
     }
+    if (fresh[0]?.agent === "hermes") {
+      // SMU rows are cumulative. Older scans baked the token count into the id,
+      // so a union kept every snapshot and today's total climbed on each tick.
+      return replaceFreshAgentSourceEvents(fresh, prev, "hermes");
+    }
     // Union by id; keep higher token/cost row when same id reappears.
     // Also keeps prev-only rows (already-scanned history) so we only *add*
     // newly seen ids from this pass rather than re-baselining the agent.
@@ -595,14 +601,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           // Source/session replacements are filtered explicitly below; full
           // agent rescans still retain prev as the high-water comparison baseline.
           scanned = enforceMonotonicAgentDays(
-            dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(
-                dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
+            dropPreviousAgentSourceEvents(
+              dropPreviousAgentSessionEvents(
+                dropPreviousAgentSourceEvents(
+                  dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
+                  scanned,
+                  "opencode",
+                ),
                 scanned,
-                "opencode",
+                "grok",
               ),
               scanned,
-              "grok",
+              "hermes",
             ),
             scanned,
           );
@@ -615,14 +625,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         let merged = mergeLocalPreferOverGistRollups(scanned, importedEvents);
         if (finalize) {
           merged = enforceMonotonicAgentDays(
-            dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(
-                dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
+            dropPreviousAgentSourceEvents(
+              dropPreviousAgentSessionEvents(
+                dropPreviousAgentSourceEvents(
+                  dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
+                  merged,
+                  "opencode",
+                ),
                 merged,
-                "opencode",
+                "openclaw",
               ),
               merged,
-              "openclaw",
+              "hermes",
             ),
             merged,
           );

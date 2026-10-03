@@ -2,6 +2,7 @@ import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
 import path from "node:path";
+import { readdir } from "node:fs/promises";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
@@ -15,7 +16,11 @@ import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/u
  * - state-snapshots: only sessions NOT already covered by live state.db (no double-count)
  * - JSONL only under sessions/ (skip node_modules / venv noise)
  */
-export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
+export async function parseHermes(
+  roots: string[],
+  opts?: { light?: boolean },
+): Promise<UsageEvent[]> {
+  const light = opts?.light === true;
   const events: UsageEvent[] = [];
   const seenDb = new Set<string>();
   /** Session ids already counted from a preferred (live) DB — snapshots must skip these. */
@@ -24,7 +29,7 @@ export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
   for (const root of roots) {
     if (!(await pathExists(root))) continue;
 
-    const { primary, snapshots } = await discoverHermesDbPaths(root);
+    const { primary, snapshots } = await discoverHermesDbPaths(root, light);
 
     // 1) Live / primary DBs first (full read)
     for (const dbPath of primary) {
@@ -50,8 +55,11 @@ export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
     const sessionsDir = path.join(root, "sessions");
     if (await pathExists(sessionsDir)) {
       const files = await walkFiles(sessionsDir, {
-        maxDepth: 6,
-        match: (n) => n.endsWith(".jsonl") || (n.includes("session") && n.endsWith(".json")),
+        maxDepth: light ? 2 : 6,
+        // request_dump_* is a debug payload (about 2000 files). The ledger is state.db.
+        match: (n) =>
+          !n.startsWith("request_dump_") &&
+          (n.endsWith(".jsonl") || (n.includes("session") && n.endsWith(".json"))),
       });
       for (const file of files) {
         events.push(...(await parseHermesJsonFile(file)));
@@ -68,7 +76,10 @@ function isSnapshotDbPath(dbPath: string): boolean {
 }
 
 /** Discover SQLite DBs: primary (live) first, then historical snapshots. */
-async function discoverHermesDbPaths(root: string): Promise<{ primary: string[]; snapshots: string[] }> {
+async function discoverHermesDbPaths(
+  root: string,
+  light = false,
+): Promise<{ primary: string[]; snapshots: string[] }> {
   const preferNames = ["state.db", "hermes.db", "sessions.db"];
   const primary: string[] = [];
   const snapshots: string[] = [];
@@ -76,6 +87,34 @@ async function discoverHermesDbPaths(root: string): Promise<{ primary: string[];
   for (const name of preferNames) {
     const p = path.join(root, name);
     if (await pathExists(p)) primary.push(p);
+  }
+
+  const dedupe = (list: string[]) => {
+    const seen = new Set<string>();
+    const uniq: string[] = [];
+    for (const p of list) {
+      const k = path.resolve(p).toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push(p);
+    }
+    return uniq;
+  };
+
+  // Minute scan: live DB plus one-level profiles. No snapshot walk, no request dumps.
+  if (light) {
+    const profiles = path.join(root, "profiles");
+    if (await pathExists(profiles)) {
+      const entries = await readdir(profiles, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        for (const name of preferNames) {
+          const p = path.join(profiles, entry.name, name);
+          if (await pathExists(p)) primary.push(p);
+        }
+      }
+    }
+    return { primary: dedupe(primary), snapshots };
   }
 
   // Nested DBs: state-snapshots for history not in live DB
@@ -95,18 +134,6 @@ async function discoverHermesDbPaths(root: string): Promise<{ primary: string[];
       primary.push(p);
     }
   }
-
-  const dedupe = (list: string[]) => {
-    const seen = new Set<string>();
-    const uniq: string[] = [];
-    for (const p of list) {
-      const k = path.resolve(p).toLowerCase();
-      if (seen.has(k)) continue;
-      seen.add(k);
-      uniq.push(p);
-    }
-    return uniq;
-  };
 
   return { primary: dedupe(primary), snapshots: dedupe(snapshots) };
 }
@@ -146,7 +173,7 @@ async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
       if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) continue;
       events.push(
         applyPricing({
-          id: stableId("hermes", file, String(idx), String(inputTokens), String(outputTokens)),
+          id: stableId("hermes", file, String(idx)),
           agent: "hermes",
           model: extractModel(r),
           timestamp: extractTimestamp(r),
@@ -162,7 +189,7 @@ async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
     }
     events.push(
       applyPricing({
-        id: stableId("hermes", file, String(idx), String(buckets.inputTokens), String(buckets.outputTokens)),
+        id: stableId("hermes", file, String(idx)),
         agent: "hermes",
         model: extractModel(r),
         timestamp: extractTimestamp(r),
@@ -333,7 +360,7 @@ function gapFillSessionsOverSmu(
       const cost = pickHermesCost(row);
       gaps.push(
         applyPricing({
-          id: stableId("hermes", dbPath, "gap", sid, String(dIn), String(dOut), String(dCr)),
+          id: stableId("hermes", dbPath, "gap", sid),
           agent: "hermes",
           model,
           timestamp: extractTimestamp(row.ended_at ?? row.started_at, row),
@@ -415,15 +442,7 @@ function readSessionModelUsage(
       const apiCalls = num(row.api_call_count);
 
       const priced = applyPricing({
-        id: stableId(
-          "hermes",
-          dbPath,
-          "smu",
-          sessionId,
-          model || "unknown",
-          String(buckets.inputTokens),
-          String(buckets.outputTokens),
-        ),
+        id: stableId("hermes", dbPath, "smu", sessionId, model || "unknown"),
         agent: "hermes",
         model,
         timestamp: ts,
@@ -511,7 +530,7 @@ function readSessionsTable(
 
       events.push(
         applyPricing({
-          id: stableId("hermes", dbPath, sid, String(inputTokens), String(outputTokens)),
+          id: stableId("hermes", dbPath, "sess", sid),
           agent: "hermes",
           model,
           timestamp,
@@ -549,7 +568,7 @@ function readMessagesUsage(
       if (!buckets) continue;
       events.push(
         applyPricing({
-          id: stableId("hermes", dbPath, "msg", String(i), String(buckets.inputTokens)),
+          id: stableId("hermes", dbPath, "msg", String(i)),
           agent: "hermes",
           model: extractModel(row),
           timestamp: extractTimestamp(row),
@@ -633,4 +652,5 @@ export const agent: AgentModule = {
     ]);
   },
   parse: parseHermes,
+  parseLight: (roots) => parseHermes(roots, { light: true }),
 };
