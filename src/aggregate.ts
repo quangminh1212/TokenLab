@@ -386,20 +386,50 @@ export function computeLiveRequestRate(
 }
 
 export function costReport(events: UsageEvent[], since: string | null = null, until: string | null = null) {
-  const byAgent = aggregate(events, "agent", "cost", since, until);
-  const byModel = aggregate(events, "model", "cost", since, until);
-  const total = byAgent.totals.estimatedCost || 1;
+  const totals = emptyTotals();
+  const agents = new Map<string, GroupRow>();
+  const models = new Map<string, GroupRow>();
+  const getGroup = (groups: Map<string, GroupRow>, key: string): GroupRow => {
+    let row = groups.get(key);
+    if (!row) {
+      row = { key, ...emptyTotals() };
+      groups.set(key, row);
+    }
+    return row;
+  };
+
+  // Build both breakdowns together. Calling aggregate twice priced and traversed
+  // large event lists twice for the same cost report.
+  for (const event of events) {
+    const parts = priceCostParts(
+      event.model,
+      event.inputTokens || 0,
+      event.outputTokens || 0,
+      event.cacheReadTokens || 0,
+      event.cacheWriteTokens || 0,
+      event.estimatedCost,
+    );
+    addWithParts(totals, event, parts);
+    addWithParts(getGroup(agents, groupKey(event, "agent")), event, parts);
+    addWithParts(getGroup(models, groupKey(event, "model")), event, parts);
+  }
+
+  const sortByCost = (a: GroupRow, b: GroupRow): number =>
+    b.estimatedCost - a.estimatedCost;
+  const byAgent = [...agents.values()].sort(sortByCost);
+  const byModel = [...models.values()].sort(sortByCost);
+  const total = totals.estimatedCost || 1;
   return {
     currency: "USD",
-    totalEstimatedCost: byAgent.totals.estimatedCost,
+    totalEstimatedCost: totals.estimatedCost,
     period: { since, until },
-    byAgent: byAgent.groups.map((g) => ({
+    byAgent: byAgent.map((g) => ({
       agent: g.key,
       estimatedCost: g.estimatedCost,
       totalTokens: g.totalTokens,
       share: g.estimatedCost / total,
     })),
-    byModel: byModel.groups.map((g) => ({
+    byModel: byModel.map((g) => ({
       model: g.key,
       estimatedCost: g.estimatedCost,
       totalTokens: g.totalTokens,
