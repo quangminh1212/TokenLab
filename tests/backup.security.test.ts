@@ -473,6 +473,61 @@ test("restore mirrors blocks path traversal", async () => {
   }
 });
 
+test("scan cache drops legacy Codex proxy rows on read and full-save high-water merge", async () => {
+  const root = path.join(process.cwd(), ".test-scan-cache-codex-proxy-" + Date.now());
+  const prev = process.env.XLAB_TOKEN_DATA_DIR;
+  process.env.XLAB_TOKEN_DATA_DIR = root;
+  try {
+    await mkdir(root, { recursive: true });
+    const nativeCodex = evt({
+      id: "native-codex-cache",
+      agent: "codex",
+      sourcePath: "C:/Users/GHC/.codex/sessions/rollout.jsonl",
+      workspace: "C--Dev-Demo",
+    });
+    const legacyProxy = evt({
+      id: "legacy-codex-proxy-cache",
+      agent: "codex",
+      sourcePath: "C:/Users/GHC/.codex/sessions/rollout.jsonl <- C:/data/litellm/usage-history.jsonl",
+      workspace: "C--Dev-Demo via:tokenrouter",
+      estimatedCost: 999,
+    });
+    const liteLlm = evt({
+      id: "litellm-source-cache",
+      agent: "litellm",
+      sourcePath: "C:/data/litellm/usage-history.jsonl",
+      workspace: "litellm",
+    });
+    await writeFile(scanCachePath(), JSON.stringify([nativeCodex, legacyProxy, liteLlm]), "utf8");
+
+    const loaded = await loadScanCache();
+    assert.deepEqual(
+      loaded.map((event) => event.id).sort(),
+      ["litellm-source-cache", "native-codex-cache"],
+      "legacy proxy rows must be filtered from the existing cache",
+    );
+
+    const freshCodex = evt({
+      id: "fresh-codex-cache",
+      agent: "codex",
+      sourcePath: "C:/Users/GHC/.codex/sessions/rollout-new.jsonl",
+      workspace: "C--Dev-Demo",
+      timestamp: "2026-07-16T01:00:00.000Z",
+    });
+    await saveScanCache([freshCodex, legacyProxy], { mode: "full" });
+
+    const saved = await loadScanCache();
+    assert.ok(saved.some((event) => event.id === "native-codex-cache"));
+    assert.ok(saved.some((event) => event.id === "fresh-codex-cache"));
+    assert.ok(saved.some((event) => event.id === "litellm-source-cache"));
+    assert.ok(!saved.some((event) => event.id === "legacy-codex-proxy-cache"));
+  } finally {
+    if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
+    else process.env.XLAB_TOKEN_DATA_DIR = prev;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("saveScanCache round-trips and loadScanCache recovers from .bak when main is corrupt", async () => {
   const root = path.join(process.cwd(), ".test-scan-cache-" + Date.now());
   const prev = process.env.XLAB_TOKEN_DATA_DIR;
