@@ -5,6 +5,7 @@ import {
   computeActiveUsageRpm,
   computeLiveRequestRate,
   countActiveMinutes,
+  costReport,
 } from "../src/aggregate.js";
 import type { UsageEvent } from "../src/types.js";
 
@@ -60,6 +61,46 @@ test("aggregate eventCount sums requestCount (daily rollup style)", () => {
   assert.equal(r.totals.eventCount, 100);
   assert.equal(r.groups.find((g) => g.key === "gpt-4.1")?.eventCount, 90);
   assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
+});
+
+test("costReport matches agent and normalized-model aggregates in one report", () => {
+  const events: UsageEvent[] = [
+    ...sample,
+    {
+      ...sample[0]!,
+      id: "3",
+      model: "gpt-4.1 (openai-compatible-responses)",
+      inputTokens: 50,
+      outputTokens: 50,
+      totalTokens: 100,
+      estimatedCost: 0.25,
+      requestCount: 3,
+    },
+  ];
+  const agent = aggregate(events, "agent", "cost", "7d", "until");
+  const model = aggregate(events, "model", "cost", "7d", "until");
+  const report = costReport(events, "7d", "until");
+  const total = agent.totals.estimatedCost || 1;
+
+  assert.equal(report.totalEstimatedCost, agent.totals.estimatedCost);
+  assert.deepEqual(report.period, { since: "7d", until: "until" });
+  assert.deepEqual(
+    report.byAgent,
+    agent.groups.map((g) => ({
+      agent: g.key,
+      estimatedCost: g.estimatedCost,
+      totalTokens: g.totalTokens,
+      share: g.estimatedCost / total,
+    })),
+  );
+  assert.deepEqual(
+    report.byModel,
+    model.groups.map((g) => ({
+      model: g.key,
+      estimatedCost: g.estimatedCost,
+      totalTokens: g.totalTokens,
+    })),
+  );
 });
 
 test("computeActiveUsageRpm uses active minutes only (idle gaps ignored)", () => {

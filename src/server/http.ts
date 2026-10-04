@@ -119,6 +119,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     string,
     { stats: ReturnType<typeof aggregate>; usageRpm: ReturnType<typeof computeActiveUsageRpm> }
   >();
+  /** Cost reports are stable between completed scan/pricing revisions. */
+  const costReportMemo = new Map<string, ReturnType<typeof costReport>>();
   /** Live RPM memo — shared across double /api/stats fetches on period switch. */
   let liveRateMemo: {
     at: number;
@@ -366,6 +368,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   function bumpPricing(reason = "update"): void {
     pricingRevision += 1;
     pricingUpdatedAt = Date.now();
+    costReportMemo.clear();
     broadcastStream({
       type: "pricing",
       revision: pricingRevision,
@@ -380,6 +383,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   function bumpScan(reason = "scan"): void {
     scanRevision += 1;
     scanUpdatedAt = Date.now();
+    costReportMemo.clear();
     broadcastStream({
       type: "scan",
       revision: scanRevision,
@@ -538,10 +542,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         byAgent.set(e.agent, list);
       }
 
-      // Throttle full-cache rebuild: every agent was O(n) and blew RAM/CPU on 20k+ events.
-      let rebuildDirty = false;
-      let lastRebuildAt = 0;
-      const REBUILD_MIN_MS = full ? 4_000 : 2_500;
+      // Keep the old sorted snapshot visible while parsing. Rebuilding the
+      // growing full-scan cache after each parser copies the whole history but
+      // does not publish it to readers; materialize the merged cache once at the end.
       let progressBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
       let lastProgressPayload: Record<string, unknown> | null = null;
       let agentsDone = 0;
@@ -569,14 +572,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         });
       };
 
-      const rebuild = (force = false, finalize = false): void => {
-        const now = Date.now();
-        if (!force && now - lastRebuildAt < REBUILD_MIN_MS) {
-          rebuildDirty = true;
-          return;
-        }
-        rebuildDirty = false;
-        lastRebuildAt = now;
+      const rebuild = (finalize = false): void => {
         const unchangedPrev = full
           ? []
           : prev.filter((e) => !PERIODIC_LIGHT_AGENTS.has(e.agent));
@@ -712,7 +708,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               } else {
                 byAgent.set(agent, mergeAgentScanLight(events, prevForAgent));
               }
-              if (full) rebuild(false, false);
             }
             agentStats.push({
               agent,
@@ -759,7 +754,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         }
         // Full passes collapse/authoritatively replace once. Light passes only
         // merge the hot-agent snapshot and defer the expensive full save.
-        rebuild(true, full);
+        rebuild(full);
         bumpScan(full ? "complete-full" : "complete");
         scheduleSaveScanCache(full ? "full" : "quick");
         if (full) {
@@ -785,8 +780,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         }
         return cache.length;
       } catch (err) {
-        // Keep last progressive cache rather than wiping
-        if (rebuildDirty) rebuild(true, full);
+        // Preserve parser batches completed before a scan-level failure.
+        if (agentStats.length > 0) rebuild(full);
         bumpScan("error");
         throw err;
       } finally {
@@ -1034,9 +1029,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if (req.method === "GET" && pathname === "/api/cost") {
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
-      if (!scanning) ensureCacheSorted();
-      const events = eventsInPeriod(since, until);
-      return json(res, 200, costReport(events, since, until));
+      const memoKey = `${scanRevision}|${pricingRevision}|${since || ""}|${until || ""}`;
+      let report = scanning ? undefined : costReportMemo.get(memoKey);
+      if (!report) {
+        if (!scanning) ensureCacheSorted();
+        const events = eventsInPeriod(since, until);
+        report = costReport(events, since, until);
+        if (!scanning) {
+          if (costReportMemo.size >= 64) costReportMemo.clear();
+          costReportMemo.set(memoKey, report);
+        }
+      }
+      return json(res, 200, report);
     }
 
     if (req.method === "GET" && pathname === "/api/events") {
