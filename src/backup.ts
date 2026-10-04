@@ -576,6 +576,13 @@ export function replaceFreshAgentSourceEvents(
   );
 }
 
+/** Remove Codex rows created by the old time/model-only LiteLLM proxy join. */
+export function dropLegacyCodexProxyAttributions(events: UsageEvent[]): UsageEvent[] {
+  return events.filter(
+    (e) => e.agent !== "codex" || !(e.workspace ?? "").includes("via:tokenrouter"),
+  );
+}
+
 function sourceSessionPath(sourcePath: unknown): string {
   const source = normalizedSourcePath(sourcePath);
   const metaMarker = "/session-meta.json#";

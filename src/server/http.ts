@@ -18,6 +18,7 @@ import {
   collapseExactUsageDuplicates,
   collapseRouterDailyEvents,
   collapseSourcePathRollups,
+  dropLegacyCodexProxyAttributions,
   enforceMonotonicAgentDays,
   loadImportedEvents,
   loadScanCache,
@@ -553,10 +554,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           .toLowerCase();
       };
       const previousForMonotonic = (): UsageEvent[] => {
+        const validPrevious = dropLegacyCodexProxyAttributions(prev);
         if (codexReplacedPaths.size === 0 && grokReplacedSessions.size === 0) {
-          return prev;
+          return validPrevious;
         }
-        return prev.filter((e) => {
+        return validPrevious.filter((e) => {
           if (e.agent === "codex" && codexReplacedPaths.has(codexSourceKey(e.sourcePath))) {
             return false;
           }
@@ -588,6 +590,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         }
         // Collapse only once on final rebuild — mid-scan skips O(n) router/daily passes.
         if (finalize) {
+          // Remove stale rows from the old time/model-only proxy join before
+          // collapse or high-water reconciliation can preserve their totals.
+          scanned = dropLegacyCodexProxyAttributions(scanned);
           scanned = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
@@ -614,6 +619,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // Then high-water again so imported history cannot be wiped by a partial local day.
         let merged = mergeLocalPreferOverGistRollups(scanned, importedEvents);
         if (finalize) {
+          merged = dropLegacyCodexProxyAttributions(merged);
           merged = enforceMonotonicAgentDays(
             dropPreviousAgentSessionEvents(
               dropPreviousAgentSourceEvents(

@@ -13,7 +13,7 @@ describe("parseCodex", () => {
     }
   });
 
-  it("attributes LiteLLM history into codex when token_count.info is null", async () => {
+  it("does not attribute uncorrelated LiteLLM history to codex", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "tokenlab-codex-"));
     temps.push(root);
     const sessions = path.join(root, "sessions", "2026", "08", "02");
@@ -67,7 +67,7 @@ describe("parseCodex", () => {
     ];
     await writeFile(rollout, lines.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf8");
 
-    // Proxy mirror under TOKENLAB_DATA_DIR so loadProxyUsageIndex finds it
+    // A matching proxy row must stay out of Codex, even when model/time overlap.
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "tokenlab-data-"));
     temps.push(dataDir);
     const mirror = path.join(dataDir, "mirrors", "litellm");
@@ -92,12 +92,14 @@ describe("parseCodex", () => {
     process.env.TOKENLAB_DATA_DIR = dataDir;
     try {
       const events = await parseCodex([root]);
-      assert.ok(events.length >= 1, `expected attributed events, got ${events.length}`);
-      const e = events.find((x) => x.inputTokens === 1200 && x.outputTokens === 40);
-      assert.ok(e, "expected proxy-attributed event with real token counts");
-      assert.equal(e!.agent, "codex");
-      assert.ok((e!.estimatedCost ?? 0) > 0 || e!.inputTokens === 1200);
-      assert.ok(String(e!.sourcePath).includes("←"), "sourcePath should note proxy origin");
+      assert.equal(events.length, 1, `expected one content estimate, got ${events.length}`);
+      const e = events[0]!;
+      assert.equal(e.agent, "codex");
+      assert.equal(e.estimated, true);
+      assert.equal(e.inputTokens, 3);
+      assert.equal(e.outputTokens, 2);
+      assert.equal(e.routerCost ?? null, null);
+      assert.equal(String(e.sourcePath).includes("←"), false);
     } finally {
       if (prev === undefined) delete process.env.TOKENLAB_DATA_DIR;
       else process.env.TOKENLAB_DATA_DIR = prev;

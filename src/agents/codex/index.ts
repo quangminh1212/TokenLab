@@ -1,13 +1,11 @@
 import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
-import { open, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import {
-  appDataDir,
-  homeDir,
   parseJsonl,
   pathExists,
   readText,
@@ -20,8 +18,6 @@ import {
   extractTokenBuckets,
   type TokenBuckets,
 } from "../shared/usage-fields.js";
-import { liteLlmRoots } from "../litellm/index.js";
-import { nineRouterRoots } from "../9router/index.js";
 
 /** Skip Codex plugin fixtures / temp trees (fake usage with no real timestamps). */
 function isNoisePath(full: string): boolean {
@@ -41,17 +37,6 @@ function isNoisePath(full: string): boolean {
   return bad.some((b) => n.includes(b));
 }
 
-interface ProxyUsageRow {
-  id: string;
-  tsMs: number;
-  modelKey: string;
-  modelRaw: string;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-  sourcePath: string;
-}
-
 interface TurnBucket {
   startMs: number;
   endMs: number;
@@ -62,8 +47,7 @@ interface TurnBucket {
   model: string | null;
 }
 
-// Minute light scans must not keep reparsing duplicated, unchanged Codex/Orca
-// histories. Full scans bypass this signature cache and remain authoritative.
+// Minute light scans skip large rollout files that have not changed.
 const LIGHT_RESCAN_SKIP_BYTES = 8 * 1024 * 1024;
 const lightFileSignatures = new Map<string, string>();
 
@@ -74,8 +58,8 @@ const lightFileSignatures = new Map<string, string>();
  * - state_*.sqlite threads.tokens_used + rollout_path (newer desktop/CLI)
  * - token_count events (absolute + cumulative)
  * - response.completed / event.usage shapes
- * - when token_count.info is null (common with custom 9router/LiteLLM providers):
- *     attribute matching LiteLLM/9Router history by turn windows, else estimate from content
+ * - when token_count.info is null, estimate from Codex turn content rather than
+ *   attributing proxy requests by time/model, which cannot safely correlate them
  * - cwd/workspace from session meta when present
  */
 interface ParseCodexOptions {
@@ -104,8 +88,6 @@ async function parseCodexInternal(
   const seen = new Set<string>();
   const seenRollouts = new Set<string>();
   const seenFileSignatures = new Set<string>();
-  const proxyIndex = await loadProxyUsageIndex(Boolean(options.recentOnly));
-  const claimedProxyIds = new Set<string>();
   const recentCutoffMs = options.recentOnly
     ? Date.now() - (options.recentWindowMs ?? 15 * 60_000)
     : Number.NEGATIVE_INFINITY;
@@ -115,7 +97,8 @@ async function parseCodexInternal(
 
     // Newer Codex: SQLite state (threads + tokens_used) even when sessions/ is empty
     if (!options.recentOnly) {
-      events.push(...(await parseCodexSqliteState(root, seenRollouts, proxyIndex, claimedProxyIds)));
+      const sqliteEvents = await parseCodexSqliteState(root, seenRollouts);
+      for (const event of sqliteEvents) events.push(event);
     }
 
     // Prefer real session trees; only fall back to root when those are absent
@@ -183,8 +166,7 @@ async function parseCodexInternal(
           let relative = path.relative(root, file).replace(/\\/g, "/");
           if (process.platform === "win32") relative = relative.toLowerCase();
           signature = `${relative}|${fileSize}|${Math.trunc(fileMtime.getTime())}`;
-          // The same relative rollout often exists under both .codex and Orca
-          // roots. Read it once per scan when size and mtime match.
+          // The same relative rollout can exist under both Codex and Orca roots.
           if (seenFileSignatures.has(signature)) continue;
           seenFileSignatures.add(signature);
           const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
@@ -214,7 +196,7 @@ async function parseCodexInternal(
           continue;
         }
 
-        parseJsonlFile(events, text, file, fileMtime, proxyIndex, claimedProxyIds);
+        parseJsonlFile(events, text, file, fileMtime);
         if (options.recentOnly && fileSize > LIGHT_RESCAN_SKIP_BYTES && signature) {
           const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
           lightFileSignatures.set(fileKey, signature);
@@ -230,13 +212,11 @@ async function parseCodexInternal(
  * Newer Codex (desktop/app-server) stores thread summaries in state_*.sqlite:
  * threads(id, rollout_path, model, tokens_used, cwd, created_at, updated_at, …)
  * When tokens_used > 0 emit one event; also follow rollout_path for detailed jsonl.
- * When tokens_used is 0, still follow rollout_path so null-info sessions get proxy/estimate fallback.
+ * When tokens_used is 0, still follow rollout_path so null-info sessions can use content estimates.
  */
 async function parseCodexSqliteState(
   root: string,
   seenRollouts: Set<string>,
-  proxyIndex: ProxyUsageRow[],
-  claimedProxyIds: Set<string>,
 ): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
   const candidates: string[] = [];
@@ -336,7 +316,7 @@ async function parseCodexSqliteState(
         const selectCols = [idCol, tokenCol, modelCol, cwdCol, rolloutCol, createdCol, updatedCol]
           .filter(Boolean)
           .join(", ");
-        // Include zero-token threads so we still follow rollout_path for proxy attribution
+        // Include zero-token threads so we still follow rollout_path for local estimates
         const rows = db
           .prepare(
             `SELECT ${selectCols} FROM ${threadTable}
@@ -378,7 +358,7 @@ async function parseCodexSqliteState(
             );
           }
 
-          // Follow rollout jsonl for finer-grained events (or proxy/estimate fallback)
+          // Follow rollout jsonl for finer-grained events (or content estimates)
           const rp =
             rolloutCol && typeof row[rolloutCol] === "string"
               ? String(row[rolloutCol]).trim()
@@ -404,8 +384,6 @@ async function parseCodexSqliteState(
                     text,
                     rolloutPath,
                     fileMtime,
-                    proxyIndex,
-                    claimedProxyIds,
                   );
                   // If detailed events were parsed, drop the coarse thread summary for this id
                   // to avoid double-counting (jsonl usually has better split + more events).
@@ -494,8 +472,6 @@ function parseJsonlFile(
   text: string,
   file: string,
   fileMtime: Date,
-  proxyIndex: ProxyUsageRow[],
-  claimedProxyIds: Set<string>,
 ): void {
   const rows = parseJsonl(text);
   // Orca writes both a per-request token_usage_record and a token_count
@@ -582,7 +558,7 @@ function parseJsonlFile(
       model = extractModel(payload, model) || model;
     }
 
-    // Turn tracking for proxy join / content estimate
+    // Turn tracking for content estimates
     if (type === "event_msg" && payloadType === "task_started" && Number.isFinite(rowMs)) {
       curTurn = {
         startMs: rowMs,
@@ -732,89 +708,11 @@ function parseJsonlFile(
     );
   }
 
-  // Custom providers (9router → LiteLLM) often emit token_count with info:null.
-  // Attribute real billed usage from proxy history, else estimate from content.
+  // Proxy logs are parsed under their own agent. Timestamp/model overlap alone
+  // cannot safely identify which proxy requests belong to this Codex rollout.
   if (realTokenEvents === 0) {
-    const attributed = attributeProxyUsage(
-      events,
-      file,
-      model,
-      workspace,
-      turns,
-      sessionStartMs,
-      sessionEndMs,
-      proxyIndex,
-      claimedProxyIds,
-    );
-    if (attributed === 0) {
-      emitContentEstimates(events, file, model, workspace, turns, sessionEndMs, fileMtime);
-    }
+    emitContentEstimates(events, file, model, workspace, turns, sessionEndMs, fileMtime);
   }
-}
-
-/**
- * Match LiteLLM/9Router per-request history into Codex turn windows (or whole session).
- * Returns number of events added.
- */
-function attributeProxyUsage(
-  events: UsageEvent[],
-  file: string,
-  model: string | null,
-  workspace: string | null,
-  turns: TurnBucket[],
-  sessionStartMs: number,
-  sessionEndMs: number,
-  proxyIndex: ProxyUsageRow[],
-  claimedProxyIds: Set<string>,
-): number {
-  if (!proxyIndex.length) return 0;
-  const modelKey = normalizeModelKey(model);
-  const windows =
-    turns.length > 0
-      ? turns.map((t) => ({
-          startMs: t.startMs,
-          // small pad for clock skew between desktop and proxy
-          endMs: t.endMs + 2_000,
-          model: t.model || model,
-        }))
-      : Number.isFinite(sessionStartMs) && Number.isFinite(sessionEndMs)
-        ? [{ startMs: sessionStartMs, endMs: sessionEndMs + 2_000, model }]
-        : [];
-  if (!windows.length) return 0;
-
-  let added = 0;
-  for (const win of windows) {
-    const winModel = normalizeModelKey(win.model);
-    for (const row of proxyIndex) {
-      if (claimedProxyIds.has(row.id)) continue;
-      if (row.tsMs < win.startMs || row.tsMs > win.endMs) continue;
-      // Prefer model match when both sides known; accept any if session model unknown
-      if (winModel && row.modelKey && !modelsCompatible(winModel, row.modelKey)) continue;
-
-      claimedProxyIds.add(row.id);
-      // Tag so dashboard shows Codex as client of TokenRouter path (LiteLLM/9Router).
-      const viaWs = workspace
-        ? `${workspace} · via:tokenrouter`
-        : "via:tokenrouter";
-      events.push(
-        applyPricing({
-          id: stableId("codex", file, "proxy", row.id),
-          agent: "codex",
-          model: row.modelRaw || win.model || model || "codex",
-          timestamp: new Date(row.tsMs).toISOString(),
-          inputTokens: row.inputTokens,
-          outputTokens: row.outputTokens,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          workspace: viaWs,
-          sourcePath: `${file} ← ${row.sourcePath}`,
-          routerCost: row.cost > 0 ? row.cost : null,
-        }),
-      );
-      added += 1;
-    }
-  }
-  return added;
 }
 
 /** Last-resort: estimate tokens from message/tool content per turn (~4 chars/token). */
@@ -898,173 +796,6 @@ function sameTokenBuckets(a: TokenBuckets, b: TokenBuckets): boolean {
     a.cacheReadTokens === b.cacheReadTokens &&
     a.cacheWriteTokens === b.cacheWriteTokens
   );
-}
-
-function normalizeModelKey(model: string | null | undefined): string {
-  if (!model) return "";
-  let m = model.trim().toLowerCase();
-  // strip provider prefixes: openai/Kimi-k3 → kimi-k3
-  const slash = m.lastIndexOf("/");
-  if (slash >= 0) m = m.slice(slash + 1);
-  m = m.replace(/[_\s]+/g, "-");
-  return m;
-}
-
-function modelsCompatible(a: string, b: string): boolean {
-  if (!a || !b) return true;
-  if (a === b) return true;
-  // kimi-k3 vs kimi-k3-... or partial contains
-  if (a.includes(b) || b.includes(a)) return true;
-  // strip effort suffixes
-  const strip = (s: string) => s.replace(/-\(x?high\)$/i, "").replace(/-x?high$/i, "");
-  return strip(a) === strip(b);
-}
-
-/**
- * Load per-request proxy history (LiteLLM + 9Router mirrors) for attribution.
- * Caps to recent tail of large jsonl files for scan performance.
- */
-async function loadProxyUsageIndex(recentOnly = false): Promise<ProxyUsageRow[]> {
-  const rows: ProxyUsageRow[] = [];
-  const seenIds = new Set<string>();
-  // TOKENLAB_DATA_DIR override (tests + portable installs) isolates the proxy
-  // index to the override dir only — default appData/home roots are skipped so
-  // tests never pick up the developer's real LiteLLM mirrors (same convention
-  // as legacyDataRoot()/dataRoot() in backup.ts).
-  const envDataDir =
-    process.env.TOKENLAB_DATA_DIR?.trim() || process.env.XLAB_TOKEN_DATA_DIR?.trim() || "";
-  const roots = envDataDir
-    ? [path.join(envDataDir, "mirrors", "litellm"), path.join(envDataDir, "mirrors", "9router")]
-    : unique([
-        ...liteLlmRoots(),
-        ...nineRouterRoots(),
-        path.join(appDataDir(), "tokenlab", "mirrors", "litellm"),
-        path.join(appDataDir(), "tokenlab", "mirrors", "9router"),
-        path.join(homeDir(), ".tokenlab", "mirrors", "litellm"),
-        path.join(homeDir(), ".tokenlab", "mirrors", "9router"),
-      ]);
-
-  const historyNames = [
-    "usage-history.jsonl",
-    "usageHistory.jsonl",
-    "request-details.jsonl",
-  ];
-
-  for (const root of roots) {
-    if (!root || !(await pathExists(root))) continue;
-    for (const name of historyNames) {
-      const p = path.join(root, name);
-      if (!(await pathExists(p))) continue;
-      try {
-        let text: string | null;
-        const maxBytes = 4 * 1024 * 1024;
-        const fileStat = await stat(p);
-        if (recentOnly && fileStat.size > maxBytes) {
-          const handle = await open(p, "r");
-          try {
-            const start = Math.max(0, fileStat.size - maxBytes);
-            const buffer = Buffer.alloc(Math.min(fileStat.size, maxBytes));
-            const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
-            text = buffer.subarray(0, bytesRead).toString("utf8");
-            if (start > 0) {
-              const firstNewline = text.indexOf("\n");
-              if (firstNewline >= 0) text = text.slice(firstNewline + 1);
-            }
-          } finally {
-            await handle.close();
-          }
-        } else {
-          text = await readText(p);
-        }
-        if (!text) continue;
-        // Keep last ~4MB for large histories (recent traffic matters for live Codex)
-        if (text.length > maxBytes) {
-          const slice = text.slice(-maxBytes);
-          const nl = slice.indexOf("\n");
-          text = nl >= 0 ? slice.slice(nl + 1) : slice;
-        }
-        for (const line of text.split("\n")) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          let o: Record<string, unknown>;
-          try {
-            o = JSON.parse(trimmed) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          const row = proxyRowFromObject(o, p);
-          if (!row) continue;
-          if (seenIds.has(row.id)) continue;
-          seenIds.add(row.id);
-          rows.push(row);
-        }
-      } catch {
-        // ignore unreadable mirror
-      }
-    }
-  }
-
-  rows.sort((a, b) => a.tsMs - b.tsMs);
-  return rows;
-}
-
-function proxyRowFromObject(o: Record<string, unknown>, sourcePath: string): ProxyUsageRow | null {
-  const tokensObj =
-    o.tokens && typeof o.tokens === "object" ? (o.tokens as Record<string, unknown>) : null;
-  const inputTokens = Math.max(
-    0,
-    Math.round(
-      Number(
-        o.promptTokens ??
-          o.prompt_tokens ??
-          o.inputTokens ??
-          o.input_tokens ??
-          tokensObj?.prompt_tokens ??
-          tokensObj?.input_tokens ??
-          0,
-      ) || 0,
-    ),
-  );
-  const outputTokens = Math.max(
-    0,
-    Math.round(
-      Number(
-        o.completionTokens ??
-          o.completion_tokens ??
-          o.outputTokens ??
-          o.output_tokens ??
-          tokensObj?.completion_tokens ??
-          tokensObj?.output_tokens ??
-          0,
-      ) || 0,
-    ),
-  );
-  if (inputTokens + outputTokens <= 0) return null;
-
-  const tsRaw = o.timestamp ?? o.ts ?? o.created_at ?? o.createdAt ?? o.time;
-  let tsMs = NaN;
-  if (typeof tsRaw === "string" && tsRaw.trim()) tsMs = Date.parse(tsRaw);
-  else if (typeof tsRaw === "number" && Number.isFinite(tsRaw)) {
-    tsMs = tsRaw > 1e12 ? tsRaw : tsRaw > 1e9 ? tsRaw * 1000 : tsRaw;
-  }
-  if (!Number.isFinite(tsMs) || tsMs <= 0) return null;
-
-  const modelRaw = String(o.model ?? o.Model ?? "unknown");
-  const id = String(
-    o.id ?? o.request_id ?? o.requestId ?? `${tsMs}:${modelRaw}:${inputTokens}:${outputTokens}`,
-  );
-  const cost = Number(o.cost ?? o.spend ?? o.total_cost ?? 0) || 0;
-
-  return {
-    id,
-    tsMs,
-    modelKey: normalizeModelKey(modelRaw),
-    modelRaw,
-    inputTokens,
-    outputTokens,
-    cost,
-    sourcePath,
-  };
 }
 
 type UsageResult = { obj: unknown; isPerCall: boolean };
