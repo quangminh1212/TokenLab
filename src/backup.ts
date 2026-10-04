@@ -578,7 +578,7 @@ export function replaceFreshAgentSourceEvents(
 
 /** Remove Codex rows created by the old time/model-only LiteLLM proxy join. */
 export function dropLegacyCodexProxyAttributions(events: UsageEvent[]): UsageEvent[] {
-  return events.filter(
+  return (Array.isArray(events) ? events : []).filter(
     (e) => e.agent !== "codex" || !(e.workspace ?? "").includes("via:tokenrouter"),
   );
 }
@@ -1351,12 +1351,12 @@ export function salvageScanCacheJson(text: string): UsageEvent[] {
 async function loadScanCacheCandidate(filePath: string): Promise<UsageEvent[] | null> {
   if (!(await pathExists(filePath))) return null;
   try {
-    const events = await readScanCacheFile(filePath);
+    const events = dropLegacyCodexProxyAttributions(await readScanCacheFile(filePath));
     return events.length > 0 ? events : null;
   } catch {
     try {
       const text = await readFile(filePath, "utf8");
-      const salvaged = salvageScanCacheJson(text);
+      const salvaged = dropLegacyCodexProxyAttributions(salvageScanCacheJson(text));
       if (salvaged.length > 0) {
         log("loadScanCache: salvaged", salvaged.length, "events from corrupt →", filePath);
         return salvaged;
@@ -1515,7 +1515,7 @@ export async function saveScanCache(
     // Same-process short-circuit BEFORE collapse/high-water (those are O(n) on 50k+ rows).
     // After restart lastScanCacheWriteFp is empty so first save always proceeds.
     {
-      const raw = Array.isArray(events) ? events : [];
+      const raw = dropLegacyCodexProxyAttributions(events);
       const earlyFp = scanCacheFingerprint(raw);
       if (earlyFp === lastScanCacheWriteFp && (await pathExists(p))) {
         log("saveScanCache: skip unchanged (early)", raw.length, mode);
@@ -1524,18 +1524,21 @@ export async function saveScanCache(
     }
 
     // Progressive saves already hold clean-ish rows; skip O(n) collapse passes mid-scan.
+    const validEvents = dropLegacyCodexProxyAttributions(events);
     let clean =
       mode === "quick"
-        ? events
+        ? validEvents
         : collapseExactUsageDuplicates(
-            collapseSourcePathRollups(collapseRouterDailyEvents(sanitizeEvents(events) || [])),
+            collapseSourcePathRollups(
+              collapseRouterDailyEvents(sanitizeEvents(validEvents) || []),
+            ),
           );
 
     // Full save: never write a thinner all-time snapshot than what is already on disk.
     // High-water reads MAIN ONLY (not bak+archive) — was 3× ~20MB parse per full save.
     if (mode === "full") {
       try {
-        const existing = await loadScanCacheMainOnly();
+        const existing = dropLegacyCodexProxyAttributions(await loadScanCacheMainOnly());
         if (existing.length > 0) {
           const merged = enforceMonotonicAgentDays(
             dropPreviousAgentSourceEvents(existing, clean, "claude-code"),
