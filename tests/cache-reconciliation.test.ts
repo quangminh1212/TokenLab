@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  dropLegacyCodexProxyAttributions,
   replaceFreshAgentSessionEvents,
   replaceFreshAgentSourceEvents,
 } from "../src/backup.ts";
@@ -24,6 +25,32 @@ function event(partial: Partial<UsageEvent> & Pick<UsageEvent, "id" | "sourcePat
     ...partial,
   };
 }
+
+test("legacy Codex proxy attribution is removed while native and LiteLLM rows remain", () => {
+  const rows = [
+    event({
+      id: "codex-native",
+      agent: "codex",
+      sourcePath: "C:/Users/GHC/.codex/sessions/rollout.jsonl",
+      workspace: "C--Dev-PresentLab",
+    }),
+    event({
+      id: "codex-proxy-join",
+      agent: "codex",
+      sourcePath: "C:/Users/GHC/.codex/sessions/rollout.jsonl ← C:/data/mirrors/litellm/usage-history.jsonl",
+      workspace: "C--Dev-PresentLab · via:tokenrouter",
+    }),
+    event({
+      id: "litellm-source",
+      agent: "litellm",
+      sourcePath: "C:/data/mirrors/litellm/usage-history.jsonl",
+      workspace: "litellm",
+    }),
+  ];
+
+  const out = dropLegacyCodexProxyAttributions(rows);
+  assert.deepEqual(out.map((row) => row.id), ["codex-native", "litellm-source"]);
+});
 
 test("fresh Claude source rows replace legacy per-content-block cache rows", () => {
   const source = "C:/Users/GHC/.claude/projects/C--Dev-Demo/session.jsonl";
