@@ -268,7 +268,7 @@ async function parseDshLight(roots: string[]): Promise<UsageEvent[]> {
 
 export const agent: AgentModule = {
   id: "dsh",
-  label: "DeepSeek Harness CLI",
+  label: "DeepSeek Harness",
   roots: dshRoots,
   parse: parseDsh,
   parseLight: parseDshLight,
