@@ -77,6 +77,7 @@ const PERIODIC_LIGHT_AGENTS = new Set<AgentId>([
   "xlabrouter",
   "litellm",
   "hermes",
+  "dsh",
 ]);
 
 export function periodicLightScanEnabled(): Partial<Record<AgentId, boolean>> {
