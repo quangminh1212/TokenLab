@@ -11,7 +11,13 @@ import {
   type PrecomputedPeriodStats,
 } from "../aggregate.js";
 import { buildRecentLiveEvents, computeDashboardLiveRate } from "../live-rate.js";
-import { AGENTS, dedupeMirroredOpenClawEvents, detectAgents, scanAll } from "../agents/index.js";
+import {
+  AGENTS,
+  dedupeMirroredDshLiteLlmEvents,
+  dedupeMirroredOpenClawEvents,
+  detectAgents,
+  scanAll,
+} from "../agents/index.js";
 import {
   buildFullBackup,
   buildSettingsBackup,
@@ -738,6 +744,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             }
           },
         });
+        const dshEvents = byAgent.get("dsh");
+        const liteLlmEvents = byAgent.get("litellm");
+        if (dshEvents?.length && liteLlmEvents?.length) {
+          const reconciled = dedupeMirroredDshLiteLlmEvents(dshEvents, liteLlmEvents);
+          byAgent.set("dsh", reconciled.dshEvents);
+          byAgent.set("litellm", reconciled.liteLlmEvents);
+        }
         const openclawEvents = byAgent.get("openclaw");
         if (openclawEvents?.length) {
           byAgent.set(

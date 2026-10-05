@@ -6,6 +6,7 @@ export type AgentId =
   | "grok"
   | "gemini"
   | "opencode"
+  | "dsh"
   | "copilot"
   | "hermes"
   | "openclaw"

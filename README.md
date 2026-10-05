@@ -147,6 +147,7 @@ To add a new agent: create `src/agents/<id>/index.ts` exporting `agent: AgentMod
 | **Claude Code** | `claude-code` | `~/.claude/projects` JSONL | Yes |
 | Gemini CLI | `gemini` | `~/.gemini/tmp/**/chats` | Yes |
 | OpenCode | `opencode` | local share / `opencode.db` (SQLite messages + session rollups) and legacy storage JSON | Yes |
+| DeepSeek Harness CLI | `dsh` | `$DSH_HOME/sessions` (`~/.dsh/sessions` by default; JSONL/Zstandard, compressed logs need Node.js 22.15+) | Yes |
 | GitHub Copilot | `copilot` | `~/.copilot/otel` JSONL | Yes |
 | Pi / Oh My Pi | `pi` | `~/.pi` / `~/.omp` sessions | Yes |
 | Kimi CLI | `kimi` | `~/.kimi/**/wire.jsonl` | Yes |
