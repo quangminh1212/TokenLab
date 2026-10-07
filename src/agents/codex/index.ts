@@ -110,9 +110,45 @@ interface TurnBucket {
   model: string | null;
 }
 
-// Minute light scans skip large rollout files that have not changed.
-const LIGHT_RESCAN_SKIP_BYTES = 8 * 1024 * 1024;
+/**
+ * Files a light scan has already read, keyed by absolute path.
+ * The value is relative path + size + mtime. A later tick that still sees that
+ * signature does not open the file. The 6h full scan does not use this map.
+ */
 const lightFileSignatures = new Map<string, string>();
+/** Roots whose historical session trees were listed once. Later light ticks skip them. */
+const codexLightIndexedRoots = new Set<string>();
+/** Rollout files kept warm: Windows may not bump mtime while Codex holds the file open. */
+const codexLightHotByRoot = new Map<string, string[]>();
+
+function codexRootKey(root: string): string {
+  const resolved = path.resolve(root);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/** Local and UTC today and yesterday, as sessions/YYYY/MM/DD segments. */
+function recentCodexDayRels(now = Date.now()): string[] {
+  const rels: string[] = [];
+  for (const offset of [0, 1]) {
+    const at = new Date(now - offset * 24 * 60 * 60 * 1000);
+    const push = (year: number, month: number, day: number) => {
+      rels.push(
+        [String(year), String(month).padStart(2, "0"), String(day).padStart(2, "0")].join("/"),
+      );
+    };
+    push(at.getFullYear(), at.getMonth() + 1, at.getDate());
+    push(at.getUTCFullYear(), at.getUTCMonth() + 1, at.getUTCDate());
+  }
+  return [...new Set(rels)];
+}
+
+function isUnderRecentCodexDay(root: string, file: string, now = Date.now()): boolean {
+  const rel = path.relative(root, file).replace(/\\/g, "/").toLowerCase();
+  for (const day of recentCodexDayRels(now)) {
+    if (rel.includes(`sessions/${day}/`)) return true;
+  }
+  return false;
+}
 
 /**
  * Deep Codex support:
@@ -212,29 +248,127 @@ async function parseCodexInternal(
       for (const event of sqliteEvents) events.push(event);
     }
 
-    // Prefer real session trees; only fall back to root when those are absent
-    const preferred = [
-      path.join(root, "sessions"),
-      path.join(root, "archived_sessions"),
-      path.join(root, "session_index"),
-      path.join(root, "history"),
-      path.join(root, "logs"),
-    ];
-    const existingPreferred: string[] = [];
-    for (const p of preferred) {
-      if (await pathExists(p)) existingPreferred.push(p);
+    const rootKey = codexRootKey(root);
+    const indexed = Boolean(options.recentOnly && codexLightIndexedRoots.has(rootKey));
+    const discoveredHot: string[] = [];
+    const sessionsRoot = path.join(root, "sessions");
+
+    // After one light listing, do not walk archived history again. New usage
+    // lands in today's or yesterday's session folder, or in a file already
+    // kept warm. The 6h full scan still walks every tree, including mirrors.
+    let scanRoots: string[];
+    if (indexed) {
+      scanRoots = [root];
+      if (await pathExists(sessionsRoot)) {
+        for (const rel of recentCodexDayRels()) {
+          const dir = path.join(sessionsRoot, ...rel.split("/"));
+          if (await pathExists(dir)) scanRoots.push(dir);
+        }
+      }
+    } else {
+      const preferred = [
+        sessionsRoot,
+        path.join(root, "archived_sessions"),
+        path.join(root, "session_index"),
+        path.join(root, "history"),
+        path.join(root, "logs"),
+      ];
+      const existingPreferred: string[] = [];
+      for (const p of preferred) {
+        if (await pathExists(p)) existingPreferred.push(p);
+      }
+      // Always include root so state/rollout files next to config are not missed when
+      // an empty sessions/ folder exists (newer installs create dirs early).
+      scanRoots = existingPreferred.length > 0 ? [...existingPreferred, root] : [root];
     }
-    // Always include root so state/rollout files next to config are not missed when
-    // an empty sessions/ folder exists (newer installs create dirs early).
-    const scanRoots = existingPreferred.length > 0 ? [...existingPreferred, root] : [root];
+
+    const rememberSignature = (file: string, signature: string) => {
+      if (!options.recentOnly || !signature) return;
+      const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
+      lightFileSignatures.set(fileKey, signature);
+    };
+
+    const consume = async (file: string, hotRolloutFiles: Set<string>): Promise<void> => {
+      if (seen.has(file) || seenRollouts.has(file.toLowerCase())) return;
+      seen.add(file);
+      let fileMtime = new Date(0);
+      let fileSize = -1;
+      try {
+        const st = await stat(file);
+        fileMtime = st.mtime;
+        fileSize = st.size;
+      } catch {
+        // ignore
+      }
+      let signature = "";
+      if (fileSize >= 0) {
+        let relative = path.relative(root, file).replace(/\\/g, "/");
+        if (process.platform === "win32") relative = relative.toLowerCase();
+        signature = `${relative}|${fileSize}`;
+        const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
+        if (options.recentOnly && lightFileSignatures.get(fileKey) === signature) return;
+      }
+      if (fileMtime.getTime() < recentCutoffMs && !hotRolloutFiles.has(file)) {
+        // Already outside the light window. Remember it so the next tick,
+        // which only reopens recent day folders, does not parse it.
+        if (isUnderRecentCodexDay(root, file)) rememberSignature(file, signature);
+        return;
+      }
+
+      // Mirror-root dedupe by session identity, before any parse work.
+      // Keeps one copy of a session seen under multiple roots (an Orca runtime
+      // home mirrors ~/.codex/sessions with byte-identical content).
+      const identity = path.basename(file).toLowerCase();
+      const knownIdentity = sessionIdentity.get(identity);
+      if (knownIdentity) {
+        const keepExisting = preferCodexCopy(knownIdentity, { path: file, size: fileSize });
+        if (keepExisting) {
+          droppedMirrorPaths.add(file);
+          return;
+        }
+        droppedMirrorPaths.add(knownIdentity.path);
+        removeEventsFromPath(events, knownIdentity.path);
+        seenRollouts.delete(knownIdentity.path.toLowerCase());
+      }
+      if (fileSize >= 0) sessionIdentity.set(identity, { path: file, size: fileSize });
+
+      if (signature) {
+        const passSignature = `${signature}|${Math.trunc(fileMtime.getTime())}`;
+        if (seenFileSignatures.has(passSignature)) return;
+        seenFileSignatures.add(passSignature);
+      }
+
+      if (file.endsWith(".json") && !file.endsWith(".jsonl")) {
+        const text = await readText(file);
+        if (!text) return;
+        try {
+          collectFromJson(events, JSON.parse(text) as unknown, file, fileMtime);
+        } catch {
+          // ignore
+        }
+        rememberSignature(file, signature);
+        return;
+      }
+
+      // A changed rollout is parsed whole. Replacing that source path is only
+      // safe when every row from the file is in this result.
+      const fileEvents = await cachedEventsForFile(file, async () => {
+        const produced: UsageEvent[] = [];
+        const rows = await readJsonlCached(file);
+        if (rows) parseJsonlRows(produced, rows, file, fileMtime);
+        return produced;
+      });
+      for (const event of fileEvents) events.push(event);
+      rememberSignature(file, signature);
+    };
 
     for (const base of scanRoots) {
       if (!(await pathExists(base))) continue;
       if (isNoisePath(base)) continue;
       const files = await walkFiles(base, {
-        // In light mode the root itself is only for immediate files; the
-        // session/history directories above still get their full depth.
-        maxDepth: options.recentOnly && base === root ? 1 : 12,
+        // Light mode lists the root and, after the first pass, only a day folder.
+        // The first light pass and every full scan still walk the deep trees.
+        maxDepth: !options.recentOnly ? 12 : base === root ? 1 : indexed ? 2 : 12,
         match: (n, full) => {
           if (isNoisePath(full)) return false;
           return (
@@ -256,95 +390,26 @@ async function parseCodexInternal(
               .slice(-4),
           )
         : new Set<string>();
-
-      for (const file of files) {
-        if (seen.has(file) || seenRollouts.has(file.toLowerCase())) continue;
-        // Noise paths are already excluded by the walk's match predicate above.
-        seen.add(file);
-        let fileMtime = new Date(0);
-        let fileSize = -1;
-        try {
-          const st = await stat(file);
-          fileMtime = st.mtime;
-          fileSize = st.size;
-        } catch {
-          // ignore
-        }
-        if (fileMtime.getTime() < recentCutoffMs && !hotRolloutFiles.has(file)) continue;
-
-        // Mirror-root dedupe by session identity, before any parse work.
-        // Keeps one copy of a session seen under multiple roots (an Orca runtime
-        // home mirrors ~/.codex/sessions with byte-identical content).
-        const identity = path.basename(file).toLowerCase();
-        const knownIdentity = sessionIdentity.get(identity);
-        if (knownIdentity) {
-          // Prefer the canonical copy (a non-mirror root, then the larger file), so
-          // the result does not depend on the order roots happen to be scanned.
-          const keepExisting = preferCodexCopy(knownIdentity, { path: file, size: fileSize });
-          if (keepExisting) {
-            droppedMirrorPaths.add(file);
-            continue;
-          }
-          // This copy wins. Any events already emitted from the discarded copy must
-          // go, otherwise its rows would be counted alongside this file's rows.
-          droppedMirrorPaths.add(knownIdentity.path);
-          removeEventsFromPath(events, knownIdentity.path);
-          // Release the discarded path so the sqlite rollout follow-up can still
-          // pick up this (preferred) copy instead of skipping it as already seen.
-          seenRollouts.delete(knownIdentity.path.toLowerCase());
-        }
-        if (fileSize >= 0) sessionIdentity.set(identity, { path: file, size: fileSize });
-
-        let signature = "";
-        if (fileSize >= 0) {
-          let relative = path.relative(root, file).replace(/\\/g, "/");
-          if (process.platform === "win32") relative = relative.toLowerCase();
-          signature = `${relative}|${fileSize}|${Math.trunc(fileMtime.getTime())}`;
-          // The same relative rollout can exist under both Codex and Orca roots.
-          if (seenFileSignatures.has(signature)) continue;
-          seenFileSignatures.add(signature);
-          const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
-          if (
-            options.recentOnly &&
-            fileSize > LIGHT_RESCAN_SKIP_BYTES &&
-            lightFileSignatures.get(fileKey) === signature
-          ) {
-            continue;
-          }
-        }
-
-        if (file.endsWith(".json") && !file.endsWith(".jsonl")) {
-          // collectFromJson recurses into object fields (events/sessions), so pass
-          // the parsed document rather than readJsonCached's normalized array.
-          const text = await readText(file);
-          if (!text) continue;
-          try {
-            collectFromJson(events, JSON.parse(text) as unknown, file, fileMtime);
-          } catch {
-            // ignore
-          }
-          if (options.recentOnly && fileSize > LIGHT_RESCAN_SKIP_BYTES && signature) {
-            const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
-            lightFileSignatures.set(fileKey, signature);
-          }
-          continue;
-        }
-
-        // Event-level cache: an unchanged rollout (same size + mtime) reuses its
-        // previously derived events instead of re-reading and re-parsing the log.
-        // This is what makes a warm rescan of a multi-GB codex tree cheap.
-        const fileEvents = await cachedEventsForFile(file, async () => {
-          const produced: UsageEvent[] = [];
-          const rows = await readJsonlCached(file);
-          if (rows) parseJsonlRows(produced, rows, file, fileMtime);
-          return produced;
-        });
-        for (const event of fileEvents) events.push(event);
-        if (options.recentOnly && fileSize > LIGHT_RESCAN_SKIP_BYTES && signature) {
-          const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
-          lightFileSignatures.set(fileKey, signature);
-        }
+      const underSessions = base === sessionsRoot || base.startsWith(sessionsRoot + path.sep);
+      if (underSessions) {
+        for (const file of hotRolloutFiles) discoveredHot.push(file);
       }
+      for (const file of files) await consume(file, hotRolloutFiles);
+    }
+
+    if (indexed) {
+      const remembered = new Set(codexLightHotByRoot.get(rootKey) ?? []);
+      for (const file of remembered) {
+        if (seen.has(file) || !(await pathExists(file))) continue;
+        await consume(file, remembered);
+      }
+    }
+    if (options.recentOnly) {
+      const merged = [
+        ...new Set([...(codexLightHotByRoot.get(rootKey) ?? []), ...discoveredHot]),
+      ].sort();
+      codexLightHotByRoot.set(rootKey, merged.slice(-4));
+      codexLightIndexedRoots.add(rootKey);
     }
   }
 

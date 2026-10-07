@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { AgentId, UsageEvent } from "../src/types.js";
 import { AGENTS, scanAll } from "../src/agents/index.js";
+import { parseCodexLight } from "../src/agents/codex/index.js";
 import { agent as dshAgent } from "../src/agents/dsh/index.js";
+import { parseRouterUsageLight } from "../src/agents/shared/router-light.js";
 import { applyPeriodicLightDelta } from "../src/server/http.js";
 
 function lightEvent(partial: Pick<UsageEvent, "id" | "agent" | "timestamp" | "sourcePath"> & Partial<UsageEvent>): UsageEvent {
@@ -151,6 +153,28 @@ test("periodic light scan skips unchanged Hermes files and keeps the first read"
     assert.equal(
       second.filter((event) => event.agent === "hermes").length,
       0,
+    );
+    await writeFile(
+      file,
+      `${JSON.stringify({
+        timestamp: "2026-10-03T01:00:00.000Z",
+        model: "test-model",
+        input_tokens: 11,
+        output_tokens: 4,
+      })}\n${JSON.stringify({
+        timestamp: "2026-10-03T02:00:00.000Z",
+        model: "test-model",
+        input_tokens: 6,
+        output_tokens: 1,
+      })}\n`,
+    );
+    const third = await scanAll({ enabled, light: true, concurrency: 1, timeoutMs: 5_000 });
+    assert.deepEqual(
+      third
+        .filter((event) => event.agent === "hermes" && event.sourcePath === file)
+        .map((event) => event.inputTokens)
+        .sort((a, b) => a - b),
+      [6, 11],
     );
   } finally {
     for (const [key, value] of oldEnv) {
@@ -302,9 +326,90 @@ test("dsh light scan reads a changed session once and skips the next identical p
     await writeFile(file, `${line(1, 3)}\n${line(2, 9)}\n`);
     const third = await dshAgent.parseLight!(roots);
     assert.deepEqual(third.map((event) => event.inputTokens).sort((a, b) => a - b), [3, 9]);
+    const sessionDir2 = path.join(root, "sessions", "s2");
+    await mkdir(sessionDir2, { recursive: true });
+    await writeFile(path.join(sessionDir2, "session.jsonl"), `${line(1, 4)}\n`);
+    const fourth = await dshAgent.parseLight!(roots);
+    assert.deepEqual(fourth.map((event) => event.inputTokens), [4]);
   } finally {
     if (oldHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = oldHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("codex light scan does not walk an old session tree again", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tokenlab-codex-light-"));
+  const now = new Date();
+  const day = path.join(
+    root,
+    "sessions",
+    String(now.getFullYear()),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  );
+  const oldDir = path.join(root, "sessions", "2020", "01", "01");
+  const record = (input: number, stamp: string): string =>
+    JSON.stringify({
+      timestamp: stamp,
+      type: "token_usage_record",
+      payload: { type: "token_usage_record", usage: { input_tokens: input, output_tokens: 2 } },
+    });
+  try {
+    await mkdir(day, { recursive: true });
+    await mkdir(oldDir, { recursive: true });
+    const current = path.join(day, "rollout-2026-10-08T10-00-00-current.jsonl");
+    await writeFile(current, `${record(5, "2026-10-08T10:00:00.000Z")}\n`);
+    for (const name of ["11-00-00-b", "12-00-00-c", "13-00-00-d"]) {
+      await writeFile(path.join(day, `rollout-2026-10-08T${name}.jsonl`), "");
+    }
+    const oldFile = path.join(oldDir, "rollout-2020-01-01T00-00-00-old.jsonl");
+    await writeFile(oldFile, `${record(99, "2020-01-01T00:00:00.000Z")}\n`);
+    const oldTime = new Date("2020-01-01T00:00:00.000Z");
+    await utimes(oldFile, oldTime, oldTime);
+
+    const first = await parseCodexLight([root]);
+    assert.deepEqual(first.map((event) => event.inputTokens), [5]);
+
+    await writeFile(oldFile, `${record(99, "2026-10-08T12:00:00.000Z")}\n`);
+    const second = await parseCodexLight([root]);
+    assert.equal(second.length, 0);
+
+    await writeFile(
+      current,
+      `${record(5, "2026-10-08T10:00:00.000Z")}\n${record(8, "2026-10-08T10:00:02.000Z")}\n`,
+    );
+    const third = await parseCodexLight([root]);
+    assert.deepEqual(third.map((event) => event.inputTokens).sort((a, b) => a - b), [5, 8]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("router light scan reads a usage file once until it changes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tokenlab-router-light-"));
+  const usage = path.join(root, "usage.json");
+  const body = (input: number): string =>
+    JSON.stringify({
+      history: [{
+        timestamp: "2026-10-08T00:00:00.000Z",
+        model: "test-model",
+        input_tokens: input,
+        output_tokens: 2,
+      }],
+    });
+  try {
+    await writeFile(usage, body(3));
+    const first = await parseRouterUsageLight([root], "9router");
+    const second = await parseRouterUsageLight([root], "9router");
+    assert.equal(first.length, 1);
+    assert.equal(first[0]?.inputTokens, 3);
+    assert.equal(second.length, 0);
+    await writeFile(usage, body(30));
+    const third = await parseRouterUsageLight([root], "9router");
+    assert.equal(third.length, 1);
+    assert.equal(third[0]?.inputTokens, 30);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

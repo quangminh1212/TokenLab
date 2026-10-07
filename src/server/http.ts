@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { appendFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -606,6 +607,17 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       /* EPIPE etc. */
     }
   };
+  const lightLog = (message: string): void => {
+    try {
+      const dir = path.join(process.env.LOCALAPPDATA || process.env.APPDATA || process.cwd(), "tokenlab");
+      appendFileSync(
+        path.join(dir, "server.txt"),
+        `[${new Date().toISOString()}] ${message}\r\n`,
+      );
+    } catch {
+      /* ignore */
+    }
+  };
 
   const grokReplacedSessions = new Set<string>();
   const grokSessionKey = (sourcePath: unknown): string => {
@@ -903,6 +915,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           enabled = periodicLightScanEnabled();
         }
 
+        const lightTickStarted = Date.now();
         await scanAll({
           enabled,
           light: !full,
@@ -990,6 +1003,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
                 ? `error: ${error} (kept ${kept})`
                 : `${events.length} new → ${kept} total`;
               slog(`[tokenlab]   ${agent}: ${status} (${durationMs}ms)`);
+            } else if (!full && (error || durationMs >= 1_000)) {
+              lightLog(
+                `[tokenlab] light ${agent}: ${events.length} events in ${durationMs}ms` +
+                  (error ? ` (${error})` : ""),
+              );
             }
           },
         });
@@ -1001,12 +1019,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           // Unchanged files, or a re-read that matches the cache: keep the
           // same array and the sort index. History already in memory stays.
           if (freshByAgent.size === 0 || lightFreshAlreadyCached(freshByAgent, prev)) {
+            lightLog(
+              `[tokenlab] light tick ${Date.now() - lightTickStarted}ms unchanged events=${cache.length} ${agentStats.map((stat) => `${stat.agent}:${stat.events}/${stat.durationMs}`).join(" ")}`,
+            );
             return cache.length;
           }
           const applied = applyPeriodicLightDelta(prev, cacheTs, freshByAgent);
           setCache(applied.events, { sorted: true, timestampsMs: applied.timestampsMs });
           bumpScan("complete");
           scheduleSaveScanCache("quick");
+          lightLog(
+            `[tokenlab] light tick ${Date.now() - lightTickStarted}ms fresh=${freshByAgent.size} events=${applied.events.length} ${agentStats.map((stat) => `${stat.agent}:${stat.events}/${stat.durationMs}`).join(" ")}`,
+          );
           return cache.length;
         }
         // LiteLLM is kept independent: its usage is added as-is and is never

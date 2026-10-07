@@ -2,6 +2,7 @@ import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 import { appDataDir, homeDir } from "../../util.js";
 import { parseRouterUsage } from "../shared/router-usage.js";
+import { parseRouterUsageLight } from "../shared/router-light.js";
 import path from "node:path";
 
 /**
@@ -40,5 +41,5 @@ export const agent: AgentModule = {
   label: "9Router",
   roots: nineRouterRoots,
   parse: (roots) => parseRouterUsage(roots, "9router"),
-  parseLight: (roots) => parseRouterUsage(roots, "9router", { recentOnly: true }),
+  parseLight: (roots) => parseRouterUsageLight(roots, "9router"),
 };

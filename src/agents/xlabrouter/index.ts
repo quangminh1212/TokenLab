@@ -2,6 +2,7 @@ import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 import { appDataDir, homeDir } from "../../util.js";
 import { parseRouterUsage } from "../shared/router-usage.js";
+import { parseRouterUsageLight } from "../shared/router-light.js";
 
 /**
  * RouterLab usage (rebrand of xlabrouter / XLab Router).
@@ -61,5 +62,5 @@ export const agent: AgentModule = {
   label: "RouterLab",
   roots: xlabRouterRoots,
   parse: (roots) => parseRouterUsage(roots, "routerlab"),
-  parseLight: (roots) => parseRouterUsage(roots, "routerlab", { recentOnly: true }),
+  parseLight: (roots) => parseRouterUsageLight(roots, "routerlab"),
 };
