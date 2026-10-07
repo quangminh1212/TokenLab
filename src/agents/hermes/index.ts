@@ -728,20 +728,143 @@ const hermesLightStampByRoot = new Map<string, string>();
 
 const HERMES_DB_NAMES = ["state.db", "hermes.db", "sessions.db"];
 
+/**
+ * Session listing from the last light stamp. A quiet tick stats the directory
+ * and the few session files that can be rewritten. It does not walk request
+ * dumps again. A new file updates the directory mtime and drops this memo.
+ */
+type HermesSessionMemo = {
+  dirMtime: number;
+  subdirs: Array<{ dir: string; mtime: number }>;
+  files: string[];
+  sig: string;
+  part: string;
+};
+
+const hermesSessionMemo = new Map<string, HermesSessionMemo>();
+
+function hermesSessionFile(name: string): boolean {
+  return name.endsWith(".jsonl") || (name.includes("session") && name.endsWith(".json"));
+}
+
 async function stampFile(file: string, parts: string[]): Promise<void> {
   try {
     const st = await stat(file);
-    parts.push(`${file}|${st.size}|${Math.floor(st.mtimeMs)}`);
+    parts.push(`${file}|${st.size}`);
   } catch {
     /* missing */
   }
 }
 
+async function hermesSessionSubdirs(
+  sessionsDir: string,
+): Promise<Array<{ dir: string; mtime: number }>> {
+  let entries: import("node:fs").Dirent[] = [];
+  try {
+    entries = await readdir(sessionsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: Array<{ dir: string; mtime: number }> = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(sessionsDir, entry.name);
+    try {
+      const st = await stat(dir);
+      out.push({ dir, mtime: Math.floor(st.mtimeMs) });
+    } catch {
+      /* gone */
+    }
+  }
+  return out;
+}
+
+async function stampHermesSessionFiles(
+  files: string[],
+): Promise<{ sig: string; bytes: number } | null> {
+  const bits: string[] = [];
+  let bytes = 0;
+  for (const file of files) {
+    try {
+      const st = await stat(file);
+      bits.push(`${file}|${st.size}`);
+      bytes += st.size;
+    } catch {
+      return null;
+    }
+  }
+  bits.sort();
+  return { sig: bits.join("\n"), bytes };
+}
+
+/** True when no session file was created or removed since the memo was stored. */
+async function hermesSessionShapeMatches(
+  sessionsDir: string,
+  memo: HermesSessionMemo,
+): Promise<boolean> {
+  let dirMtime = 0;
+  try {
+    dirMtime = Math.floor((await stat(sessionsDir)).mtimeMs);
+  } catch {
+    return false;
+  }
+  if (dirMtime !== memo.dirMtime) return false;
+  for (const sub of memo.subdirs) {
+    try {
+      if (Math.floor((await stat(sub.dir)).mtimeMs) !== sub.mtime) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function appendHermesSessions(root: string, parts: string[]): Promise<void> {
+  const sessionsDir = path.join(root, "sessions");
+  if (!(await pathExists(sessionsDir))) return;
+  const key = path.resolve(sessionsDir).toLowerCase();
+  const memo = hermesSessionMemo.get(key);
+  if (memo && (await hermesSessionShapeMatches(sessionsDir, memo))) {
+    const stamped = await stampHermesSessionFiles(memo.files);
+    if (stamped && stamped.sig === memo.sig) {
+      parts.push(memo.part);
+      return;
+    }
+    if (stamped) {
+      const part = `sessions:${root}|${memo.files.length}|${stamped.bytes}`;
+      hermesSessionMemo.set(key, { ...memo, sig: stamped.sig, part });
+      parts.push(part);
+      return;
+    }
+  }
+
+  let dirMtime = 0;
+  try {
+    dirMtime = Math.floor((await stat(sessionsDir)).mtimeMs);
+  } catch {
+    return;
+  }
+  const files = await walkFiles(sessionsDir, {
+    maxDepth: 6,
+    match: (n) => hermesSessionFile(n),
+  });
+  const stamped = await stampHermesSessionFiles(files);
+  const part = `sessions:${root}|${files.length}|${stamped?.bytes ?? 0}`;
+  hermesSessionMemo.set(key, {
+    dirMtime,
+    subdirs: await hermesSessionSubdirs(sessionsDir),
+    files,
+    sig: stamped?.sig ?? "",
+    part,
+  });
+  parts.push(part);
+}
+
 /**
  * Fingerprint live Hermes inputs without reading them.
- * Includes the SQLite WAL (writes often land there before state.db's mtime
- * moves) and session JSON size/mtime. Skips -shm: opening the DB for read
- * rewrites it, which would force a parse every tick.
+ * Includes the SQLite WAL size (writes often land there before state.db grows)
+ * and session file sizes. Mtime is ignored: a read or a mirror touch rewrites
+ * it without new usage. Skips -shm: opening the DB for read rewrites it.
  */
 async function hermesSourceStamp(roots: string[]): Promise<string> {
   const parts: string[] = [];
@@ -768,25 +891,7 @@ async function hermesSourceStamp(roots: string[]): Promise<string> {
         }
       }
     }
-    const sessionsDir = path.join(root, "sessions");
-    if (await pathExists(sessionsDir)) {
-      const files = await walkFiles(sessionsDir, {
-        maxDepth: 6,
-        match: (n) => n.endsWith(".jsonl") || (n.includes("session") && n.endsWith(".json")),
-      });
-      let bytes = 0;
-      let maxMtime = 0;
-      for (const file of files) {
-        try {
-          const st = await stat(file);
-          bytes += st.size;
-          if (st.mtimeMs > maxMtime) maxMtime = st.mtimeMs;
-        } catch {
-          /* file vanished mid-stamp */
-        }
-      }
-      parts.push(`sessions:${root}|${files.length}|${bytes}|${Math.floor(maxMtime)}`);
-    }
+    await appendHermesSessions(root, parts);
   }
   parts.sort();
   return parts.join("\n");
@@ -805,7 +910,9 @@ export async function parseHermesLight(roots: string[]): Promise<UsageEvent[]> {
   const stamp = await hermesSourceStamp(roots);
   if (hermesLightStampByRoot.get(rootKey) === stamp) return [];
   const events = await parseHermes(roots);
-  hermesLightStampByRoot.set(rootKey, stamp);
+  // Opening the DB can bump the WAL mtime. Store the stamp after that read
+  // so the next quiet tick does not parse the same history again.
+  hermesLightStampByRoot.set(rootKey, await hermesSourceStamp(roots));
   return events;
 }
 

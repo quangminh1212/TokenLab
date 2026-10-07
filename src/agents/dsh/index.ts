@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import * as zlib from "node:zlib";
@@ -23,6 +23,50 @@ const ZSTD_MAGIC = 0xfd2fb528;
 const LIGHT_HISTORY_MS = 30 * 24 * 60 * 60 * 1_000;
 /** Unchanged session files are not decompressed again on the next minute tick. */
 const dshLightSig = new Map<string, string>();
+/** Session file list from the last light walk. A new session folder changes the shape. */
+const dshLightIndex = new Map<string, { shape: string; files: string[] }>();
+
+function dshIndexKey(roots: string[]): string {
+  return roots
+    .map((root) => path.resolve(root).toLowerCase())
+    .sort()
+    .join("|");
+}
+
+/** Root mtime plus each project folder mtime. An append does not change this. */
+async function dshTreeShape(roots: string[]): Promise<string> {
+  const parts: string[] = [];
+  for (const root of roots) {
+    try {
+      const st = await stat(root);
+      parts.push(`r|${root}|${Math.floor(st.mtimeMs)}`);
+      const entries = await readdir(root, { withFileTypes: true });
+      const dirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+      parts.push(`n|${root}|${dirs.length}`);
+      for (const name of dirs) {
+        try {
+          const child = await stat(path.join(root, name));
+          parts.push(`d|${root}|${name}|${Math.floor(child.mtimeMs)}`);
+        } catch {
+          parts.push(`d|${root}|${name}|missing`);
+        }
+      }
+    } catch {
+      parts.push(`r|${root}|missing`);
+    }
+  }
+  return parts.join("\n");
+}
+
+async function dshLightFiles(roots: string[], cutoff: number): Promise<string[]> {
+  const key = dshIndexKey(roots);
+  const shape = await dshTreeShape(roots);
+  const cached = dshLightIndex.get(key);
+  if (cached && cached.shape === shape) return cached.files;
+  const files = await latestSessionFiles(roots, cutoff);
+  dshLightIndex.set(key, { shape, files });
+  return files;
+}
 
 function dshSigKey(file: string): string {
   return process.platform === "win32" ? file.toLowerCase() : file;
@@ -268,13 +312,13 @@ export async function parseDsh(roots: string[]): Promise<UsageEvent[]> {
 
 async function parseDshLight(roots: string[]): Promise<UsageEvent[]> {
   const cutoff = Date.now() - LIGHT_HISTORY_MS;
-  const files = await latestSessionFiles(roots, cutoff);
+  const files = await dshLightFiles(roots, cutoff);
   const changed: Array<{ file: string; key: string; sig: string }> = [];
   for (const file of files) {
     let sig = "";
     try {
       const st = await stat(file);
-      sig = `${st.size}|${Math.trunc(st.mtimeMs)}`;
+      sig = `${st.size}`;
     } catch {
       continue;
     }
@@ -293,7 +337,14 @@ async function parseDshLight(roots: string[]): Promise<UsageEvent[]> {
   for (const item of changed) {
     try {
       events.push(...(await parseSessionFile(item.file, decompress)));
-      dshLightSig.set(item.key, item.sig);
+      let stored = item.sig;
+      try {
+        const after = await stat(item.file);
+        stored = `${after.size}`;
+      } catch {
+        /* keep the signature taken before the read */
+      }
+      dshLightSig.set(item.key, stored);
     } catch (error) {
       if (error instanceof Error && error.message.includes("requires Node.js")) {
         throw error;

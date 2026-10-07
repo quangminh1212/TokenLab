@@ -2,6 +2,7 @@ import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 import { appDataDir, homeDir } from "../../util.js";
 import { parseRouterUsage } from "../shared/router-usage.js";
+import { parseRouterUsageLight } from "../shared/router-light.js";
 
 /**
  * LiteLLM proxy usage (VPS :4000).
@@ -44,5 +45,5 @@ export const agent: AgentModule = {
   label: "LiteLLM",
   roots: liteLlmRoots,
   parse: (roots) => parseRouterUsage(roots, "litellm"),
-  parseLight: (roots) => parseRouterUsage(roots, "litellm", { recentOnly: true }),
+  parseLight: (roots) => parseRouterUsageLight(roots, "litellm"),
 };
