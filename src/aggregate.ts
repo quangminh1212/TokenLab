@@ -101,6 +101,17 @@ export function aggregate(
     sort === "cost" ? b.estimatedCost - a.estimatedCost : b.totalTokens - a.totalTokens,
   );
 
+  // Every group row carries its own peak RPM so the table always has the column
+  // and the chart can draw rate-over-time for hour/day buckets.
+  // A group with no live rows keeps `rpm` undefined (rendered as "—") rather
+  // than 0 — 0 would read as "measured, and it was zero", recreating the
+  // "157 requests, 0 RPM" contradiction this column already had once.
+  const rpmMap = rpmByGroup(events, groupBy, timestampsMs);
+  for (const g of groups) {
+    const peak = rpmMap.get(g.key);
+    if (peak != null) g.rpm = peak;
+  }
+
   return {
     totals,
     groups,
@@ -224,6 +235,21 @@ export function precomputeDashboardPeriods(
     dayStats.totals = { ...a.totals };
     const hourStats = finish(a.hour, "hour", "tokens", since);
     hourStats.totals = { ...a.totals };
+    // Every group row carries its own peak RPM for the table's RPM column;
+    // hour/day rows additionally feed the chart's rate-over-time mode.
+    // Groups without live rows stay undefined ("—"), never a misleading 0.
+    for (const [stats, by] of [
+      [agentStats, "agent"],
+      [modelStats, "model"],
+      [dayStats, "day"],
+      [hourStats, "hour"],
+    ] as const) {
+      const rpmMap = rpmByGroup(a.rpmEvents, by);
+      for (const g of stats.groups) {
+        const peak = rpmMap.get(g.key);
+        if (peak != null) g.rpm = peak;
+      }
+    }
     out.set(pk, {
       builtAt: nowMs,
       byGroup: {
@@ -253,7 +279,9 @@ export function precomputeDashboardPeriods(
  */
 /**
  * Count distinct UTC minute buckets that contain ≥1 event.
- * Matches RouterLab `countActiveMinutes` — idle gaps do not dilute RPM.
+ *
+ * Kept for the mean-rate calculation (`meanRpm`) and as a public helper; the
+ * headline RPM is now a peak minute, so idle gaps can no longer dilute it.
  */
 export function countActiveMinutes(events: UsageEvent[]): number {
   if (!Array.isArray(events) || events.length === 0) return 0;
@@ -274,39 +302,159 @@ function eventRequestCount(e: UsageEvent): number {
 }
 
 /**
- * Period RPM over **active usage minutes only** (not full wall-clock Today/24h/7d).
+ * Period PEAK RPM: the busiest single minute, counted from **real per-call rows
+ * only**.
  *
- *   activeMinutes = |{ floor(ts/60s) for each event }|
- *   RPM = totalRequests / activeMinutes
+ *   RPM = max over minute m of ( requests landing in calendar minute m )
  *
- * Same definition as RouterLab usage stats. Idle time between bursts is ignored,
- * so 11 requests in 5 busy minutes → 2.2 RPM (not 11 / minutes-since-midnight).
+ * A "calendar minute" is floor(ts / 60s), so a burst of 12 calls inside one
+ * minute reads as 12 RPM no matter how those seconds are distributed.
+ *
+ * Estimated daily rollup rows are excluded, and that exclusion is load-bearing:
+ * a rollup carries a whole day's request count (e.g. 4692) but only ONE
+ * timestamp, so counting it would collapse a day of traffic into a single
+ * minute and report a fake peak of 4692 req/min. Verified: one rollup row moved
+ * the peak from 1 to 4693. Only per-call rows have timestamps that mean "this
+ * request happened then", which is what a per-minute peak requires.
+ *
+ * The old active-minutes mean (`totalRequests / activeMinutes`, rollups
+ * included) is still returned as `meanRpm` for callers that want the average,
+ * but `rpm` — the headline number — is the live peak.
  */
 export function computeActiveUsageRpm(events: UsageEvent[]): {
   requests: number;
   activeMinutes: number;
-  /** RPM = requests / activeMinutes */
+  /** Peak RPM = busiest single minute's request count (live rows only) */
   rpm: number;
   /** RPS equivalent = rpm / 60 */
   rps: number;
-  method: "active_minutes_mean";
+  /** Average over active minutes (totalRequests / activeMinutes) */
+  meanRpm: number;
+  method: "peak_minute";
   unit: "req/min";
 } {
   let requests = 0;
+  // minute bucket → requests in it (peak is the max of these)
+  const perMinute = new Map<number, number>();
+  // Live requests only, kept separate so the mean below stays comparable to the
+  // old number while the peak ignores aggregated rollups.
+  const livePerMinute = new Map<number, number>();
+
   for (const e of events) {
     if (!e) continue;
-    requests += eventRequestCount(e);
+    const reqs = eventRequestCount(e);
+    requests += reqs;
+    const t = new Date(e.timestamp).getTime();
+    if (!Number.isFinite(t)) continue;
+    const m = Math.floor(t / 60_000);
+    perMinute.set(m, (perMinute.get(m) ?? 0) + reqs);
+    // Peak source: real per-call rows only (see doc comment above)
+    if (!e.estimated) {
+      livePerMinute.set(m, (livePerMinute.get(m) ?? 0) + reqs);
+    }
   }
-  const activeMinutes = countActiveMinutes(events);
-  const rpm = activeMinutes > 0 ? requests / activeMinutes : 0;
+
+  let rpm = 0;
+  for (const count of livePerMinute.values()) {
+    if (count > rpm) rpm = count;
+  }
+  const activeMinutes = perMinute.size;
+  const meanRpm = activeMinutes > 0 ? requests / activeMinutes : 0;
   return {
     requests,
     activeMinutes,
     rpm,
     rps: rpm / 60,
-    method: "active_minutes_mean",
+    meanRpm,
+    method: "peak_minute",
     unit: "req/min",
   };
+}
+
+/**
+ * Per-group PEAK RPM for the breakdown table and the chart's RPM mode.
+ *
+ * RPM here is the busiest single minute inside the group, expressed in
+ * requests/minute:
+ *
+ *   for each group g:  RPM_g = max over minute m in g of ( requests in m )
+ *
+ * A minute is a calendar minute (floor(ts / 60s)); all requests landing in the
+ * same calendar minute are summed, so a burst of 12 calls at 10:03:xx reads as
+ * 12 RPM regardless of how they are spread across those 60 seconds.
+ *
+ * This is a *peak* metric, so it answers "how fast did this bucket ever go",
+ * not "how fast did it average". An idle hour therefore reports the rate of its
+ * own busiest minute rather than being diluted toward zero, and a day-based
+ * chart shows each day's busiest minute.
+ *
+ * Estimated daily rollups are ALWAYS excluded, even for the table. A rollup
+ * carries a whole day's request count under one timestamp, so its "minute" is
+ * fiction: including it collapsed a day into one minute and produced a fake
+ * 4692 req/min peak (verified). Only real per-call rows have timestamps that
+ * mean "this request happened then", which is what a per-minute peak needs.
+ * Groups with no live rows therefore get no entry and render as "—".
+ *
+ * Returns a Map keyed by the same key used by `groupKey()`, so callers can
+ * attach it straight onto GroupRow.rpm.
+ *
+ * `scope` decides whether zero-token / zero-cost probes count:
+ *
+ * - "table" (default) — probes count, matching the group's Requests column,
+ *   which has no token filter. Keeps the two adjacent columns consistent.
+ * - "live" — probes dropped, matching the live rate used elsewhere.
+ */
+export function rpmByGroup(
+  events: UsageEvent[],
+  by: GroupBy,
+  timestampsMs?: number[] | null,
+  scope: "table" | "live" = "table",
+): Map<string, number> {
+  const n = events.length;
+  const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
+  // key → (minute bucket → requests in that minute). The peak is resolved at the
+  // end so we only keep per-minute counters instead of every event.
+  const acc = new Map<string, Map<number, number>>();
+
+  for (let i = 0; i < n; i++) {
+    const e = events[i]!;
+    if (!e) continue;
+    // Aggregated rollups have no trustworthy minute — always excluded.
+    if (e.estimated) continue;
+    const t = useTs ? timestampsMs![i]! : Date.parse(e.timestamp);
+    if (!Number.isFinite(t)) continue;
+    // Zero-token / zero-cost probes are not billable usage, so they are dropped
+    // from the live rate. In "table" scope they must still be counted, because
+    // the Requests column next to RPM counts them too (eventCount has no
+    // token filter) — otherwise the two columns disagree.
+    if (scope === "live") {
+      const tok =
+        (Number(e.inputTokens) || 0) +
+        (Number(e.outputTokens) || 0) +
+        (Number(e.cacheReadTokens) || 0) +
+        (Number(e.cacheWriteTokens) || 0);
+      if (tok <= 0 && !(Number(e.estimatedCost) > 0)) continue;
+    }
+
+    const key = groupKey(e, by, t);
+    let minutes = acc.get(key);
+    if (!minutes) {
+      minutes = new Map<number, number>();
+      acc.set(key, minutes);
+    }
+    const minute = Math.floor(t / 60_000);
+    minutes.set(minute, (minutes.get(minute) ?? 0) + eventRequestCount(e));
+  }
+
+  const out = new Map<string, number>();
+  for (const [key, minutes] of acc) {
+    let peak = 0;
+    for (const count of minutes.values()) {
+      if (count > peak) peak = count;
+    }
+    out.set(key, peak);
+  }
+  return out;
 }
 
 export function computeLiveRequestRate(

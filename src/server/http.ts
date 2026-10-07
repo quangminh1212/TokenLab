@@ -30,6 +30,7 @@ import {
   loadScanCache,
   dropPreviousAgentSourceEvents,
   dropPreviousAgentSessionEvents,
+  pruneStaleSourceEvents,
   mergeEventsByIdPreferRicher,
   mergeLocalPreferOverGistRollups,
   migrateLegacyDataDir,
@@ -578,6 +579,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           return true;
         });
       };
+      /**
+       * Baseline for the high-water guard: previous rows, minus anything the
+       * current scan has just re-parsed.
+       *
+       * Pruning by (agent, sourcePath) is what stops a parser change from being
+       * undone by the guard. When ids change (session rows split per minute), the
+       * old rows have no fresh counterpart, so the union would keep them and
+       * enforceMonotonicAgentDays would restore them as "richer" history — the
+       * bug that kept serving a stale 3135 req/min row through full rescans.
+       */
+      const monotonicBaseline = (scanned: UsageEvent[]): UsageEvent[] =>
+        pruneStaleSourceEvents(previousForMonotonic(), scanned);
 
       const rebuild = (finalize = false): void => {
         const unchangedPrev = full
@@ -600,20 +613,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
           // Never let a thinner rescan shrink per-agent day totals vs previous cache.
-          // Source/session replacements are filtered explicitly below; full
-          // agent rescans still retain prev as the high-water comparison baseline.
-          scanned = enforceMonotonicAgentDays(
-            dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(
-                dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
-                scanned,
-                "opencode",
-              ),
-              scanned,
-              "grok",
-            ),
-            scanned,
-          );
+          // The baseline is previous rows PRUNED of everything this scan re-parsed,
+          // so stale rows from a changed parser id can never be restored as
+          // "richer history". Full agent rescans still compare against genuinely
+          // untouched days.
+          scanned = enforceMonotonicAgentDays(monotonicBaseline(scanned), scanned);
           scanned = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(scanned)),
           );
@@ -623,18 +627,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         let merged = mergeLocalPreferOverGistRollups(scanned, importedEvents);
         if (finalize) {
           merged = dropLegacyCodexProxyAttributions(merged);
-          merged = enforceMonotonicAgentDays(
-            dropPreviousAgentSessionEvents(
-              dropPreviousAgentSourceEvents(
-                dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
-                merged,
-                "opencode",
-              ),
-              merged,
-              "openclaw",
-            ),
-            merged,
-          );
+          merged = enforceMonotonicAgentDays(monotonicBaseline(merged), merged);
           merged = collapseExactUsageDuplicates(
             collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
           );
@@ -1018,7 +1011,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           const { events, timestampsMs } = eventsInPeriodDetailed(since, until);
           writeHeartbeat();
           const stats = aggregate(events, groupBy, sort, since, until, timestampsMs);
-          // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
+          // Period RPM: busiest single minute in the period (peak, not a mean)
           const usageRpm = computeActiveUsageRpm(events);
           periodPart = { stats, usageRpm };
         }
