@@ -192,6 +192,19 @@ async function parseCodexInternal(
 
   for (const root of orderRootsCanonicalFirst(roots)) {
     if (!(await pathExists(root))) continue;
+    // The Orca runtime home mirrors ~/.codex, including gigabytes of copies.
+    // Light scans read the canonical tree only; the 6h full scan still sees both.
+    if (options.recentOnly && isMirrorCodexRoot(root)) {
+      let canonical = false;
+      for (const other of roots) {
+        if (other === root || isMirrorCodexRoot(other)) continue;
+        if (await pathExists(other)) {
+          canonical = true;
+          break;
+        }
+      }
+      if (canonical) continue;
+    }
 
     // Newer Codex: SQLite state (threads + tokens_used) even when sessions/ is empty
     if (!options.recentOnly) {

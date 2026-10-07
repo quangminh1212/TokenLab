@@ -1,6 +1,7 @@
 import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
@@ -718,6 +719,96 @@ function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+/**
+ * Last light-scan fingerprint per root set. Missing until that home is read
+ * once. Later ticks with the same files return [] and the server keeps the
+ * cached history. Keyed by roots so two homes do not erase each other.
+ */
+const hermesLightStampByRoot = new Map<string, string>();
+
+const HERMES_DB_NAMES = ["state.db", "hermes.db", "sessions.db"];
+
+async function stampFile(file: string, parts: string[]): Promise<void> {
+  try {
+    const st = await stat(file);
+    parts.push(`${file}|${st.size}|${Math.floor(st.mtimeMs)}`);
+  } catch {
+    /* missing */
+  }
+}
+
+/**
+ * Fingerprint live Hermes inputs without reading them.
+ * Includes the SQLite WAL (writes often land there before state.db's mtime
+ * moves) and session JSON size/mtime. Skips -shm: opening the DB for read
+ * rewrites it, which would force a parse every tick.
+ */
+async function hermesSourceStamp(roots: string[]): Promise<string> {
+  const parts: string[] = [];
+  for (const root of roots) {
+    if (!(await pathExists(root))) continue;
+    for (const name of HERMES_DB_NAMES) {
+      await stampFile(path.join(root, name), parts);
+      await stampFile(path.join(root, `${name}-wal`), parts);
+    }
+    const profiles = path.join(root, "profiles");
+    if (await pathExists(profiles)) {
+      let entries: import("node:fs").Dirent[] = [];
+      try {
+        entries = await readdir(profiles, { withFileTypes: true });
+      } catch {
+        entries = [];
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        for (const name of HERMES_DB_NAMES) {
+          const db = path.join(profiles, entry.name, name);
+          await stampFile(db, parts);
+          await stampFile(`${db}-wal`, parts);
+        }
+      }
+    }
+    const sessionsDir = path.join(root, "sessions");
+    if (await pathExists(sessionsDir)) {
+      const files = await walkFiles(sessionsDir, {
+        maxDepth: 6,
+        match: (n) => n.endsWith(".jsonl") || (n.includes("session") && n.endsWith(".json")),
+      });
+      let bytes = 0;
+      let maxMtime = 0;
+      for (const file of files) {
+        try {
+          const st = await stat(file);
+          bytes += st.size;
+          if (st.mtimeMs > maxMtime) maxMtime = st.mtimeMs;
+        } catch {
+          /* file vanished mid-stamp */
+        }
+      }
+      parts.push(`sessions:${root}|${files.length}|${bytes}|${Math.floor(maxMtime)}`);
+    }
+  }
+  parts.sort();
+  return parts.join("\n");
+}
+
+/**
+ * Minute scan. Unchanged files return no rows so the server keeps the cached
+ * history (including snapshot DBs already loaded by a full scan). A changed
+ * DB or session file runs the full parser, which remains the complete read.
+ */
+export async function parseHermesLight(roots: string[]): Promise<UsageEvent[]> {
+  const rootKey = roots
+    .map((root) => path.resolve(root).toLowerCase())
+    .sort()
+    .join("|");
+  const stamp = await hermesSourceStamp(roots);
+  if (hermesLightStampByRoot.get(rootKey) === stamp) return [];
+  const events = await parseHermes(roots);
+  hermesLightStampByRoot.set(rootKey, stamp);
+  return events;
+}
+
 export const agent: AgentModule = {
   id: "hermes",
   label: "Hermes Agent",
@@ -733,4 +824,5 @@ export const agent: AgentModule = {
     ]);
   },
   parse: parseHermes,
+  parseLight: parseHermesLight,
 };

@@ -21,6 +21,12 @@ type DshEvent = Record<string, unknown> & {
 const SESSION_FILE = /^session(?:\.v(\d+))?\.jsonl(?:\.zstd)?$/i;
 const ZSTD_MAGIC = 0xfd2fb528;
 const LIGHT_HISTORY_MS = 30 * 24 * 60 * 60 * 1_000;
+/** Unchanged session files are not decompressed again on the next minute tick. */
+const dshLightSig = new Map<string, string>();
+
+function dshSigKey(file: string): string {
+  return process.platform === "win32" ? file.toLowerCase() : file;
+}
 
 interface ZstdFrameRange {
   start: number;
@@ -262,7 +268,38 @@ export async function parseDsh(roots: string[]): Promise<UsageEvent[]> {
 
 async function parseDshLight(roots: string[]): Promise<UsageEvent[]> {
   const cutoff = Date.now() - LIGHT_HISTORY_MS;
-  const events = await parseDshFiles(roots, cutoff);
+  const files = await latestSessionFiles(roots, cutoff);
+  const changed: Array<{ file: string; key: string; sig: string }> = [];
+  for (const file of files) {
+    let sig = "";
+    try {
+      const st = await stat(file);
+      sig = `${st.size}|${Math.trunc(st.mtimeMs)}`;
+    } catch {
+      continue;
+    }
+    const key = dshSigKey(file);
+    if (dshLightSig.get(key) === sig) continue;
+    changed.push({ file, key, sig });
+  }
+  if (changed.length === 0) return [];
+
+  const decompress = (zlib as unknown as ZstdApi).zstdDecompressSync;
+  if (changed.some((item) => item.file.toLowerCase().endsWith(".zstd")) && !decompress) {
+    throw new Error("Reading DSH .zstd sessions requires Node.js 22.15 or newer");
+  }
+
+  const events: UsageEvent[] = [];
+  for (const item of changed) {
+    try {
+      events.push(...(await parseSessionFile(item.file, decompress)));
+      dshLightSig.set(item.key, item.sig);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("requires Node.js")) {
+        throw error;
+      }
+    }
+  }
   return events.filter((event) => Date.parse(event.timestamp) >= cutoff);
 }
 
