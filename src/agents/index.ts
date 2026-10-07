@@ -220,91 +220,12 @@ export function dedupeMirroredOpenClawEvents(
 }
 
 /**
- * DeepSeek Harness can record the same LiteLLM request as its local session
- * event log. Attribute close per-call matches to DSH and keep LiteLLM's cost.
+ * Previously reconciled DSH session rows against LiteLLM proxy rows by matching
+ * model + token shape within a 1 second window. Removed: LiteLLM is an
+ * independent source and its usage is added as-is. The 1s window never matched
+ * real pairs anyway (they land ~330-370s apart), so the only effect was a silent
+ * coupling between two unrelated agents.
  */
-export function dedupeMirroredDshLiteLlmEvents(
-  dshEvents: UsageEvent[],
-  liteLlmEvents: UsageEvent[],
-): { dshEvents: UsageEvent[]; liteLlmEvents: UsageEvent[] } {
-  if (dshEvents.length === 0 || liteLlmEvents.length === 0) {
-    return { dshEvents, liteLlmEvents };
-  }
-
-  const fingerprint = (event: UsageEvent): string | null => {
-    if ((event.requestCount ?? 1) !== 1 || !event.model) return null;
-    const fullInput = event.inputTokens + event.cacheReadTokens + event.cacheWriteTokens;
-    return [
-      event.model.trim().toLowerCase(),
-      fullInput,
-      event.outputTokens,
-      event.totalTokens,
-    ].join("|");
-  };
-
-  const byFingerprint = new Map<string, Array<{ index: number; timestamp: number }>>();
-  for (let index = 0; index < dshEvents.length; index += 1) {
-    const event = dshEvents[index]!;
-    const key = fingerprint(event);
-    const timestamp = Date.parse(event.timestamp);
-    if (!key || !Number.isFinite(timestamp)) continue;
-    const rows = byFingerprint.get(key) ?? [];
-    rows.push({ index, timestamp });
-    byFingerprint.set(key, rows);
-  }
-
-  const matchedDsh = new Set<number>();
-  const attributedDsh = [...dshEvents];
-  const remainingLiteLlm: UsageEvent[] = [];
-  for (const liteLlmEvent of liteLlmEvents) {
-    const key = fingerprint(liteLlmEvent);
-    const timestamp = Date.parse(liteLlmEvent.timestamp);
-    if (!key || !Number.isFinite(timestamp)) {
-      remainingLiteLlm.push(liteLlmEvent);
-      continue;
-    }
-    const candidates = byFingerprint.get(key);
-    if (!candidates) {
-      remainingLiteLlm.push(liteLlmEvent);
-      continue;
-    }
-
-    let match: (typeof candidates)[number] | undefined;
-    let matchDelta = 1_001;
-    for (const candidate of candidates) {
-      if (matchedDsh.has(candidate.index)) continue;
-      const delta = Math.abs(timestamp - candidate.timestamp);
-      if (delta <= 1_000 && delta < matchDelta) {
-        match = candidate;
-        matchDelta = delta;
-      }
-    }
-    if (!match) {
-      remainingLiteLlm.push(liteLlmEvent);
-      continue;
-    }
-
-    matchedDsh.add(match.index);
-    const dshEvent = attributedDsh[match.index]!;
-    const hasUsableLiteLlmPrice =
-      liteLlmEvent.estimatedCost != null &&
-      (liteLlmEvent.pricingStatus === "priced" || liteLlmEvent.pricingStatus === "estimated");
-    if (hasUsableLiteLlmPrice) {
-      attributedDsh[match.index] = {
-        ...dshEvent,
-        estimatedCost: liteLlmEvent.estimatedCost,
-        currency: liteLlmEvent.currency || dshEvent.currency,
-        pricingStatus: liteLlmEvent.pricingStatus,
-        estimated: liteLlmEvent.estimated,
-      };
-    }
-  }
-
-  return {
-    dshEvents: attributedDsh,
-    liteLlmEvents: remainingLiteLlm,
-  };
-}
 
 /**
  * Scan all enabled agents. Runs parsers in parallel (bounded concurrency) so a
@@ -389,19 +310,13 @@ export async function scanAll(
       all.filter((event) => event.agent === "hermes"),
     ),
   );
-  const reconciledDsh = dedupeMirroredDshLiteLlmEvents(
-    all.filter((event) => event.agent === "dsh"),
-    all.filter((event) => event.agent === "litellm"),
-  );
-  const dshById = new Map(reconciledDsh.dshEvents.map((event) => [event.id, event]));
-  const liteLlmIds = new Set(reconciledDsh.liteLlmEvents.map((event) => event.id));
-  return all
-    .map((event) => dshById.get(event.id) ?? event)
-    .filter(
-      (event) =>
-        (event.agent !== "openclaw" || retainedOpenClaw.has(event)) &&
-        (event.agent !== "litellm" || liteLlmIds.has(event.id)),
-    );
+  // LiteLLM is an independent source of truth and is added as-is. DeepSeek
+  // Harness can log the same proxied request in its own session files, but the
+  // two sources are reported separately by design — do NOT reconcile them here.
+  // A previous revision did, keyed on a 1s timestamp window, which never matched
+  // real pairs anyway (they land ~330-370s apart) while adding a silent
+  // dependency between two unrelated agents.
+  return all.filter((event) => event.agent !== "openclaw" || retainedOpenClaw.has(event));
 }
 
 export async function detectAgents(events: UsageEvent[] = []): Promise<AgentStatus[]> {

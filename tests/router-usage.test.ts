@@ -378,8 +378,11 @@ describe("router usage parsers", () => {
       );
       const events = await parseRouterUsage([dir], "litellm");
       assert.ok(events.length >= n * 0.9, `expected ~${n} RQs, got ${events.length}`);
+      // Near-complete history must be kept as individual requests (real
+      // timestamps), not collapsed into one daily blob. The day-level cost row is
+      // always estimated by design, so count the rows that carry real tokens.
       assert.ok(
-        events.filter((e) => !e.estimated).length >= n * 0.9,
+        events.filter((e) => e.totalTokens > 0).length >= n * 0.9,
         "near-complete history should not collapse to daily rollups only",
       );
       // Local Today starting 17:00Z (UTC+7 midnight) must include post-noon spill RQs
@@ -388,6 +391,12 @@ describe("router usage parsers", () => {
       assert.ok(
         inToday.length >= 8,
         `expected post-17:00Z RQs in local Today, got ${inToday.length}`,
+      );
+      // Cost still comes from the router's daily total, exactly once.
+      const cost = events.reduce((a, e) => a + (e.estimatedCost || 0), 0);
+      assert.ok(
+        Math.abs(cost - n * 0.01) < 0.01,
+        `day cost must equal the router daily total ${(n * 0.01).toFixed(2)}, got ${cost}`,
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -806,6 +815,164 @@ describe("router usage parsers", () => {
       const t = new Date(pickle!.timestamp).getTime();
       assert.ok(Number.isFinite(t));
       assert.ok(t <= Date.now() + 1000, `daily ts must not be in the future: ${pickle!.timestamp}`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a day's cost identical whether history or daily wins (no flip-flop)", async () => {
+    // Regression: a LiteLLM mirror whose history covered 94.78% of the daily
+    // tokens fell on the daily branch (~$7,328); once the tail grew past the old
+    // 95% line it switched to the history branch (~$6,946). Same calendar day,
+    // two different totals depending on when the dashboard was opened.
+    // A history-backed day must now be cost-true-up'd to daily.cost.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const DAY = "2026-10-06";
+    const DAILY_COST = 7327.8158;
+    const DAY_TOK = 722_510_898;
+
+    const run = async (historyTokenRatio: number, label: string) => {
+      const dir = await mkdtemp(path.join(tmpdir(), `xlab-trueup-${label}-`));
+      try {
+        // 40 real requests whose costs deliberately do NOT sum to the daily cost.
+        const n = 40;
+        const perReqTok = Math.floor((DAY_TOK * historyTokenRatio) / n);
+        const history = Array.from({ length: n }, (_, i) => ({
+          id: `${label}-${i}`,
+          timestamp: `${DAY}T0${i % 10}:${String(i).padStart(2, "0")}:00.000Z`,
+          model_group: "claude-fable-5",
+          provider: "openai",
+          promptTokens: perReqTok - 10,
+          completionTokens: 10,
+          cachedTokens: 0,
+          // sums to ~$6,946 regardless of ratio: the shortfall is the point
+          cost: 6945.988528000015 / n,
+          tokens: { prompt_tokens: perReqTok - 10, completion_tokens: 10 },
+        }));
+        await writeFile(
+          path.join(dir, "usage-history.jsonl"),
+          history.map((r) => JSON.stringify(r)).join("\n") + "\n",
+          "utf8",
+        );
+        await writeFile(
+          path.join(dir, "usage-daily.json"),
+          JSON.stringify({
+            [DAY]: {
+              requests: n,
+              promptTokens: DAY_TOK - n * 10,
+              completionTokens: n * 10,
+              cachedTokens: 0,
+              cost: DAILY_COST,
+              byModel: {
+                "claude-fable-5|openai": {
+                  requests: n,
+                  promptTokens: DAY_TOK - n * 10,
+                  completionTokens: n * 10,
+                  cachedTokens: 0,
+                  cost: DAILY_COST,
+                  rawModel: "claude-fable-5",
+                  provider: "openai",
+                },
+              },
+            },
+          }),
+          "utf8",
+        );
+        const events = await parseRouterUsage([dir], "litellm");
+        const dayRows = events.filter((e) => e.timestamp.startsWith(DAY));
+        const cost = dayRows.reduce((a, e) => a + (e.estimatedCost || 0), 0);
+        const reqs = dayRows.reduce(
+          (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
+          0,
+        );
+        return { cost, reqs, rows: dayRows.length };
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    };
+
+    // Below the coverage line → daily rollup branch; above → history branch.
+    const low = await run(0.9478, "low");
+    const high = await run(0.99, "high");
+
+    for (const [label, r] of [["low", low], ["high", high]] as const) {
+      assert.ok(
+        Math.abs(r.cost - DAILY_COST) < 0.01,
+        `${label}: day cost must equal daily.cost, got ${r.cost} (want ${DAILY_COST})`,
+      );
+    }
+    // The whole point: the two branches agree on the displayed day total.
+    assert.ok(
+      Math.abs(low.cost - high.cost) < 0.01,
+      `branches disagree: low=${low.cost} high=${high.cost}`,
+    );
+  });
+
+  it("does not double-count one real model split across byModel keys", async () => {
+    // Regression (real LiteLLM data, 2026-10-06): a single Claude-Fable model is
+    // exported twice — once as `anthropic/claude-fable-5|openai` (rawModel
+    // openai/Claude-Fable) and once as `openai/Claude-Fable|openai` (same
+    // rawModel). Walking byModel per raw key summed BOTH, so the day came out at
+    // $14,956 against a router day total of $7,328 (~2.04x).
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-litellm-split-"));
+    try {
+      const DAY = "2026-10-06";
+      const big = 7_299.789_740_000_005;
+      const small = 7_622.851_950_000_01;
+      // The router's own day total is the SUM of the two fragments' real value,
+      // i.e. the two rows describe one model, so the true day cost is ~$7,328,
+      // not big+small.
+      const dayCost = 7_327.815_758_000_002_5;
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: 6117,
+            promptTokens: 719_698_289,
+            completionTokens: 2_812_609,
+            cachedTokens: 0,
+            cost: dayCost,
+            byModel: {
+              "anthropic/claude-fable-5|openai": {
+                requests: 5974,
+                promptTokens: 700_000_000,
+                completionTokens: 2_700_000,
+                cachedTokens: 0,
+                cost: big,
+                rawModel: "openai/Claude-Fable",
+                provider: "openai",
+              },
+              "openai/Claude-Fable|openai": {
+                requests: 6314,
+                promptTokens: 719_698_289 - 700_000_000,
+                completionTokens: 112_609,
+                cachedTokens: 0,
+                cost: small,
+                rawModel: "openai/Claude-Fable",
+                provider: "openai",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const events = await parseRouterUsage([dir], "litellm");
+      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+      const cost = rows.reduce((a, e) => a + (e.estimatedCost || 0), 0);
+      // Total must match the router day total, never the doubled fragment sum.
+      assert.ok(
+        Math.abs(cost - dayCost) < 0.01,
+        `day cost must equal router total ${dayCost}, got ${cost} (doubled would be ${(big + small).toFixed(2)})`,
+      );
+      // The provider-native model must be reported as ONE model, not two.
+      const models = [...new Set(rows.map((e) => e.model))];
+      assert.ok(
+        models.length <= 2,
+        `expected the split model to consolidate, got ${JSON.stringify(models)}`,
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
