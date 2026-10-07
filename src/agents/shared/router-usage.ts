@@ -341,132 +341,25 @@ function reconcileEventsAndDaily(
     const dayEvents = eventsByDay.get(dateKey) || [];
     const daily = mergedDaily.get(dateKey);
 
-    if (!daily) {
+    // History is the single source for a day it covers. Daily rollups exist in
+    // the same mirror exports (db.json carries usageData.dailySummary AND
+    // usageData.history; usage-daily.json is a third copy), so combining them
+    // counted a fully-covered day twice — 2.047x input / 2.045x requests on
+    // 2026-10-07, where history alone already matched day.requests exactly.
+    // Cost stays local: rows are priced by applyPricing from the rate table,
+    // never from the router's own `cost` field.
+    if (dayEvents.length > 0) {
       out.push(...dayEvents);
       continue;
     }
 
-    if (shouldPreferRequestEvents(dayEvents, daily.day)) {
-      // Keep individual RQs for RECENT EVENTS (real timestamps + real tokens), but
-      // the router's daily rollup stays the single source of truth for cost:
-      // per-request rows carry the cost of each SpendLog row, which does not add
-      // up to the router's own day total (dropped rows, rounding, cache tiers),
-      // so a day could display $6,946 or $7,328 depending on which branch won.
-      // Zeroing the request rows and posting the day's exact cost once removes
-      // that ambiguity entirely.
-      const gapFill = gapFillDailyDeficits(dateKey, daily.day, agent, daily.source, dayEvents);
-      const dayRows = [...dayEvents, ...gapFill];
-      out.push(...pinDayCostFromDaily(dateKey, daily.day, agent, daily.source, dayRows));
-      continue;
-    }
-
-    // Sparse or empty history → authoritative daily rollup
-    out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, dayEvents));
+    // No history at all for this day → the daily rollup is all we have.
+    if (!daily) continue;
+    out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, []));
   }
 
   return out;
 }
-
-/**
- * Prefer real request rows when we have a multi-RQ sample that covers a meaningful
- * slice of the day (count or tokens). A single stray history row must not replace
- * a full daily rollup.
- *
- * Never short-circuit on raw count alone: a 2MB history tail can have 20+ rows of one
- * model while daily still holds the rest of the day (other models / majority tokens).
- */
-function shouldPreferRequestEvents(
-  dayEvents: UsageEvent[],
-  day: Record<string, unknown>,
-): boolean {
-  const reqCount = dayEvents.length;
-  if (reqCount < 2) return false;
-
-  const dayReqTarget = num(day.requests);
-  const dayTok =
-    num(day.promptTokens ?? day.prompt_tokens) +
-    num(day.completionTokens ?? day.completion_tokens);
-  const dayCost = num(day.cost);
-  // Count multi-RQ daily rows if present (requestCount), else 1 per event
-  const histReq = dayEvents.reduce((a, e) => {
-    const n =
-      typeof e.requestCount === "number" && e.requestCount > 0
-        ? Math.floor(e.requestCount)
-        : 1;
-    return a + n;
-  }, 0);
-  const reqTok = dayEvents.reduce(
-    (a, e) => a + (Number(e.inputTokens) || 0) + (Number(e.outputTokens) || 0),
-    0,
-  );
-
-  // Near-complete request history that matches the daily envelope → keep RQs.
-  // LiteLLM mirrors export full SpendLogs days; real timestamps make local
-  // "Today" work (daily rollups stamped at noon UTC fall into "yesterday" for UTC+7).
-  //
-  // Stability rule (do not remove): the switch between history and daily must not
-  // hinge on a single tight threshold. A mirror tail that grows by a few rows
-  // flipped tokNear at 95% (e.g. 0.9478 → 0.9501) and the displayed day cost
-  // jumped between history's $6,946 and daily's $7,328 on the same day.
-  // So history is kept only at a solid coverage level; the ambiguous band in
-  // between falls back to the authoritative daily rollup, and every kept-history
-  // day is cost-true-up'd to daily in reconcileEventsAndDaily, which makes the
-  // day total identical either way.
-  const histCoversTokens = dayTok > 0 && reqTok >= dayTok * 0.98 && reqTok <= dayTok * 1.08;
-  const histCoversRequests =
-    dayReqTarget <= 0 || histReq >= dayReqTarget * 0.9;
-  if (histCoversTokens && histCoversRequests && histReq >= 2) {
-    return true;
-  }
-  // Both count and tokens near-exact (strictest) — still prefer RQs
-  if (
-    dayReqTarget >= 2 &&
-    histReq >= dayReqTarget * 0.98 &&
-    histReq <= dayReqTarget * 1.08 &&
-    dayTok > 0 &&
-    reqTok >= dayTok * 0.98 &&
-    reqTok <= dayTok * 1.08
-  ) {
-    return true;
-  }
-
-  // VPS dashboards (RouterLab :1212, 9router) use dailySummary as the day total.
-  // Whenever we have a substantial daily rollup, prefer it over request tails —
-  // partial/twin history was overshooting cost (e.g. $499 vs remote $146).
-  if (dayReqTarget >= 20 && dayTok >= 10_000) {
-    return false;
-  }
-
-  // History/RD twin copies often overshoot tiny dailies too.
-  if (dayTok > 0 && reqTok > dayTok * 1.05) return false;
-
-  // Zero-token stream probes (success / "say test") inflate RQ count while
-  // tokens stay inside the daily envelope — keep dailySummary (e.g. 1 not 35).
-  if (
-    dayReqTarget > 0 &&
-    reqCount > Math.max(dayReqTarget * 1.5, dayReqTarget + 5) &&
-    (dayTok <= 0 || reqTok <= dayTok * 1.05)
-  ) {
-    return false;
-  }
-
-  // Any billed/non-empty daily is SoT for that calendar day on remote dashboards.
-  if (dayReqTarget >= 1 && (dayCost > 0 || dayTok > 0) && reqCount > dayReqTarget * 1.25) {
-    return false;
-  }
-
-  const coverageByCount = dayReqTarget > 0 ? reqCount / dayReqTarget : 1;
-  const coverageByTok = dayTok > 0 ? reqTok / dayTok : 1;
-  // ≥15% of the day observed as real RQs → prefer split events over one model blob
-  return coverageByCount >= 0.15 || coverageByTok >= 0.15;
-}
-
-/**
- * When history is preferred but incomplete vs daily.byModel:
- *  - models absent from history → full daily model rollup
- *  - models present but fewer requests/tokens than daily → remainder rollup only
- * Request counts use daily `requests` so TOTAL REQUESTS is not stuck on history-row count.
- */
 
 /** One model's aggregated daily totals after key consolidation. */
 interface DailyModelTotals {
@@ -477,32 +370,36 @@ interface DailyModelTotals {
   cost: number;
   rawModel?: string;
   provider?: string;
+  /** Public display label for this group (also the map key). */
+  display?: string;
 }
 
 /**
- * Collapse a daily `byModel` map into one entry per real model.
+ * Collapse a daily `byModel` map into one entry per exported model group.
  *
- * LiteLLM/RouterLab export the same model under several `byModel` keys at once.
- * For 2026-10-06, one Claude-Fable model appeared as
- * `anthropic/claude-fable-5|openai` ($7,299.79, rawModel `openai/Claude-Fable`)
- * AND `openai/Claude-Fable|openai` ($7,622.85, same rawModel). Summing raw keys
- * gave $14,956 against a day total of $7,328 — a 2.04x overshoot. Anything that
- * walked `byModel` per raw key double-counted the day: gap-filling emitted both
- * rows, and expandOneDay's 98% sanity check then failed so the whole byModel got
- * discarded, silently changing the day total.
+ * LiteLLM exports the same day under several `byModel` keys that are NOT additive
+ * fragments — they are overlapping views of one another, so summing them double
+ * counts. Measured on the live mirror for 2026-10-05:
  *
- * Grouping must use `rawModel` (the provider-native id), not the display model:
- * normalization maps `claude-fable-5` and `Claude-Fable` to two different
- * strings even though they are the same model here. The display name kept for
- * the group is the one the dashboard already prefers (`routerModelFromRecord`),
- * falling back to the longest variant so a real name beats a fragment like "x".
+ *   anthropic/claude-fable-5|openai  in=470,461,648  req=4426
+ *   openai/Claude-Fable|openai       in=475,049,638  req=4533
+ *   day                              in=474,522,782  req=4674
+ *
+ * Both rows describe the whole day; their SUM is 945.5M / 8959 (~2x day), while
+ * the LARGER one alone is within 0.1% of the day. Same shape on 10-04 and 10-06.
+ * Keying by `rawModel` and taking the largest row therefore reconstructs a day,
+ * which summing either by raw key or by rawModel could not.
+ *
+ * Identity is `rawModel` (provider-native id). The display name must NOT be the
+ * identity: normalization maps `claude-fable-5` and `Claude-Fable` to different
+ * strings for one model, and two keys can also share one display label.
  */
 function groupDailyByModel(
   agent: AgentId,
   byModel: Record<string, unknown>,
 ): Map<string, DailyModelTotals> {
   interface Group extends DailyModelTotals {
-    /** Best display name seen for this raw model across all keys. */
+    /** Best display name seen for this group across all keys. */
     display: string;
   }
   const grouped = new Map<string, Group>();
@@ -510,40 +407,45 @@ function groupDailyByModel(
     if (!mraw || typeof mraw !== "object" || Array.isArray(mraw)) continue;
     const m = mraw as Record<string, unknown>;
     const model = routerModelFromRecord(agent, m, modelKey.split("|")[0] || modelKey) || "mixed";
-    // Prefer the provider-native id as the identity; fall back to display name.
-    const key =
-      (typeof m.rawModel === "string" && normalizeModelName(m.rawModel)) || model;
+    const rawModel = typeof m.rawModel === "string" && m.rawModel ? m.rawModel : model;
+    const key = normalizeModelName(rawModel) || rawModel;
+
+    const row = {
+      requests: num(m.requests),
+      promptTokens: num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens),
+      completionTokens: num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens),
+      cachedTokens: num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens),
+      cost: num(m.cost),
+      rawModel,
+      provider: typeof m.provider === "string" ? m.provider : undefined,
+      display: model,
+    };
 
     const prev = grouped.get(key);
     if (!prev) {
-      grouped.set(key, {
-        requests: num(m.requests),
-        promptTokens: num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens),
-        completionTokens: num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens),
-        cachedTokens: num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens),
-        cost: num(m.cost),
-        rawModel: typeof m.rawModel === "string" ? m.rawModel : undefined,
-        provider: typeof m.provider === "string" ? m.provider : undefined,
-        display: model,
-      });
+      grouped.set(key, row);
       continue;
     }
-    prev.requests += num(m.requests);
-    prev.promptTokens += num(m.promptTokens ?? m.prompt_tokens ?? m.inputTokens);
-    prev.completionTokens += num(m.completionTokens ?? m.completion_tokens ?? m.outputTokens);
-    prev.cachedTokens += num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens);
-    prev.cost += num(m.cost);
-    prev.rawModel ??= typeof m.rawModel === "string" ? m.rawModel : undefined;
-    prev.provider ??= typeof m.provider === "string" ? m.provider : undefined;
-    // Keep the most descriptive display label ("claude-fable-5" over "x").
-    if (model.length > prev.display.length) prev.display = model;
+    // Overlapping views of the same day → keep the most complete one, never sum.
+    const prevWeight = prev.promptTokens + prev.completionTokens + prev.cachedTokens;
+    const nextWeight = row.promptTokens + row.completionTokens + row.cachedTokens;
+    if (nextWeight > prevWeight) {
+      // Preserve the most descriptive label even when the numbers come from a
+      // less readable key.
+      grouped.set(key, {
+        ...row,
+        display: model.length > prev.display.length ? model : prev.display,
+      });
+    } else if (model.length > prev.display.length) {
+      prev.display = model;
+    }
   }
 
-  // Key the result by the chosen display name so downstream model labels and
-  // stable ids keep using the readable model id.
+  // Key by the resolved raw model so downstream model labels, rate lookups and
+  // stable ids all agree on one identity per real model.
   const out = new Map<string, DailyModelTotals>();
-  for (const g of grouped.values()) {
-    out.set(g.display, {
+  for (const [key, g] of grouped) {
+    out.set(key, {
       requests: g.requests,
       promptTokens: g.promptTokens,
       completionTokens: g.completionTokens,
@@ -551,153 +453,10 @@ function groupDailyByModel(
       cost: g.cost,
       rawModel: g.rawModel,
       provider: g.provider,
+      display: g.display,
     });
   }
   return out;
-}
-
-function gapFillDailyDeficits(
-  dateKey: string,
-  day: Record<string, unknown>,
-  agent: AgentId,
-  source: string,
-  dayEvents: UsageEvent[],
-): UsageEvent[] {
-  const byModel = day.byModel;
-  if (!byModel || typeof byModel !== "object" || Array.isArray(byModel)) return [];
-
-  type Acc = { n: number; in: number; out: number; cache: number; cost: number };
-  const histByModel = new Map<string, Acc>();
-  for (const e of dayEvents) {
-    const model = normalizeModelName(e.model) || e.model || "";
-    if (!model) continue;
-    const prev = histByModel.get(model) || { n: 0, in: 0, out: 0, cache: 0, cost: 0 };
-    const reqs =
-      typeof e.requestCount === "number" && e.requestCount > 0 ? Math.floor(e.requestCount) : 1;
-    prev.n += reqs;
-    prev.in += Number(e.inputTokens) || 0;
-    prev.out += Number(e.outputTokens) || 0;
-    prev.cache += Number(e.cacheReadTokens) || 0;
-    prev.cost += Number(e.estimatedCost) || 0;
-    histByModel.set(model, prev);
-  }
-
-  const deficitByModel: Record<string, unknown> = {};
-  let sumReq = 0;
-  let sumIn = 0;
-  let sumOut = 0;
-  let sumCost = 0;
-
-  for (const [model, m] of groupDailyByModel(agent, byModel as Record<string, unknown>)) {
-    const modelKey = model;
-    const dailyReq = m.requests;
-    const dailyIn = m.promptTokens;
-    const dailyOut = m.completionTokens;
-    const dailyCache = m.cachedTokens;
-    const dailyCost = m.cost;
-    const hist = histByModel.get(model) || { n: 0, in: 0, out: 0, cache: 0, cost: 0 };
-
-    const remReq = Math.max(0, dailyReq - hist.n);
-    const remIn = Math.max(0, dailyIn - hist.in);
-    const remOut = Math.max(0, dailyOut - hist.out);
-    const remCache = Math.max(0, dailyCache - hist.cache);
-    const remCost = Math.max(0, dailyCost - hist.cost);
-
-    // Nothing left to attribute (include cache — history often has full prompt but 0 cache)
-    if (remReq <= 0 && remIn + remOut + remCache <= 0 && remCost <= 0) continue;
-    // History already covers req/I/O AND cache — skip only when cache deficit is also 0
-    if (
-      hist.n >= dailyReq &&
-      hist.in + hist.out >= dailyIn + dailyOut &&
-      remCache <= 0 &&
-      remCost <= 0 &&
-      dailyReq > 0
-    ) {
-      continue;
-    }
-
-    deficitByModel[modelKey] = {
-      requests: remReq > 0 ? remReq : hist.n === 0 ? Math.max(1, dailyReq) : 0,
-      promptTokens: remIn,
-      completionTokens: remOut,
-      cachedTokens: remCache,
-      cost: remCost,
-      rawModel: m.rawModel ?? model,
-      provider: m.provider,
-    };
-    sumReq += remReq > 0 ? remReq : 0;
-    sumIn += remIn;
-    sumOut += remOut;
-    sumCost += remCost;
-  }
-
-  if (Object.keys(deficitByModel).length === 0) return [];
-
-  return expandOneDay(
-    dateKey,
-    {
-      requests: sumReq,
-      promptTokens: sumIn,
-      completionTokens: sumOut,
-      cost: sumCost,
-      byModel: deficitByModel,
-    },
-    agent,
-    source,
-    dayEvents,
-  );
-}
-
-/**
- * Make the router's daily cost the only cost a day contributes.
- *
- * Called on the history-preferred branch. Request rows keep their real
- * timestamps and tokens (so RECENT EVENTS and local "Today" still work), but
- * their per-row `cost` is cleared and a single rollup row carries `day.cost`.
- * That row is reused from expandOneDay so ids stay stable across scans, and it
- * absorbs the day's request/ token deficit that gap-filling did not attribute.
- *
- * Why not keep the per-row costs: LiteLLM's per-request costs do not sum to the
- * router's day total (mirror drops rows, rounding, cache tiers), so the same
- * calendar day rendered as $6,946 or $7,328 depending on which branch won.
- * Cost is a day-level fact here, so it is written once, at day level.
- */
-function pinDayCostFromDaily(
-  dateKey: string,
-  day: Record<string, unknown>,
-  agent: AgentId,
-  source: string,
-  dayRows: UsageEvent[],
-): UsageEvent[] {
-  const dayCost = num(day.cost);
-  // No router cost for this day → leave the request rows' own costs untouched.
-  if (dayCost <= 0 || dayRows.length === 0) return dayRows;
-
-  for (const row of dayRows) {
-    if (Number(row.estimatedCost) !== 0) {
-      row.estimatedCost = 0;
-      row.pricingStatus = "estimated";
-      row.estimated = true;
-    }
-  }
-
-  // Reuse the day-level rollup row (stable id) to carry the authoritative cost.
-  const [costRow] = expandOneDay(dateKey, { ...day, cost: dayCost }, agent, source, dayRows);
-  if (!costRow) return dayRows;
-
-  // Tokens/requests are already covered by the request rows + gap-fill, so this
-  // row must not add any of them again — only the day's cost.
-  costRow.inputTokens = 0;
-  costRow.outputTokens = 0;
-  costRow.cacheReadTokens = 0;
-  costRow.cacheWriteTokens = 0;
-  costRow.totalTokens = 0;
-  costRow.requestCount = 0;
-  costRow.estimatedCost = dayCost;
-  costRow.pricingStatus = "estimated";
-  costRow.estimated = true;
-
-  return [...dayRows, costRow];
 }
 
 /**
@@ -1032,6 +791,9 @@ function expandOneDay(
     // groupDailyByModel), which discarded an otherwise valid byModel.
     for (const [model, m] of groupDailyByModel(agent, byModel as Record<string, unknown>)) {
       const modelKey = model;
+      // `model` is the raw export key (identity); show the readable label on the
+      // row so the dashboard groups two fragments of one model together.
+      const label = m.display || model;
       const provider = m.provider ?? null;
       const inputTokens = m.promptTokens;
       const outputTokens = m.completionTokens;
@@ -1052,7 +814,7 @@ function expandOneDay(
         {
           id: `daily:${dateKey}:${modelKey}`,
           timestamp: ts,
-          model,
+          model: label,
           provider,
           promptTokens: inputTokens,
           completionTokens: outputTokens,
@@ -1078,29 +840,52 @@ function expandOneDay(
         out.push(e);
       }
     }
-    // byModel is often incomplete vs day totals — only keep it when it covers
-    // ≥98% AND does not overshoot. Include cache so a complete byModel with
-    // cache is not discarded for missing top-level cache.
-    //
-    // The upper bound matters: a byModel whose fragments double-counted one
-    // model sums to ~2x dayCost, which passed the old lower-bound-only check and
-    // got accepted as the day total.
+    // Price per real model, not as one "mixed" blob: the local rate table is
+    // keyed by model, so collapsing a day into "mixed" makes every token
+    // unpricable (pricingStatus "unknown_model") and the day total meaningless.
+    // Where byModel does not cover the day, the remainder is emitted as its own
+    // row below rather than forcing the whole day into "mixed".
     const dayTok = dayInput + dayOutput + dayCache;
-    const costOk = dayCost <= 0 || (modelCost >= dayCost * 0.98 && modelCost <= dayCost * 1.02);
-    const tokOk =
-      dayTok <= 0 || (modelTokens + modelCache >= dayTok * 0.98 &&
-        modelTokens + modelCache <= dayTok * 1.02);
-    if (out.length && costOk && tokOk) return out;
+    if (out.length) {
+      const coveredReq = out.reduce((a, e) => a + (e.requestCount ?? 1), 0);
+      const coveredIn = out.reduce((a, e) => a + e.inputTokens, 0);
+      const coveredOut = out.reduce((a, e) => a + e.outputTokens, 0);
+      const coveredTok = modelTokens + modelCache;
+      const remReq = Math.max(0, num(day.requests) - coveredReq);
+      // Compare like with like: inputs against inputs, outputs against outputs.
+      // Using modelTokens (in+out) for the output remainder dropped real output
+      // tokens whenever a day had any mix of models.
+      const remIn = Math.max(0, dayInput - coveredIn);
+      const remOut = Math.max(0, dayOutput - coveredOut);
+      const remCache = Math.max(0, dayCache - modelCache);
+      // Nothing material left over → byModel is the whole day.
+      if (coveredTok >= dayTok * 0.98 && coveredTok <= dayTok * 1.02) return out;
+      const remainder = remainderRow(
+        dateKey,
+        agent,
+        source,
+        dayFallbackTs,
+        remReq,
+        remIn,
+        remOut,
+        remCache,
+        dayCost,
+        modelCost,
+      );
+      return remainder ? [...out, remainder] : out;
+    }
   }
 
-  // Authoritative day rollup (full prompt/completion/cache/cost for the calendar day)
+  // No usable byModel → emit the whole day as one row. The model stays
+  // "unattributed" rather than "mixed" so it is visibly unpriced instead of
+  // looking like a real model that happens to have no rate.
   if (dayInput + dayOutput + dayCache <= 0 && dayCost <= 0) return [];
   const dayRequests = num(day.requests);
   const e = rowToEvent(
     {
       id: `daily:${dateKey}:all`,
       timestamp: dayFallbackTs,
-      model: "mixed",
+      model: "unattributed",
       promptTokens: dayInput,
       completionTokens: dayOutput,
       cachedTokens: dayCache,
@@ -1121,6 +906,54 @@ function expandOneDay(
   e.estimated = true;
   e.requestCount = dayRequests > 0 ? dayRequests : 1;
   return [e];
+}
+
+/**
+ * Emit the slice of a day that `byModel` did not cover.
+ *
+ * Kept as a separate "unattributed" row so the per-model rows stay priceable
+ * (the rate table is keyed by model) instead of collapsing the whole day into
+ * one unpricable "mixed" blob. Returns null when there is nothing material left.
+ */
+function remainderRow(
+  dateKey: string,
+  agent: AgentId,
+  source: string,
+  timestamp: string,
+  requests: number,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens: number,
+  dayCost: number,
+  modelCost: number,
+): UsageEvent | null {
+  if (inputTokens + outputTokens + cacheReadTokens <= 0 && requests <= 0) return null;
+  const cost = Math.max(0, dayCost - modelCost);
+  const e = rowToEvent(
+    {
+      id: `daily:${dateKey}:unattributed`,
+      timestamp,
+      model: "unattributed",
+      promptTokens: inputTokens,
+      completionTokens: outputTokens,
+      cachedTokens: cacheReadTokens,
+      cost,
+      requests: requests > 0 ? requests : 1,
+      tokens: {
+        prompt_tokens: inputTokens,
+        completion_tokens: outputTokens,
+        cached_tokens: cacheReadTokens,
+      },
+    },
+    agent,
+    source,
+    `daily-${dateKey}-unattributed`,
+  );
+  if (!e) return null;
+  e.id = stableId(agent, "daily-rollup", dateKey, "unattributed");
+  e.estimated = true;
+  e.requestCount = requests > 0 ? requests : 1;
+  return e;
 }
 
 async function parseHistoryExport(file: string, agent: AgentId): Promise<UsageEvent[]> {

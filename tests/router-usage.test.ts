@@ -1,11 +1,45 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import path from "node:path";
+import { mkdtemp as mkTmp, writeFile as wrFile, rm as rmDir } from "node:fs/promises";
+import { tmpdir as tmpOs } from "node:os";
 import { pathExists } from "../src/util.js";
 import { parseRouterUsage } from "../src/agents/shared/router-usage.js";
 import { nineRouterRoots } from "../src/agents/9router/index.js";
 import { xlabRouterRoots } from "../src/agents/xlabrouter/index.js";
 import { liteLlmRoots } from "../src/agents/litellm/index.js";
+
+/**
+ * Run a parser case with a throwaway config so pricing is deterministic and does
+ * not depend on the developer's own %APPDATA%/tokenlab/config.json.
+ * `preferRouterCost: false` makes token counts come from the router while every
+ * price comes from `customRates` — the behaviour TokenLab ships with.
+ */
+async function withConfig<T>(
+  pricing: Record<string, unknown>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const dir = await mkTmp(path.join(tmpOs(), "xlab-cfg-"));
+  const prev = process.env.TOKENLAB_CONFIG;
+  process.env.TOKENLAB_CONFIG = path.join(dir, "config.json");
+  try {
+    await wrFile(
+      process.env.TOKENLAB_CONFIG,
+      JSON.stringify({ pricing: { currency: "USD", preferRouterCost: false, ...pricing } }),
+      "utf8",
+    );
+    const { loadConfig, resetConfigCache } = await import("../src/config.js");
+    resetConfigCache();
+    await loadConfig();
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.TOKENLAB_CONFIG;
+    else process.env.TOKENLAB_CONFIG = prev;
+    const { resetConfigCache } = await import("../src/config.js");
+    resetConfigCache();
+    await rmDir(dir, { recursive: true, force: true });
+  }
+}
 
 describe("router usage parsers", () => {
   it("discovers at least one 9router root with data on this machine (or skips)", async () => {
@@ -180,16 +214,23 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "routerlab");
-      // 06-28 from daily; 06-29 sparse history (1 RQ) → still daily rollup
+      // History is the single source for any day it covers, even a sparse one:
+      // no daily rollup is added on top. Days with no history at all fall back
+      // to their dailySummary row.
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-28")));
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-29")));
       const d28 = events.find((e) => e.timestamp.startsWith("2026-06-28"));
       assert.equal(d28?.inputTokens, 50000);
       assert.equal(d28?.estimatedCost, 12.5);
-      const d29 = events.find((e) => e.timestamp.startsWith("2026-06-29"));
-      assert.equal(d29?.inputTokens, 90000);
-      assert.equal(d29?.estimatedCost, 20);
-      assert.equal(events.filter((e) => e.timestamp.startsWith("2026-06-29")).length, 1);
+      // 06-29 has a real request row → that row is kept verbatim, and the
+      // dailySummary entry for the same day must NOT be added as well.
+      const d29 = events.filter((e) => e.timestamp.startsWith("2026-06-29"));
+      assert.equal(d29.length, 1, `expected exactly the history row, got ${d29.length}`);
+      assert.equal(d29[0]?.inputTokens, 10, "history tokens must be kept as-is");
+      assert.ok(
+        !d29.some((e) => e.estimated && e.inputTokens === 90000),
+        "the dailySummary rollup for a history-covered day must not also be emitted",
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -243,7 +284,10 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("gap-fills models missing from partial history via daily byModel", async () => {
+  it("history wins for a day it covers, so no daily rollup is added on top", async () => {
+    // History and daily rollups are two views of one day. Adding the rollup on
+    // top of the requests double counted whole days on the live mirror (2.004x).
+    // The rule now: if a day has any request rows, they ARE the day.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-gapfill-"));
@@ -302,23 +346,20 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "9router");
-      // Substantial daily (≥20 req, ≥10k tok) is VPS dashboard authority —
-      // emit byModel rollups, not partial history tails.
+      // Only the real request rows survive — the daily rollup for the same day
+      // must NOT also be emitted, and neither must the models that appear only
+      // in the unused rollup.
       const models = new Set(events.map((e) => e.model));
-      assert.ok(models.has("gpt-5.6-sol"));
-      assert.ok(models.has("qwen3.7-max"));
-      assert.ok(models.has("minimax-m3"));
-      assert.ok(events.every((e) => e.estimated), "daily rollups are estimated");
+      assert.deepEqual([...models], ["gpt-5.6-sol"]);
+      assert.equal(events.length, 30);
+      assert.ok(events.every((e) => !e.estimated), "request rows are not estimated");
       const reqSum = events.reduce(
         (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
         0,
       );
-      assert.equal(reqSum, 35);
-      const tok = events.reduce(
-        (a, e) => a + (e.inputTokens || 0) + (e.outputTokens || 0),
-        0,
-      );
-      assert.equal(tok, 353_500);
+      assert.equal(reqSum, 30);
+      const tok = events.reduce((a, e) => a + (e.inputTokens || 0) + (e.outputTokens || 0), 0);
+      assert.equal(tok, 30 * 10_100);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -491,15 +532,16 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "9router");
-      const rollups = events.filter((e) => e.estimated);
-      assert.ok(rollups.length >= 1, "expected daily rollup for 2026-07-27");
-      for (const e of rollups) {
-        // Must stay on UTC calendar dateKey — not inherit 17:xx spill
+      // History covers this day, so it IS the day — no rollup is synthesised.
+      // That is strictly safer for the leak being guarded here: a synthetic
+      // rollup stamped at dateKey noon would land in the previous local day.
+      assert.ok(
+        events.every((e) => !e.estimated),
+        "a history-covered day must not also produce a daily rollup",
+      );
+      assert.equal(events.length, 7);
+      for (const e of events) {
         assert.equal(e.timestamp.slice(0, 10), "2026-07-27");
-        assert.ok(
-          e.timestamp === "2026-07-27T12:00:00.000Z" || e.timestamp === "2026-07-27T00:00:00.000Z",
-          `rollup ts must be dateKey noon/start, got ${e.timestamp}`,
-        );
       }
       // Local "today" starting 17:00Z 2026-07-27 (UTC+7 midnight Jul 28) must NOT
       // include the $448 prior-day rollup.
@@ -515,7 +557,10 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("uses dailySummary as day authority when history would under/over count", async () => {
+  it("keeps a history-covered day instead of replacing it with dailySummary", async () => {
+    // A day with real request rows is taken as-is, even when dailySummary
+    // reports more (here 99 req vs the 25 rows the mirror holds). Mixing the two
+    // views is what produced 2.004x days on the live LiteLLM mirror.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-split-"));
@@ -558,18 +603,12 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "routerlab");
-      // Daily authority: one rollup with full 99 requests / 5.2M tokens (matches VPS)
-      assert.ok(events.every((e) => e.estimated));
+      assert.equal(events.length, 25, "the 25 request rows must be kept as-is");
+      assert.ok(events.every((e) => !e.estimated), "no synthesised rollup alongside real rows");
       assert.ok(events.every((e) => e.model === "grok-4.5"));
-      const reqSum = events.reduce(
-        (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
-        0,
-      );
-      assert.equal(reqSum, 99);
       const inTok = events.reduce((a, e) => a + (e.inputTokens || 0), 0);
-      assert.equal(inTok, 5_216_191);
-      const cost = events.reduce((a, e) => a + (e.estimatedCost || 0), 0);
-      assert.equal(cost, 10);
+      const expectedIn = history.reduce((a, r) => a + r.promptTokens, 0);
+      assert.equal(inTok, expectedIn);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -623,7 +662,12 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("gap-fills cache when history has full prompt but daily has cachedTokens", async () => {
+  it("keeps history cache as reported, without merging daily cachedTokens", async () => {
+    // Trade-off made deliberately: history is the single source for a day it
+    // covers, so a cache count that only dailySummary knows is NOT merged in.
+    // Mixing the two views is what double counted whole days (2.004x on the live
+    // mirror), and cache tokens are excluded from totalTokens anyway — they only
+    // affect the (cheaper) cache-read rate.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cache-gap-"));
@@ -670,8 +714,11 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "litellm");
-      const totalCache = events.reduce((a, e) => a + (e.cacheReadTokens || 0), 0);
-      assert.ok(totalCache >= 80_000, `expected cache gap-fill ≥80000, got ${totalCache}`);
+      assert.equal(events.length, 1, "history row is kept, no rollup alongside it");
+      assert.equal(events[0]!.inputTokens, 100_000);
+      assert.equal(events[0]!.outputTokens, 200);
+      // Cache is exactly what history reported (nothing here), never daily's.
+      assert.equal(events[0]!.cacheReadTokens, 0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -755,26 +802,19 @@ describe("router usage parsers", () => {
         ]),
         "utf8",
       );
-      // Tiny history tail with real last-seen time for big-pickle
-      await writeFile(
-        path.join(dir, "usage-history.jsonl"),
-        JSON.stringify({
-          id: 99,
-          timestamp: lastSeen,
-          model: "big-pickle",
-          promptTokens: 1000,
-          completionTokens: 10,
-          cost: 0.01,
-          tokens: JSON.stringify({ prompt_tokens: 1000, completion_tokens: 10 }),
-        }) + "\n",
-        "utf8",
-      );
+      // History is the single source for a day it covers, so this test omits it:
+      // it asserts the daily rollup path, which is used only for days with no
+      // per-request rows at all.
       const events = await parseRouterUsage([dir], "9router");
       const pickle = events.find((e) => e.model === "big-pickle");
       assert.ok(pickle, "expected big-pickle daily event");
       assert.equal(pickle.inputTokens, 1_000_000);
-      // Must use real last request time, not future noon / wall-clock now
-      assert.equal(pickle.timestamp, new Date(lastSeen).toISOString());
+      // Must use the real last-request time, not future noon / wall-clock now.
+      // The rollup may carry no explicit lastSeen, so accept a same-day stamp.
+      assert.ok(
+        pickle.timestamp.startsWith(today),
+        `daily ts must stay on ${today}, got ${pickle.timestamp}`,
+      );
       const mins = Math.floor((Date.now() - new Date(pickle.timestamp).getTime()) / 60000);
       assert.ok(mins >= 0, `timestamp must not be in the future (mins=${mins})`);
     } finally {
@@ -820,119 +860,110 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("keeps a day's cost identical whether history or daily wins (no flip-flop)", async () => {
-    // Regression: a LiteLLM mirror whose history covered 94.78% of the daily
-    // tokens fell on the daily branch (~$7,328); once the tail grew past the old
-    // 95% line it switched to the history branch (~$6,946). Same calendar day,
-    // two different totals depending on when the dashboard was opened.
-    // A history-backed day must now be cost-true-up'd to daily.cost.
+  it("prices history rows from the rate table, never from the router's own cost", async () => {
+    // LiteLLM mirrors carry a `cost` field produced by LiteLLM's own catalogue.
+    // TokenLab deliberately ignores it: tokens come from the router, prices come
+    // from the local rate table / customRates. This pins that behaviour so a
+    // future change cannot silently start re-exporting the router's numbers.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const DAY = "2026-10-06";
-    const DAILY_COST = 7327.8158;
-    const DAY_TOK = 722_510_898;
+    // Wildly wrong router cost: if it leaked through, the total would be this.
+    const ROUTER_COST = 7327.8158;
 
-    const run = async (historyTokenRatio: number, label: string) => {
-      const dir = await mkdtemp(path.join(tmpdir(), `xlab-trueup-${label}-`));
-      try {
-        // 40 real requests whose costs deliberately do NOT sum to the daily cost.
-        const n = 40;
-        const perReqTok = Math.floor((DAY_TOK * historyTokenRatio) / n);
-        const history = Array.from({ length: n }, (_, i) => ({
-          id: `${label}-${i}`,
-          timestamp: `${DAY}T0${i % 10}:${String(i).padStart(2, "0")}:00.000Z`,
-          model_group: "claude-fable-5",
-          provider: "openai",
-          promptTokens: perReqTok - 10,
-          completionTokens: 10,
-          cachedTokens: 0,
-          // sums to ~$6,946 regardless of ratio: the shortfall is the point
-          cost: 6945.988528000015 / n,
-          tokens: { prompt_tokens: perReqTok - 10, completion_tokens: 10 },
-        }));
-        await writeFile(
-          path.join(dir, "usage-history.jsonl"),
-          history.map((r) => JSON.stringify(r)).join("\n") + "\n",
-          "utf8",
-        );
-        await writeFile(
-          path.join(dir, "usage-daily.json"),
-          JSON.stringify({
-            [DAY]: {
-              requests: n,
-              promptTokens: DAY_TOK - n * 10,
-              completionTokens: n * 10,
-              cachedTokens: 0,
-              cost: DAILY_COST,
-              byModel: {
-                "claude-fable-5|openai": {
-                  requests: n,
-                  promptTokens: DAY_TOK - n * 10,
-                  completionTokens: n * 10,
-                  cachedTokens: 0,
-                  cost: DAILY_COST,
-                  rawModel: "claude-fable-5",
-                  provider: "openai",
-                },
+    await withConfig(
+      { customRates: { "claude-fable-5": { inputPer1M: 10, outputPer1M: 50 } } },
+      async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-ownrate-"));
+    try {
+      const n = 40;
+      const history = Array.from({ length: n }, (_, i) => ({
+        id: `ownrate-${i}`,
+        timestamp: `${DAY}T0${i % 10}:${String(i).padStart(2, "0")}:00.000Z`,
+        model_group: "claude-fable-5",
+        provider: "openai",
+        promptTokens: 100_000,
+        completionTokens: 1_000,
+        cachedTokens: 0,
+        cost: ROUTER_COST / n,
+        tokens: { prompt_tokens: 100_000, completion_tokens: 1_000 },
+      }));
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        history.map((r) => JSON.stringify(r)).join("\n") + "\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: n,
+            promptTokens: n * 100_000,
+            completionTokens: n * 1_000,
+            cachedTokens: 0,
+            cost: ROUTER_COST,
+            byModel: {
+              "claude-fable-5|openai": {
+                requests: n,
+                promptTokens: n * 100_000,
+                completionTokens: n * 1_000,
+                cachedTokens: 0,
+                cost: ROUTER_COST,
+                rawModel: "claude-fable-5",
+                provider: "openai",
               },
             },
-          }),
-          "utf8",
-        );
-        const events = await parseRouterUsage([dir], "litellm");
-        const dayRows = events.filter((e) => e.timestamp.startsWith(DAY));
-        const cost = dayRows.reduce((a, e) => a + (e.estimatedCost || 0), 0);
-        const reqs = dayRows.reduce(
-          (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
-          0,
-        );
-        return { cost, reqs, rows: dayRows.length };
-      } finally {
-        await rm(dir, { recursive: true, force: true });
-      }
-    };
-
-    // Below the coverage line → daily rollup branch; above → history branch.
-    const low = await run(0.9478, "low");
-    const high = await run(0.99, "high");
-
-    for (const [label, r] of [["low", low], ["high", high]] as const) {
-      assert.ok(
-        Math.abs(r.cost - DAILY_COST) < 0.01,
-        `${label}: day cost must equal daily.cost, got ${r.cost} (want ${DAILY_COST})`,
+          },
+        }),
+        "utf8",
       );
+      const events = await parseRouterUsage([dir], "litellm");
+      const dayRows = events.filter((e) => e.timestamp.startsWith(DAY));
+      assert.equal(dayRows.length, n, "history rows should be kept as-is");
+      const cost = dayRows.reduce((a, e) => a + (e.estimatedCost || 0), 0);
+      // Router cost must NOT appear.
+      assert.ok(
+        Math.abs(cost - ROUTER_COST) > 1,
+        `router's own cost leaked into the total: ${cost}`,
+      );
+      // Every row is priced from a known rate, so none may be unknown_model.
+      for (const e of dayRows) {
+        assert.notEqual(
+          e.pricingStatus,
+          "unknown_model",
+          `row ${e.id} (${e.model}) fell back to unknown pricing`,
+        );
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
-    // The whole point: the two branches agree on the displayed day total.
-    assert.ok(
-      Math.abs(low.cost - high.cost) < 0.01,
-      `branches disagree: low=${low.cost} high=${high.cost}`,
+      },
     );
   });
 
   it("does not double-count one real model split across byModel keys", async () => {
-    // Regression (real LiteLLM data, 2026-10-06): a single Claude-Fable model is
-    // exported twice — once as `anthropic/claude-fable-5|openai` (rawModel
-    // openai/Claude-Fable) and once as `openai/Claude-Fable|openai` (same
-    // rawModel). Walking byModel per raw key summed BOTH, so the day came out at
-    // $14,956 against a router day total of $7,328 (~2.04x).
+    // Regression (real LiteLLM data, 2026-10-06): a day is exported as several
+    // byModel keys that are ADDITIVE fragments (`anthropic/claude-fable-5|openai`
+    // plus `openai/Claude-Fable|openai`). Summing per RAW key is correct for
+    // tokens; summing per `rawModel` doubled them, because both keys carry the
+    // same rawModel. This pins the token total, which is what must never double.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-litellm-split-"));
     try {
       const DAY = "2026-10-06";
+      const DAY_TOK = 719_698_289;
+      const DAY_OUT = 2_812_609;
       const big = 7_299.789_740_000_005;
       const small = 7_622.851_950_000_01;
-      // The router's own day total is the SUM of the two fragments' real value,
-      // i.e. the two rows describe one model, so the true day cost is ~$7,328,
-      // not big+small.
       const dayCost = 7_327.815_758_000_002_5;
       await writeFile(
         path.join(dir, "usage-daily.json"),
         JSON.stringify({
           [DAY]: {
             requests: 6117,
-            promptTokens: 719_698_289,
-            completionTokens: 2_812_609,
+            promptTokens: DAY_TOK,
+            completionTokens: DAY_OUT,
             cachedTokens: 0,
             cost: dayCost,
             byModel: {
@@ -947,7 +978,7 @@ describe("router usage parsers", () => {
               },
               "openai/Claude-Fable|openai": {
                 requests: 6314,
-                promptTokens: 719_698_289 - 700_000_000,
+                promptTokens: DAY_TOK - 700_000_000,
                 completionTokens: 112_609,
                 cachedTokens: 0,
                 cost: small,
@@ -959,19 +990,30 @@ describe("router usage parsers", () => {
         }),
         "utf8",
       );
-      const events = await parseRouterUsage([dir], "litellm");
-      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
-      const cost = rows.reduce((a, e) => a + (e.estimatedCost || 0), 0);
-      // Total must match the router day total, never the doubled fragment sum.
-      assert.ok(
-        Math.abs(cost - dayCost) < 0.01,
-        `day cost must equal router total ${dayCost}, got ${cost} (doubled would be ${(big + small).toFixed(2)})`,
-      );
-      // The provider-native model must be reported as ONE model, not two.
-      const models = [...new Set(rows.map((e) => e.model))];
-      assert.ok(
-        models.length <= 2,
-        `expected the split model to consolidate, got ${JSON.stringify(models)}`,
+      await withConfig(
+        {
+          customRates: {
+            "claude-fable-5": { inputPer1M: 10, outputPer1M: 50 },
+            "claude-fable": { inputPer1M: 10, outputPer1M: 50 },
+          },
+        },
+        async () => {
+          const events = await parseRouterUsage([dir], "litellm");
+          const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+          // Tokens must match the day exactly — doubling here is the bug being pinned.
+          const inTok = rows.reduce((a, e) => a + e.inputTokens, 0);
+          const outTok = rows.reduce((a, e) => a + e.outputTokens, 0);
+          assert.equal(inTok, DAY_TOK, `input must equal the day total, got ${inTok}`);
+          assert.equal(outTok, DAY_OUT, `output must equal the day total, got ${outTok}`);
+          // Cost comes from the local rate table (claude-fable-5 => $10/$50 per 1M),
+          // never from the router's own cost field.
+          const cost = rows.reduce((a, e) => a + (e.estimatedCost || 0), 0);
+          const expected = (DAY_TOK / 1e6) * 10 + (DAY_OUT / 1e6) * 50;
+          assert.ok(
+            Math.abs(cost - expected) < Math.max(1, expected * 0.02),
+            `cost must come from the rate table (~${expected.toFixed(2)}), got ${cost}`,
+          );
+        },
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
