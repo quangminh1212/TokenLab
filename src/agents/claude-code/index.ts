@@ -8,7 +8,13 @@ import {
   extractTokenBuckets,
   type TokenBuckets,
 } from "../shared/usage-fields.js";
-import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+import {
+  cachedCandidatesForFile,
+  pathExists,
+  readJsonlCached,
+  stableId,
+  walkFiles,
+} from "../../util.js";
 
 // Claude Code: ~/.claude/projects/<project>/<session>.jsonl
 // Assistant messages often include usage: { input_tokens, output_tokens, cache_* }.
@@ -124,49 +130,66 @@ export async function parseClaudeCode(roots: string[]): Promise<UsageEvent[]> {
   const seenUuids = new Set<string>();
 
   for (const file of files) {
-    const text = await readText(file);
-    if (!text) continue;
-    const rows = parseJsonl(text);
-    let rowIndex = 0;
-    for (const row of rows) {
-      rowIndex += 1;
-      if (!row || typeof row !== "object" || Array.isArray(row)) continue;
-      const r = row as JsonObject;
+    // Event-level cache: an unchanged session reuses its derived candidates
+    // instead of re-reading and re-parsing the log. Cross-file dedupe (uuid /
+    // requestKey) is re-applied on merge below, so a cached file stays correct
+    // even when another session is added or changed.
+    const fileCandidates = await cachedCandidatesForFile(file, async () => {
+      const rows = await readJsonlCached(file);
+      if (!rows) return [];
+      const local: UsageCandidate[] = [];
+      const localUuids = new Set<string>();
+      let rowIndex = 0;
+      for (const row of rows) {
+        rowIndex += 1;
+        if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+        const r = row as JsonObject;
 
-      // Exact replay assistant rows can appear when a session is resumed.
-      // Delay marking the UUID until after role/usage filtering so a metadata
-      // or user row cannot hide a later assistant usage row with the same UUID.
-      const uuid = asNonEmptyString(r.uuid);
-      if (uuid && seenUuids.has(uuid)) continue;
+        // Exact replay assistant rows can appear when a session is resumed.
+        // Delay marking the UUID until after role/usage filtering so a metadata
+        // or user row cannot hide a later assistant usage row with the same UUID.
+        const uuid = asNonEmptyString(r.uuid);
+        if (uuid && localUuids.has(uuid)) continue;
 
-      const message =
-        r.message && typeof r.message === "object" && !Array.isArray(r.message)
-          ? (r.message as JsonObject)
-          : r;
-      const rowType = asNonEmptyString(r.type);
-      const messageRole = asNonEmptyString(message.role);
-      if ((rowType && rowType !== "assistant") || (!rowType && messageRole && messageRole !== "assistant")) {
-        continue;
+        const message =
+          r.message && typeof r.message === "object" && !Array.isArray(r.message)
+            ? (r.message as JsonObject)
+            : r;
+        const rowType = asNonEmptyString(r.type);
+        const messageRole = asNonEmptyString(message.role);
+        if ((rowType && rowType !== "assistant") || (!rowType && messageRole && messageRole !== "assistant")) {
+          continue;
+        }
+
+        const usage =
+          message.usage && typeof message.usage === "object" && !Array.isArray(message.usage)
+            ? message.usage
+            : r.usage && typeof r.usage === "object" && !Array.isArray(r.usage)
+              ? r.usage
+              : null;
+        const buckets = extractTokenBuckets(usage);
+        if (!buckets) continue;
+        if (uuid) localUuids.add(uuid);
+
+        local.push({
+          file,
+          row: r,
+          message,
+          buckets,
+          requestKey: requestKeyFor(file, r, message, rowIndex),
+          rowIndex,
+        });
       }
+      return local;
+    });
 
-      const usage =
-        message.usage && typeof message.usage === "object" && !Array.isArray(message.usage)
-          ? message.usage
-          : r.usage && typeof r.usage === "object" && !Array.isArray(r.usage)
-            ? r.usage
-            : null;
-      const buckets = extractTokenBuckets(usage);
-      if (!buckets) continue;
-      if (uuid) seenUuids.add(uuid);
-
-      const candidate: UsageCandidate = {
-        file,
-        row: r,
-        message,
-        buckets,
-        requestKey: requestKeyFor(file, r, message, rowIndex),
-        rowIndex,
-      };
+    for (const candidate of fileCandidates) {
+      // Re-apply cross-file uuid / requestKey dedupe on every merge.
+      const uuid = asNonEmptyString(candidate.row.uuid);
+      if (uuid) {
+        if (seenUuids.has(uuid)) continue;
+        seenUuids.add(uuid);
+      }
       const previous = byRequest.get(candidate.requestKey);
       if (!previous || isRicherCandidate(candidate, previous)) {
         byRequest.set(candidate.requestKey, candidate);

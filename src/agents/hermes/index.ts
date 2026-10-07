@@ -4,8 +4,14 @@ import { pathEnv, unique } from "../shared/env.js";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
-import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
-import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
+import { num, pathExists, readJsonCached, readJsonlCached, stableId, walkFiles } from "../../util.js";
+import {
+  extractModel,
+  extractTimestamp,
+  extractTokenBuckets,
+  resolveSpanMs,
+  splitUsageRow,
+} from "../shared/usage-fields.js";
 
 /**
  * Hermes Agent (`%LOCALAPPDATA%/hermes` / `~/.hermes`):
@@ -113,24 +119,11 @@ async function discoverHermesDbPaths(root: string): Promise<{ primary: string[];
 
 async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
-  const text = await readText(file);
-  if (!text) return events;
-
-  // Skip error request dumps (no usage counters)
-  if (file.includes("request_dump_") && !text.includes("input_tokens") && !text.includes("usage")) {
-    return events;
-  }
-
-  const rows = file.endsWith(".jsonl")
-    ? parseJsonl(text)
-    : (() => {
-        try {
-          const d = JSON.parse(text);
-          return Array.isArray(d) ? d : [d];
-        } catch {
-          return [];
-        }
-      })();
+  // Cached by (size, mtime): unchanged files skip read + JSON.parse.
+  const rows: unknown[] = file.endsWith(".jsonl")
+    ? ((await readJsonlCached(file)) ?? [])
+    : ((await readJsonCached(file)) ?? []);
+  if (rows.length === 0) return events;
 
   let idx = 0;
   for (const row of rows) {
@@ -414,7 +407,10 @@ function readSessionModelUsage(
       const cost = pickHermesCost(row);
       const apiCalls = num(row.api_call_count);
 
-      const priced = applyPricing({
+      // Identity/metadata shared by both the single-row and split-row paths.
+      // Tokens, cost and timestamp are added per path so the split rows cannot
+      // accidentally inherit the whole session's totals.
+      const base = {
         id: stableId(
           "hermes",
           dbPath,
@@ -424,16 +420,71 @@ function readSessionModelUsage(
           String(buckets.inputTokens),
           String(buckets.outputTokens),
         ),
-        agent: "hermes",
+        agent: "hermes" as const,
         model,
-        timestamp: ts,
-        ...buckets,
         workspace: sessionCwd.get(sessionId) ?? null,
         sourcePath: dbPath,
-        ...(apiCalls > 0 ? { requestCount: Math.floor(apiCalls) } : {}),
-        ...(cost != null ? { routerCost: cost } : {}),
-      });
-      events.push(priced);
+      };
+
+      // This row is a per-model SESSION SUMMARY: one aggregate api_call_count for
+      // the whole session. Split it across the session's real first_seen→last_seen
+      // span so per-minute RPM and per-day attribution stay truthful. Without
+      // this, a 3135-call session spanning 25h was billed as 3135 req in the
+      // single minute of its last_seen timestamp (peak RPM 3135, all of it
+      // dumped into the wrong calendar day).
+      //
+      // splitUsageRow apportions every additive field (requests, tokens, cost)
+      // so the split rows sum back to the original totals instead of
+      // duplicating them once per minute.
+      const span = apiCalls > 0 ? resolveSpanMs(row.first_seen, row.last_seen) : null;
+      if (span && apiCalls > 0) {
+        const parts = splitUsageRow(
+          {
+            requestCount: apiCalls,
+            inputTokens: buckets.inputTokens,
+            outputTokens: buckets.outputTokens,
+            cacheReadTokens: buckets.cacheReadTokens,
+            cacheWriteTokens: buckets.cacheWriteTokens,
+            ...(cost != null ? { estimatedCost: cost } : {}),
+          },
+          apiCalls,
+          span[0],
+          span[1],
+        );
+        for (let p = 0; p < parts.length; p++) {
+          const part = parts[p]!;
+          const { estimatedCost, ...tokenPiece } = part;
+          events.push(
+            applyPricing({
+              ...base,
+              // Suffix keeps each split row distinct and stable across rescans.
+              id: parts.length > 1 ? `${base.id}-s${p}` : base.id,
+              // This row's share of the session's tokens ...
+              inputTokens: tokenPiece.inputTokens ?? 0,
+              outputTokens: tokenPiece.outputTokens ?? 0,
+              cacheReadTokens: tokenPiece.cacheReadTokens ?? 0,
+              cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
+              requestCount: tokenPiece.requestCount ?? 0,
+              timestamp: part.timestamp,
+              // ... and of its cost, passed as the router-reported cost so
+              // applyPricing does not re-price the whole session onto every row.
+              ...(cost != null && estimatedCost != null
+                ? { routerCost: estimatedCost }
+                : {}),
+            }),
+          );
+        }
+      } else {
+        events.push(
+          applyPricing({
+            ...base,
+            ...buckets,
+            timestamp: ts,
+            ...(cost != null ? { routerCost: cost } : {}),
+            ...(apiCalls > 0 ? { requestCount: Math.floor(apiCalls) } : {}),
+          }),
+        );
+      }
     }
   } catch {
     /* schema variance */
@@ -509,22 +560,71 @@ function readSessionsTable(
       const cost = pickHermesCost(row);
       const apiCalls = apiCol ? num(row[apiCol]) : 0;
 
-      events.push(
-        applyPricing({
-          id: stableId("hermes", dbPath, sid, String(inputTokens), String(outputTokens)),
-          agent: "hermes",
-          model,
-          timestamp,
-          inputTokens,
-          outputTokens,
-          cacheReadTokens,
-          cacheWriteTokens,
-          workspace,
-          sourcePath: dbPath,
-          ...(apiCalls > 0 ? { requestCount: Math.floor(apiCalls) } : {}),
-          ...(cost != null ? { routerCost: cost } : {}),
-        }),
-      );
+      const startCol = pick("started_at", "first_seen", "created_at", "start_time");
+      const endCol = pick("ended_at", "last_seen", "updated_at", "last_activity_at");
+      const base = {
+        id: stableId("hermes", dbPath, sid, String(inputTokens), String(outputTokens)),
+        agent: "hermes" as const,
+        model,
+        workspace,
+        sourcePath: dbPath,
+      };
+
+      // Same session-summary shape as above: split the aggregate call count over
+      // the session's real start→end span instead of stamping it all on one
+      // instant (which faked a huge per-minute peak). Tokens and cost are
+      // apportioned too, so the split rows sum back to the session totals.
+      const span =
+        apiCalls > 0 && startCol && endCol
+          ? resolveSpanMs(row[startCol], row[endCol])
+          : null;
+      if (span && apiCalls > 0) {
+        const parts = splitUsageRow(
+          {
+            requestCount: apiCalls,
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheWriteTokens,
+            ...(cost != null ? { estimatedCost: cost } : {}),
+          },
+          apiCalls,
+          span[0],
+          span[1],
+        );
+        for (let p = 0; p < parts.length; p++) {
+          const part = parts[p]!;
+          const { estimatedCost, ...tokenPiece } = part;
+          events.push(
+            applyPricing({
+              ...base,
+              id: parts.length > 1 ? `${base.id}-s${p}` : base.id,
+              inputTokens: tokenPiece.inputTokens ?? 0,
+              outputTokens: tokenPiece.outputTokens ?? 0,
+              cacheReadTokens: tokenPiece.cacheReadTokens ?? 0,
+              cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
+              requestCount: tokenPiece.requestCount ?? 0,
+              timestamp: part.timestamp,
+              ...(cost != null && estimatedCost != null
+                ? { routerCost: estimatedCost }
+                : {}),
+            }),
+          );
+        }
+      } else {
+        events.push(
+          applyPricing({
+            ...base,
+            timestamp,
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheWriteTokens,
+            ...(cost != null ? { routerCost: cost } : {}),
+            ...(apiCalls > 0 ? { requestCount: Math.floor(apiCalls) } : {}),
+          }),
+        );
+      }
     }
   } catch {
     /* schema variance */

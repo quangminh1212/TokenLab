@@ -4,7 +4,14 @@ import { pathEnv, unique } from "../shared/env.js";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
-import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+import {
+  num,
+  pathExists,
+  readJsonCached,
+  readJsonlCached,
+  stableId,
+  walkFiles,
+} from "../../util.js";
 
 type JsonRecord = Record<string, unknown>;
 type IndexedEvent = {
@@ -214,21 +221,11 @@ async function parseOpenCodeJsonFiles(roots: string[], index: EventIndex): Promi
     });
 
     for (const file of files) {
-      const text = await readText(file);
-      if (!text) continue;
-      const rows = file.endsWith(".jsonl")
-        ? parseJsonl(text)
-        : (() => {
-            try {
-              const data: unknown = JSON.parse(text);
-              const object = asRecord(data);
-              if (Array.isArray(data)) return data;
-              if (Array.isArray(object?.messages)) return object.messages;
-              return data == null ? [] : [data];
-            } catch {
-              return [];
-            }
-          })();
+      // Cached by (size, mtime): unchanged files skip read + JSON.parse.
+      const rows: unknown[] = file.endsWith(".jsonl")
+        ? ((await readJsonlCached(file)) ?? [])
+        : ((await readJsonCached(file)) ?? []);
+      if (rows.length === 0) continue;
 
       let rowIndex = 0;
       for (const row of rows) {

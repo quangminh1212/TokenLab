@@ -11,12 +11,14 @@ import {
   estimateTokensFromChars,
   estimateTokensFromText,
   num,
-  parseJsonl,
   pathExists,
+  readJsonCached,
+  readJsonlCached,
   readText,
   stableId,
   walkFiles,
 } from "../../util.js";
+import { resolveSpanMs, splitUsageRow } from "../shared/usage-fields.js";
 
 /**
  * Grok Build CLI: ~/.grok/sessions/<cwd>/<id>/
@@ -161,11 +163,15 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
     }
   } else if (fromUpdates.length > 0) {
     const latestRealTs = latestEventTimestamp(fromUpdates.filter((e) => !e.estimated));
-    const snapshotTs = usageSnapshot ? Date.parse(usageSnapshot.timestamp) : NaN;
+    // The snapshot may be split across several minute rows; compare against its
+    // newest row, which is the moment the snapshot's totals were last current.
+    const snapshotTs = usageSnapshot.length
+      ? Date.parse(usageSnapshot[usageSnapshot.length - 1]!.timestamp)
+      : NaN;
     // If usage.json is older than a completed update, the update file is the
     // safer complete source for this session. Otherwise the snapshot already
     // includes those completed rows and only residuals must be added.
-    if (!usageSnapshot || (latestRealTs != null && (!Number.isFinite(snapshotTs) || latestRealTs > snapshotTs + 1000))) {
+    if (usageSnapshot.length === 0 || (latestRealTs != null && (!Number.isFinite(snapshotTs) || latestRealTs > snapshotTs + 1000))) {
       events.push(...fromUpdates);
     } else {
       events.push(...fromUpdates.filter((e) => e.estimated));
@@ -173,8 +179,8 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
   }
   hadRealUsage = events.some((e) => !e.estimated);
 
-  if (usageSnapshot && !hadRealUsage) {
-    events.unshift(usageSnapshot);
+  if (usageSnapshot.length > 0 && !hadRealUsage) {
+    events.unshift(...usageSnapshot);
     hadRealUsage = true;
   }
 
@@ -183,19 +189,66 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
   if (!hadRealUsage && usage) {
     const buckets = bucketsFromUsage(usage);
     if (buckets) {
-      const { routerCost, ...tokenBuckets } = buckets;
-      events.push(
-        applyPricing({
-          id: stableId("grok", sessionId, "usage"),
-          agent: "grok",
-          model,
-          timestamp: ts,
-          ...tokenBuckets,
-          ...(routerCost != null ? { routerCost } : {}),
-          workspace,
-          sourcePath: summaryPath,
-        }),
-      );
+      const { routerCost, requestCount, ...tokenBuckets } = buckets;
+      // Session summary: `requestCount` is the whole session's call count while
+      // `ts` is a single instant, so stamping them together fakes a per-minute
+      // peak equal to the entire session. Split over created_at → last update
+      // when the summary exposes a span; tokens and cost are apportioned too so
+      // the split rows sum back to the session totals. Without a span we drop
+      // the aggregate count (leaving requestCount at its default of 1 per row)
+      // rather than fabricating a burst.
+      const span = resolveSpanMs(summary.created_at, summary.updated_at ?? summary.last_active_at);
+      const base = {
+        id: stableId("grok", sessionId, "usage"),
+        agent: "grok" as const,
+        model,
+        workspace,
+        sourcePath: summaryPath,
+      };
+      if (span && requestCount != null && requestCount > 1) {
+        const parts = splitUsageRow(
+          {
+            requestCount,
+            inputTokens: tokenBuckets.inputTokens ?? 0,
+            outputTokens: tokenBuckets.outputTokens ?? 0,
+            cacheReadTokens: tokenBuckets.cacheReadTokens ?? 0,
+            cacheWriteTokens: tokenBuckets.cacheWriteTokens ?? 0,
+            ...(routerCost != null ? { estimatedCost: routerCost } : {}),
+          },
+          requestCount,
+          span[0],
+          span[1],
+        );
+        for (let p = 0; p < parts.length; p++) {
+          const part = parts[p]!;
+          const { estimatedCost, ...tokenPiece } = part;
+          events.push(
+            applyPricing({
+              ...base,
+              id: parts.length > 1 ? `${base.id}-s${p}` : base.id,
+              inputTokens: tokenPiece.inputTokens ?? 0,
+              outputTokens: tokenPiece.outputTokens ?? 0,
+              cacheReadTokens: tokenPiece.cacheReadTokens ?? 0,
+              cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
+              requestCount: tokenPiece.requestCount ?? 0,
+              timestamp: part.timestamp,
+              ...(routerCost != null && estimatedCost != null
+                ? { routerCost: estimatedCost }
+                : {}),
+            }),
+          );
+        }
+      } else {
+        events.push(
+          applyPricing({
+            ...base,
+            timestamp: ts,
+            ...tokenBuckets,
+            ...(routerCost != null ? { routerCost } : {}),
+            ...(requestCount != null && requestCount > 0 ? { requestCount } : {}),
+          }),
+        );
+      }
       hadRealUsage = true;
     }
   }
@@ -204,14 +257,15 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
   if (hadRealUsage) return events;
 
   const chatPath = path.join(dir, "chat_history.jsonl");
-  const chatText = await readText(chatPath);
-  if (!chatText) return events;
+  // Cached by (size, mtime): unchanged chat history skips read + JSON.parse.
+  const chatRows = await readJsonlCached(chatPath);
+  if (!chatRows) return events;
 
   // Cumulative context chars → each assistant turn prices full history (over-count friendly)
   let contextChars = 0;
   let turn = 0;
   let emitted = 0;
-  for (const row of parseJsonl(chatText)) {
+  for (const row of chatRows) {
     if (!row || typeof row !== "object") continue;
     const r = row as Record<string, unknown>;
     const type = String(r.type ?? r.role ?? "");
@@ -261,7 +315,7 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
   if (emitted === 0) {
     let userChars = 0;
     let assistantChars = 0;
-    for (const row of parseJsonl(chatText)) {
+    for (const row of chatRows) {
       if (!row || typeof row !== "object") continue;
       const r = row as Record<string, unknown>;
       const type = String(r.type ?? r.role ?? "");
@@ -304,20 +358,29 @@ type GrokUsageSnapshotContext = {
 async function readGrokUsageSnapshot(
   usagePath: string,
   ctx: GrokUsageSnapshotContext,
-): Promise<UsageEvent | null> {
-  const text = await readText(usagePath);
-  if (!text) return null;
+): Promise<UsageEvent[]> {
+  // Cached by (size, mtime) so an unchanged usage.json is not re-read per scan.
+  const rows = await readJsonCached(usagePath);
+  if (!rows || rows.length === 0) return [];
+  const root = rows[0] as Record<string, unknown>;
+  if (!root || typeof root !== "object") return [];
   try {
-    const root = JSON.parse(text) as Record<string, unknown>;
     const session = (root.session ?? root.usage ?? root) as Record<string, unknown>;
-    if (!session || typeof session !== "object") return null;
+    if (!session || typeof session !== "object") return [];
     const buckets = bucketsFromUsage(session);
-    if (!buckets) return null;
+    if (!buckets) return [];
 
     const turns = Array.isArray(root.turns) ? root.turns : [];
-    const lastTurn = [...turns]
-      .reverse()
-      .find((turn) => turn && typeof turn === "object") as Record<string, unknown> | undefined;
+    // Scan backwards for the newest object turn — copying + reversing the whole
+    // turn list per call allocated needlessly on long sessions.
+    let lastTurn: Record<string, unknown> | undefined;
+    for (let i = turns.length - 1; i >= 0; i -= 1) {
+      const turn = turns[i];
+      if (turn && typeof turn === "object") {
+        lastTurn = turn as Record<string, unknown>;
+        break;
+      }
+    }
     const timestamp =
       (typeof root.updatedAt === "string" && root.updatedAt) ||
       (typeof lastTurn?.endedAt === "string" && lastTurn.endedAt) ||
@@ -326,21 +389,98 @@ async function readGrokUsageSnapshot(
       (typeof session.primaryModelId === "string" && session.primaryModelId) ||
       modelFromUsage(session, ctx.model);
     const { routerCost, requestCount, ...tokenBuckets } = buckets;
-    return applyPricing({
+    // This snapshot is a SESSION ROLLUP: `requestCount` counts every call in the
+    // session while `timestamp` is a single instant, so emitting them together
+    // fakes a per-minute peak equal to the whole session's call count. The
+    // turns[] export carries real per-turn end times, so split the aggregate
+    // count across the turn span when available, apportioning tokens and cost so
+    // the split rows sum back to the session totals; otherwise fall back to one
+    // request for the row instead of inventing a burst.
+    const base = {
       id: stableId("grok", ctx.sessionId, "usage"),
-      agent: "grok",
+      agent: "grok" as const,
       model,
-      timestamp,
-      ...tokenBuckets,
-      ...(routerCost != null ? { routerCost } : {}),
-      ...(requestCount != null ? { requestCount } : {}),
       workspace: ctx.workspace,
       sourcePath: usagePath,
       estimated: false,
-    });
+    };
+    const turnSpan = turnEndSpanMs(turns);
+    if (turnSpan && requestCount != null && requestCount > 1) {
+      const parts = splitUsageRow(
+        {
+          requestCount,
+          inputTokens: tokenBuckets.inputTokens ?? 0,
+          outputTokens: tokenBuckets.outputTokens ?? 0,
+          cacheReadTokens: tokenBuckets.cacheReadTokens ?? 0,
+          cacheWriteTokens: tokenBuckets.cacheWriteTokens ?? 0,
+          ...(routerCost != null ? { estimatedCost: routerCost } : {}),
+        },
+        requestCount,
+        turnSpan[0],
+        turnSpan[1],
+      );
+      return parts.map((part, p) => {
+        const { estimatedCost, ...tokenPiece } = part;
+        return applyPricing({
+          ...base,
+          id: parts.length > 1 ? `${base.id}-s${p}` : base.id,
+          inputTokens: tokenPiece.inputTokens ?? 0,
+          outputTokens: tokenPiece.outputTokens ?? 0,
+          cacheReadTokens: tokenPiece.cacheReadTokens ?? 0,
+          cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
+          requestCount: tokenPiece.requestCount ?? 0,
+          timestamp: part.timestamp,
+          ...(routerCost != null && estimatedCost != null
+            ? { routerCost: estimatedCost }
+            : {}),
+        });
+      });
+    }
+    return [
+      applyPricing({
+        ...base,
+        timestamp,
+        ...tokenBuckets,
+        ...(routerCost != null ? { routerCost } : {}),
+        // Fewer than two turns means no usable span, so the aggregate call count
+        // cannot be placed on a real minute. Report one request rather than
+        // stamping the session total on this instant.
+        requestCount: 1,
+      }),
+    ];
   } catch {
-    return null;
+    return [];
   }
+}
+
+/**
+ * Min/max end timestamps across a turns[] export, or null when fewer than two
+ * parse. Used to spread a session rollup's aggregate request count over the
+ * span its turns actually covered.
+ */
+function turnEndSpanMs(turns: unknown[]): [number, number] | null {
+  const times: number[] = [];
+  for (const t of turns) {
+    if (!t || typeof t !== "object") continue;
+    const row = t as Record<string, unknown>;
+    for (const key of ["endedAt", "ended_at", "updatedAt", "createdAt"]) {
+      const v = row[key];
+      if (typeof v !== "string") continue;
+      const ms = Date.parse(v);
+      if (Number.isFinite(ms)) {
+        times.push(ms);
+        break;
+      }
+    }
+  }
+  if (times.length < 2) return null;
+  let min = times[0]!;
+  let max = times[0]!;
+  for (const t of times) {
+    if (t < min) min = t;
+    if (t > max) max = t;
+  }
+  return [min, max];
 }
 
 async function parseGrokSessionMeta(
@@ -363,6 +503,56 @@ async function parseGrokSessionMeta(
       const model = modelFromUsage(usage, "grok-4.5");
       const timestamp = timestampFromSessionId(sessionId) || (await mtimeIso(metaPath));
       if (!timestamp) continue;
+      // `requestCount` here is the whole session's call count but the only
+      // timestamp available is synthetic (derived from the session id / file
+      // mtime), so there may be no honest span to spread it over. When the entry
+      // does expose one, split (apportioning tokens and cost too); otherwise keep
+      // the tokens and the row but let the request count fall back to the default
+      // 1 — otherwise the entire session is billed as a single-minute burst and
+      // peak RPM reports a value the agent never actually reached.
+      const span =
+        requestCount != null && requestCount > 1
+          ? resolveSpanMs(entry?.created_at, entry?.updated_at ?? entry?.last_active_at)
+          : null;
+      if (span && requestCount != null && requestCount > 1) {
+        const parts = splitUsageRow(
+          {
+            requestCount,
+            inputTokens: tokenBuckets.inputTokens ?? 0,
+            outputTokens: tokenBuckets.outputTokens ?? 0,
+            cacheReadTokens: tokenBuckets.cacheReadTokens ?? 0,
+            cacheWriteTokens: tokenBuckets.cacheWriteTokens ?? 0,
+            ...(routerCost != null ? { estimatedCost: routerCost } : {}),
+          },
+          requestCount,
+          span[0],
+          span[1],
+        );
+        for (let p = 0; p < parts.length; p++) {
+          const part = parts[p]!;
+          const { estimatedCost, ...tokenPiece } = part;
+          events.push(
+            applyPricing({
+              id: `${stableId("grok", sessionId, "usage")}-s${p}`,
+              agent: "grok",
+              model,
+              timestamp: part.timestamp,
+              inputTokens: tokenPiece.inputTokens ?? 0,
+              outputTokens: tokenPiece.outputTokens ?? 0,
+              cacheReadTokens: tokenPiece.cacheReadTokens ?? 0,
+              cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
+              requestCount: tokenPiece.requestCount ?? 0,
+              ...(routerCost != null && estimatedCost != null
+                ? { routerCost: estimatedCost }
+                : {}),
+              workspace: null,
+              sourcePath: `${metaPath}#${sessionId}`,
+              estimated: false,
+            }),
+          );
+        }
+        continue;
+      }
       events.push(
         applyPricing({
           id: stableId("grok", sessionId, "usage"),
@@ -371,7 +561,11 @@ async function parseGrokSessionMeta(
           timestamp,
           ...tokenBuckets,
           ...(routerCost != null ? { routerCost } : {}),
-          ...(requestCount != null ? { requestCount } : {}),
+          // No span to spread the aggregate call count over, so this row reports
+          // a single request. Stated explicitly rather than left undefined, and
+          // deliberately NOT the session total: one call is the only count that
+          // is true of a single instant.
+          requestCount: 1,
           workspace: null,
           // Tag the session id so a later snapshot can replace old per-turn
           // rows for the same pruned session during cache merge.
@@ -426,7 +620,8 @@ function decodeWorkspaceFromSessionPath(dir: string): string | null {
 
 async function mtimeIso(file: string): Promise<string | null> {
   try {
-    if (!(await pathExists(file))) return null;
+    // stat alone is sufficient — the old pathExists() was a redundant syscall
+    // (and mtimeIso is called up to 3× per session when summary has no timestamp).
     const st = await stat(file);
     return st.mtime.toISOString();
   } catch {
@@ -559,8 +754,12 @@ async function parseUpdatesUsage(
       notePromptPeak(line, promptPeak);
       // Stream meta after turn_completed can re-add peaks for completed prompts
       // (same promptId on later tool/meta lines). Never residual those again.
-      for (const id of completedWithUsage) promptPeak.delete(id);
-      for (const id of emittedPromptIds) promptPeak.delete(id);
+      // Only sweep while peaks remain — the old unconditional loop was O(lines ×
+      // completed) and re-scanned already-empty sets on every remaining line.
+      if (promptPeak.size > 0 && (completedWithUsage.size > 0 || emittedPromptIds.size > 0)) {
+        for (const id of completedWithUsage) promptPeak.delete(id);
+        for (const id of emittedPromptIds) promptPeak.delete(id);
+      }
 
       // Session-level stream floor (in-progress turns)
       if (!line.includes('"sessionUpdate":"turn_completed"') && !line.includes('"sessionUpdate": "turn_completed"')) {
@@ -945,17 +1144,11 @@ async function parsePersistedUsage(
     tokenWeight: 0,
     routerCost: 0,
   };
-  const text = await readText(file);
-  if (!text) return empty;
-
-  let raw: Record<string, unknown>;
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
-    raw = parsed as Record<string, unknown>;
-  } catch {
-    return empty;
-  }
+  const rows = await readJsonCached(file);
+  if (!rows || rows.length === 0) return empty;
+  const parsed = rows[0];
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+  const raw = parsed as Record<string, unknown>;
 
   const updatedAt = validTimestamp(raw.updatedAt) || validTimestamp(raw.updated_at);
   const turns = Array.isArray(raw.turns) ? raw.turns : [];
