@@ -576,6 +576,54 @@ export function replaceFreshAgentSourceEvents(
   );
 }
 
+/**
+ * Drop every previous row whose source file the fresh scan re-parsed.
+ *
+ * This is the general form of {@link dropPreviousAgentSourceEvents}: instead of
+ * naming one agent, it works out the (agent, sourcePath) pairs the fresh scan
+ * covered and removes those from `previous`, leaving untouched sources (other
+ * machines, gist backups, agents that were skipped) alone.
+ *
+ * Why it must run BEFORE the monotonic guard: a parser change alters row ids
+ * (e.g. splitting one session row into per-minute rows). The old rows then have
+ * no counterpart in the fresh scan, so a plain union keeps them forever and the
+ * high-water guard happily restores them as "richer" history — which is how a
+ * stale 3135 req/min row survived every rescan. Pruning by source removes the
+ * stale rows from the comparison entirely, so no heuristic has to guess which
+ * side is inflated.
+ */
+export function pruneStaleSourceEvents(
+  previous: UsageEvent[],
+  fresh: UsageEvent[],
+): UsageEvent[] {
+  const prevList = previous || [];
+  const freshList = fresh || [];
+  if (freshList.length === 0) return prevList;
+
+  // (agent|sourcePath) pairs the fresh scan produced.
+  const freshKeys = new Set<string>();
+  const freshIds = new Set<string>();
+  for (const e of freshList) {
+    if (!e) continue;
+    if (typeof e.id === "string") freshIds.add(e.id);
+    const source = normalizedSourcePath(e?.sourcePath);
+    if (!source) continue;
+    freshKeys.add(`${normalizeAgentId(e.agent)}|${source}`);
+  }
+  if (freshKeys.size === 0) return prevList;
+
+  return prevList.filter((e) => {
+    if (!e) return false;
+    // Keep anything the fresh scan still produces (same id, possibly re-derived).
+    if (typeof e.id === "string" && freshIds.has(e.id)) return true;
+    const source = normalizedSourcePath(e?.sourcePath);
+    if (!source) return true;
+    // Drop rows whose (agent, source) the fresh scan covered — they are stale
+    // versions of data that has just been re-parsed.
+    return !freshKeys.has(`${normalizeAgentId(e.agent)}|${source}`);
+  });
+}
+
 /** Remove Codex rows created by the old time/model-only LiteLLM proxy join. */
 export function dropLegacyCodexProxyAttributions(events: UsageEvent[]): UsageEvent[] {
   return (Array.isArray(events) ? events : []).filter(
@@ -1157,10 +1205,11 @@ export function enforceMonotonicAgentDays(
     if (aLive !== bLive) return aLive > bLive ? a : b;
     if (a.estOutPos !== b.estOutPos) return a.estOutPos > b.estOutPos ? a : b;
 
-    // Usage only grows: higher token envelope always wins (stale noon-stamped
-    // daily must not block fresher SpendLogs / request history for the same day).
-    // Multi-root inflation is handled in collapseRouterDailyEvents before mono.
-    // Grok residual out=0 weight is 0 so ghost stacks cannot inflate envelope.
+    // Usage only grows: a higher token envelope wins (a stale noon-stamped daily
+    // must not block fresher SpendLogs / request history for the same day).
+    // Stale rows whose ids changed under a parser fix are removed from `prev`
+    // before this comparison by pruneStaleSourceEvents(), so this rule can only
+    // ever preserve genuinely richer history — never resurrect an over-count.
     if (a.tok > b.tok * 1.001) return a;
     if (b.tok > a.tok * 1.001) return b;
     if (a.cost > b.cost * 1.001) return a;
