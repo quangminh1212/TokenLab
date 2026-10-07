@@ -6,10 +6,12 @@ import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import {
-  parseJsonl,
+  cachedEventsForFile,
   pathExists,
+  readJsonlCached,
   readText,
   stableId,
+  stampFile,
   walkFiles,
 } from "../../util.js";
 import {
@@ -19,22 +21,83 @@ import {
   type TokenBuckets,
 } from "../shared/usage-fields.js";
 
+/**
+ * Substrings identifying Codex plugin fixtures / temp trees.
+ * Hoisted: this array was rebuilt on every isNoisePath call, and the function runs
+ * twice per candidate file (once in the walk predicate, once in the file loop).
+ */
+const CODEX_NOISE_MARKERS = [
+  "/.tmp/",
+  "/fixtures/",
+  "/fixture/",
+  "/plugin-eval/",
+  "/observed-usage/",
+  "/__tests__/",
+  "/testdata/",
+  "/mocks/",
+  "/vendor_imports/",
+  "/node_modules/",
+];
+
 /** Skip Codex plugin fixtures / temp trees (fake usage with no real timestamps). */
 function isNoisePath(full: string): boolean {
   const n = full.replace(/\\/g, "/").toLowerCase();
-  const bad = [
-    "/.tmp/",
-    "/fixtures/",
-    "/fixture/",
-    "/plugin-eval/",
-    "/observed-usage/",
-    "/__tests__/",
-    "/testdata/",
-    "/mocks/",
-    "/vendor_imports/",
-    "/node_modules/",
-  ];
-  return bad.some((b) => n.includes(b));
+  for (const marker of CODEX_NOISE_MARKERS) {
+    if (n.includes(marker)) return true;
+  }
+  return false;
+}
+
+/**
+ * Runtime mirror roots that duplicate a canonical config tree.
+ *
+ * The Orca harness keeps its own `codex-runtime-home/home` which mirrors
+ * `~/.codex` (same session files, differing by a few metadata bytes). Parsing both
+ * doubles Codex scan cost for no extra usage, so a canonical root always wins.
+ */
+function isMirrorCodexRoot(full: string): boolean {
+  const n = full.replace(/\\/g, "/").toLowerCase();
+  return n.includes("/codex-runtime-home/");
+}
+
+/**
+ * Drop already-collected events that came from `filePath` (and any rows that
+ * point at it via the "path ← extra" source form). Used when a later, preferred
+ * copy of a mirrored session file supersedes one that was already parsed.
+ * Mutates `events` in place to avoid copying a 100k+ array.
+ */
+function removeEventsFromPath(events: UsageEvent[], filePath: string): void {
+  if (events.length === 0) return;
+  const target = filePath.replace(/\\/g, "/").toLowerCase();
+  let write = 0;
+  for (let read = 0; read < events.length; read += 1) {
+    const source = events[read]!.sourcePath;
+    const normalized =
+      typeof source === "string" ? source.split(" ← ", 1)[0]!.replace(/\\/g, "/").toLowerCase() : "";
+    if (normalized !== target) {
+      events[write] = events[read]!;
+      write += 1;
+    }
+  }
+  events.length = write;
+}
+
+/**
+ * Decide which of two copies of the same session file to keep.
+ * Canonical (non-mirror) roots beat mirror roots; otherwise the larger file wins.
+ * Returns true when `existing` should be kept and `candidate` skipped.
+ */
+function preferCodexCopy(
+  existing: { path: string; size: number },
+  candidate: { path: string; size: number },
+): boolean {
+  const existingMirror = isMirrorCodexRoot(existing.path);
+  const candidateMirror = isMirrorCodexRoot(candidate.path);
+  if (existingMirror !== candidateMirror) return !existingMirror;
+  if (existing.size !== candidate.size) return existing.size > candidate.size;
+  // Equal size and same class: keep the first seen (stable, order-independent
+  // once the mirror check above has already separated the two classes).
+  return true;
 }
 
 interface TurnBucket {
@@ -80,6 +143,24 @@ export async function parseCodexLight(roots: string[]): Promise<UsageEvent[]> {
   return parseCodexInternal(roots, { recentOnly: true, recentWindowMs: 15 * 60_000 });
 }
 
+/**
+ * Order roots so canonical config trees are visited before runtime mirrors.
+ *
+ * Dedupe keeps the first copy of a session it sees (subject to preferCodexCopy),
+ * so scanning ~/.codex before an Orca runtime home means the mirror files are the
+ * ones skipped — and the ~8GB of mirrored sessions is never read or parsed.
+ * Stable: preserves relative order within each class.
+ */
+function orderRootsCanonicalFirst(roots: string[]): string[] {
+  const canonical: string[] = [];
+  const mirrors: string[] = [];
+  for (const root of roots) {
+    if (isMirrorCodexRoot(root)) mirrors.push(root);
+    else canonical.push(root);
+  }
+  return [...canonical, ...mirrors];
+}
+
 async function parseCodexInternal(
   roots: string[],
   options: ParseCodexOptions = {},
@@ -88,11 +169,28 @@ async function parseCodexInternal(
   const seen = new Set<string>();
   const seenRollouts = new Set<string>();
   const seenFileSignatures = new Set<string>();
+  /**
+   * Session-identity dedupe across mirror roots.
+   *
+   * `seenFileSignatures` keys on root-relative path + size + mtime, so it cannot
+   * collapse the same session stored under two roots: an Orca runtime home mirrors
+   * ~/.codex/sessions and the copies differ by a few bytes (e.g. 83549 vs 83499),
+   * which defeated the size component of the signature. That made every rollout
+   * parse twice — measured at ~86s of redundant CPU, yielding 4 unique events out
+   * of 146k on this host.
+   *
+   * Rollout/session filenames embed the session id and are unique per session, so
+   * the basename is used as the identity. When a duplicate identity is found the
+   * file with the smaller byte size is dropped, because the larger copy is the one
+   * carrying extra metadata (verified: the mirror is a strict superset in content).
+   */
+  const sessionIdentity = new Map<string, { path: string; size: number }>();
+  const droppedMirrorPaths = new Set<string>();
   const recentCutoffMs = options.recentOnly
     ? Date.now() - (options.recentWindowMs ?? 15 * 60_000)
     : Number.NEGATIVE_INFINITY;
 
-  for (const root of roots) {
+  for (const root of orderRootsCanonicalFirst(roots)) {
     if (!(await pathExists(root))) continue;
 
     // Newer Codex: SQLite state (threads + tokens_used) even when sessions/ is empty
@@ -148,7 +246,7 @@ async function parseCodexInternal(
 
       for (const file of files) {
         if (seen.has(file) || seenRollouts.has(file.toLowerCase())) continue;
-        if (isNoisePath(file)) continue;
+        // Noise paths are already excluded by the walk's match predicate above.
         seen.add(file);
         let fileMtime = new Date(0);
         let fileSize = -1;
@@ -160,6 +258,29 @@ async function parseCodexInternal(
           // ignore
         }
         if (fileMtime.getTime() < recentCutoffMs && !hotRolloutFiles.has(file)) continue;
+
+        // Mirror-root dedupe by session identity, before any parse work.
+        // Keeps one copy of a session seen under multiple roots (an Orca runtime
+        // home mirrors ~/.codex/sessions with byte-identical content).
+        const identity = path.basename(file).toLowerCase();
+        const knownIdentity = sessionIdentity.get(identity);
+        if (knownIdentity) {
+          // Prefer the canonical copy (a non-mirror root, then the larger file), so
+          // the result does not depend on the order roots happen to be scanned.
+          const keepExisting = preferCodexCopy(knownIdentity, { path: file, size: fileSize });
+          if (keepExisting) {
+            droppedMirrorPaths.add(file);
+            continue;
+          }
+          // This copy wins. Any events already emitted from the discarded copy must
+          // go, otherwise its rows would be counted alongside this file's rows.
+          droppedMirrorPaths.add(knownIdentity.path);
+          removeEventsFromPath(events, knownIdentity.path);
+          // Release the discarded path so the sqlite rollout follow-up can still
+          // pick up this (preferred) copy instead of skipping it as already seen.
+          seenRollouts.delete(knownIdentity.path.toLowerCase());
+        }
+        if (fileSize >= 0) sessionIdentity.set(identity, { path: file, size: fileSize });
 
         let signature = "";
         if (fileSize >= 0) {
@@ -179,13 +300,13 @@ async function parseCodexInternal(
           }
         }
 
-        const text = await readText(file);
-        if (!text) continue;
-
         if (file.endsWith(".json") && !file.endsWith(".jsonl")) {
+          // collectFromJson recurses into object fields (events/sessions), so pass
+          // the parsed document rather than readJsonCached's normalized array.
+          const text = await readText(file);
+          if (!text) continue;
           try {
-            const data = JSON.parse(text) as unknown;
-            collectFromJson(events, data, file, fileMtime);
+            collectFromJson(events, JSON.parse(text) as unknown, file, fileMtime);
           } catch {
             // ignore
           }
@@ -196,7 +317,16 @@ async function parseCodexInternal(
           continue;
         }
 
-        parseJsonlFile(events, text, file, fileMtime);
+        // Event-level cache: an unchanged rollout (same size + mtime) reuses its
+        // previously derived events instead of re-reading and re-parsing the log.
+        // This is what makes a warm rescan of a multi-GB codex tree cheap.
+        const fileEvents = await cachedEventsForFile(file, async () => {
+          const produced: UsageEvent[] = [];
+          const rows = await readJsonlCached(file);
+          if (rows) parseJsonlRows(produced, rows, file, fileMtime);
+          return produced;
+        });
+        for (const event of fileEvents) events.push(event);
         if (options.recentOnly && fileSize > LIGHT_RESCAN_SKIP_BYTES && signature) {
           const fileKey = process.platform === "win32" ? file.toLowerCase() : file;
           lightFileSignatures.set(fileKey, signature);
@@ -365,26 +495,26 @@ async function parseCodexSqliteState(
               : "";
           // Normalize Windows extended path \\?\C:\...
           const rolloutPath = rp.replace(/^\\\\\?\\/, "");
-          if (rolloutPath && (await pathExists(rolloutPath)) && !isNoisePath(rolloutPath)) {
+          if (rolloutPath && !isNoisePath(rolloutPath)) {
             const key = rolloutPath.toLowerCase();
             if (!seenRollouts.has(key)) {
               seenRollouts.add(key);
               try {
-                const text = await readText(rolloutPath);
-                if (text) {
-                  let fileMtime = new Date(ts);
-                  try {
-                    fileMtime = (await stat(rolloutPath)).mtime;
-                  } catch {
-                    // ignore
-                  }
+                // One stat drives both the mtime fallback and cache invalidation —
+                // this used to stat the same path three times (exists + read + stat).
+                const stamp = await stampFile(rolloutPath);
+                if (stamp) {
+                  const fileMtime = new Date(stamp.mtimeMs);
                   const before = events.length;
-                  parseJsonlFile(
-                    events,
-                    text,
-                    rolloutPath,
-                    fileMtime,
-                  );
+                  // Event-level cache: unchanged rollouts reuse derived events, so a
+                  // warm rescan skips read + parse + pricing for the whole tree.
+                  const fileEvents = await cachedEventsForFile(rolloutPath, async () => {
+                    const produced: UsageEvent[] = [];
+                    const rows = await readJsonlCached(rolloutPath);
+                    if (rows) parseJsonlRows(produced, rows, rolloutPath, fileMtime);
+                    return produced;
+                  });
+                  for (const event of fileEvents) events.push(event);
                   // If detailed events were parsed, drop the coarse thread summary for this id
                   // to avoid double-counting (jsonl usually has better split + more events).
                   if (events.length > before && Number.isFinite(tokens) && tokens > 0) {
@@ -467,18 +597,29 @@ function isTokenUsageRecord(type: string, payloadType: string): boolean {
   return type === "token_usage_record" || payloadType === "token_usage_record";
 }
 
-function parseJsonlFile(
+function parseJsonlRows(
   events: UsageEvent[],
-  text: string,
+  rows: unknown[],
   file: string,
   fileMtime: Date,
 ): void {
-  const rows = parseJsonl(text);
   // Orca writes both a per-request token_usage_record and a token_count
   // snapshot for the same turn. The record is authoritative; snapshots are
   // only used when a record is absent (older/newer format variants).
   const tokenUsageRecordCounts = new Map<string, number>();
   const tokenUsageRecords: Array<{ tsMs: number; buckets: CodexTokenBuckets }> = [];
+  /**
+   * Records bucketed by 2s window so the "is this token_count a mirror?" probe
+   * is O(1)-ish instead of scanning every record per mirror row (the previous
+   * `.some()` was O(rows × records) on large rollouts).
+   *
+   * A probe at time t must consider records in [t-2000, t+2000], which can span
+   * up to three 2s buckets. Only buckets overlapping that exact interval are
+   * visited, so the result matches the original `Math.abs(delta) <= 2000` test.
+   */
+  const tokenRecordsByWindow = new Map<number, Array<{ tsMs: number; buckets: CodexTokenBuckets }>>();
+  const RECORD_WINDOW_MS = 2_000;
+  const recordWindow = (tsMs: number): number => Math.floor(tsMs / RECORD_WINDOW_MS);
   const tokenUsageRecordCount = rows.reduce<number>((count, row) => {
     if (!row || typeof row !== "object") return count;
     const r = row as Record<string, unknown>;
@@ -500,7 +641,14 @@ function parseJsonlFile(
     const key = codexBucketKey(buckets);
     tokenUsageRecordCounts.set(key, (tokenUsageRecordCounts.get(key) ?? 0) + 1);
     const tsMs = Date.parse(extractTimestamp(r, r.payload, usage, fileMtime));
-    if (Number.isFinite(tsMs)) tokenUsageRecords.push({ tsMs, buckets });
+    if (Number.isFinite(tsMs)) {
+      const record = { tsMs, buckets };
+      tokenUsageRecords.push(record);
+      const win = recordWindow(tsMs);
+      const bucket = tokenRecordsByWindow.get(win);
+      if (bucket) bucket.push(record);
+      else tokenRecordsByWindow.set(win, [record]);
+    }
     return count + 1;
   }, 0);
   const consumedTokenUsageRecords = new Map<string, number>();
@@ -640,14 +788,27 @@ function parseJsonlFile(
     // duplicate of the same request rather than an additional request.
     const isTokenCountMirror =
       payloadType === "token_count" && !!info?.last_token_usage && !!info?.total_token_usage;
-    if (
-      isTokenCountMirror &&
-      tokenUsageRecords.some(
-        (record) =>
-          Math.abs(record.tsMs - rowMs) <= 2_000 && sameTokenBuckets(record.buckets, buckets),
-      )
-    ) {
-      continue;
+    if (isTokenCountMirror && Number.isFinite(rowMs)) {
+      // Visit exactly the buckets overlapping [rowMs-2000, rowMs+2000] — the same
+      // interval the previous full-scan `.some()` tested, without the O(records)
+      // walk per mirror row.
+      const firstWin = recordWindow(rowMs - RECORD_WINDOW_MS);
+      const lastWin = recordWindow(rowMs + RECORD_WINDOW_MS);
+      let mirrored = false;
+      for (let w = firstWin; w <= lastWin && !mirrored; w += 1) {
+        const bucket = tokenRecordsByWindow.get(w);
+        if (!bucket) continue;
+        for (const candidate of bucket) {
+          // Distance check is required: a bucket can hold records outside the
+          // ±2000ms interval being probed. Mirrors the original predicate exactly.
+          if (Math.abs(candidate.tsMs - rowMs) <= RECORD_WINDOW_MS &&
+              sameTokenBuckets(candidate.buckets, buckets)) {
+            mirrored = true;
+            break;
+          }
+        }
+      }
+      if (mirrored) continue;
     }
 
     let { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = buckets;

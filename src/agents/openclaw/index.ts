@@ -4,7 +4,14 @@ import { pathEnv, unique } from "../shared/env.js";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
-import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+import {
+  pathExists,
+  readJsonCached,
+  readJsonlCached,
+  readText,
+  stableId,
+  walkFiles,
+} from "../../util.js";
 import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
 
 /**
@@ -174,27 +181,12 @@ async function parseSessionFile(
 ): Promise<void> {
   if (seen.has(file)) return;
   seen.add(file);
-  if (!(await pathExists(file))) return;
-  const text = await readText(file);
-  if (!text) return;
 
-  const rows = file.endsWith(".jsonl")
-    ? parseJsonl(text)
-    : (() => {
-        try {
-          const d = JSON.parse(text);
-          if (Array.isArray(d)) return d;
-          if (d && typeof d === "object") {
-            const o = d as Record<string, unknown>;
-            if (Array.isArray(o.messages)) return o.messages;
-            if (Array.isArray(o.events)) return o.events;
-            return [d];
-          }
-        } catch {
-          return [];
-        }
-        return [];
-      })();
+  // Cached by (size, mtime): unchanged files skip read + JSON.parse.
+  const rows: unknown[] = file.endsWith(".jsonl")
+    ? ((await readJsonlCached(file)) ?? [])
+    : ((await readJsonCached(file)) ?? []);
+  if (rows.length === 0) return;
 
   let idx = 0;
   let model: string | null = null;

@@ -1,6 +1,6 @@
 import { applyPricing } from "../../pricing.js";
 import type { AgentId, UsageEvent } from "../../types.js";
-import { parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+import { pathExists, readJsonCached, readJsonlCached, stableId, walkFiles } from "../../util.js";
 import { extractModel, extractTimestamp, extractTokenBuckets } from "./usage-fields.js";
 
 export interface GenericJsonlOptions {
@@ -24,27 +24,11 @@ export async function parseGenericJsonl(
     const files = await walkFiles(root, { maxDepth: options.maxDepth ?? 10, match });
 
     for (const file of files) {
-      const text = await readText(file);
-      if (!text) continue;
-
-      let rows: unknown[] = [];
-      if (file.endsWith(".jsonl")) {
-        rows = parseJsonl(text);
-      } else {
-        try {
-          const data = JSON.parse(text) as unknown;
-          if (Array.isArray(data)) rows = data;
-          else if (data && typeof data === "object") {
-            const o = data as Record<string, unknown>;
-            if (Array.isArray(o.messages)) rows = o.messages;
-            else if (Array.isArray(o.events)) rows = o.events;
-            else if (Array.isArray(o.usage)) rows = o.usage;
-            else rows = [data];
-          }
-        } catch {
-          continue;
-        }
-      }
+      // Cached JSONL parse: unchanged files skip read + JSON.parse.
+      const rows: unknown[] = file.endsWith(".jsonl")
+        ? ((await readJsonlCached(file)) ?? [])
+        : ((await readJsonCached(file)) ?? []);
+      if (rows.length === 0) continue;
 
       let idx = 0;
       for (const row of rows) {

@@ -207,6 +207,261 @@ export function extractModel(...candidates: unknown[]): string | null {
   return null;
 }
 
+/**
+ * Timestamp keys probed on object candidates, in priority order.
+ * Hoisted to module scope: this was an 11-element array literal allocated on
+ * every extractTimestamp() call, i.e. once (or twice) per parsed log row.
+ */
+const TIMESTAMP_KEYS = [
+  "timestamp",
+  "ts",
+  "created_at",
+  "createdAt",
+  "started_at",
+  "startedAt",
+  "completed_at",
+  "completedAt",
+  "time",
+  "date",
+  "mtime",
+];
+
+/**
+ * Resolve a [startMs, endMs] span from loosely-typed candidates.
+ *
+ * Returns null unless BOTH ends parse to finite epoch ms with start <= end.
+ * Ordering is not assumed: callers may pass (first, last) or (last, first) and
+ * the pair is normalised here. Used to spread an aggregate row (one row holding
+ * a whole session's request count) across the minutes it actually covered.
+ */
+export function resolveSpanMs(a: unknown, b: unknown): [number, number] | null {
+  const toEpochMs = (n: number): number | null => {
+    // epoch seconds vs ms; reject noise that cannot be a real date
+    const ms = n > 1e12 ? n : n > 1e9 ? n * 1000 : NaN;
+    if (!Number.isFinite(ms) || ms < 1e11) return null;
+    return ms;
+  };
+  const one = (v: unknown): number | null => {
+    if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.getTime();
+    if (typeof v === "string" && v.trim()) {
+      const ms = Date.parse(v);
+      if (Number.isFinite(ms)) return ms;
+      // numeric string epoch
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? toEpochMs(n) : null;
+    }
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return toEpochMs(v);
+    return null;
+  };
+  const x = one(a);
+  const y = one(b);
+  if (x == null || y == null) return null;
+  const start = Math.min(x, y);
+  const end = Math.max(x, y);
+  return [start, end];
+}
+
+/**
+ * Split a span into per-minute buckets, returning each bucket's timestamp plus
+ * its share of the span as an exact fraction (all weights sum to exactly 1).
+ *
+ * Why this exists: some agents store a session (or a whole day) as ONE row with
+ * aggregated totals under a single timestamp. Feeding that straight to a
+ * per-minute peak makes the entire session look like it happened in 60 seconds —
+ * a real case reported 3135 req/min from a 25-hour session spanning two calendar
+ * days. Spreading the row over the span it actually covered keeps both the
+ * per-minute rate and the per-day attribution honest.
+ *
+ * Weights sum to 1, so callers must MULTIPLY every additive field (requests,
+ * tokens, cost) by its weight rather than copying the totals into each bucket —
+ * copying would multiply the session's usage by the number of buckets.
+ *
+ * Weights are equal across buckets except that any remainder is front-loaded in
+ * whole-request units via `requests`, so the request total is preserved exactly
+ * with no fractional calls.
+ */
+export function splitSpanWeights(
+  requests: number,
+  startMs: number,
+  endMs: number,
+): Array<{ timestamp: string; weight: number; requestCount: number }> {
+  const total = Math.max(1, Math.floor(requests));
+  const startMinute = Math.floor(startMs / 60_000) * 60_000;
+  const endMinute = Math.floor(endMs / 60_000) * 60_000;
+  const minuteCount = Math.max(1, Math.floor((endMinute - startMinute) / 60_000) + 1);
+
+  // Distribute whole requests first; `minuteCount` can exceed `total`, in which
+  // case only the leading `total` minutes receive a request.
+  const base = Math.floor(total / minuteCount);
+  let remainder = total - base * minuteCount;
+
+  const counts: number[] = [];
+  for (let i = 0; i < minuteCount; i++) {
+    let count = base;
+    if (remainder > 0) {
+      count += 1;
+      remainder -= 1;
+    }
+    counts.push(count);
+  }
+
+  const out: Array<{ timestamp: string; weight: number; requestCount: number }> = [];
+  for (let i = 0; i < minuteCount; i++) {
+    const count = counts[i]!;
+    // A minute with 0 requests carries no usage — skip it entirely.
+    if (count <= 0) continue;
+    out.push({
+      timestamp: new Date(startMinute + i * 60_000).toISOString(),
+      // Share of the session's requests, used to apportion tokens and cost too.
+      weight: count / total,
+      requestCount: count,
+    });
+  }
+  return out;
+}
+
+/**
+ * Split `requests` across the minutes of [startMs, endMs], returning only the
+ * request counts. Thin wrapper over {@link splitSpanWeights} for callers that
+ * need nothing but the request distribution.
+ */
+export function splitRequestsOverSpan(
+  requests: number,
+  startMs: number,
+  endMs: number,
+): Array<{ timestamp: string; requestCount: number }> {
+  return splitSpanWeights(requests, startMs, endMs).map(({ timestamp, requestCount }) => ({
+    timestamp,
+    requestCount,
+  }));
+}
+
+/**
+ * Apportion an additive quantity across split buckets without losing the total.
+ *
+ * Rounds each share to an integer, then distributes whatever is left over
+ * (positive or negative) one unit at a time so the parts always sum back to
+ * `total`. Used for token counts and cost so a split session neither duplicates
+ * nor drops usage.
+ */
+export function apportion(total: number, weights: number[]): number[] {
+  if (weights.length === 0) return [];
+  const t = Number.isFinite(total) ? total : 0;
+  const sum = weights.reduce((a, b) => a + b, 0);
+  if (!(sum > 0)) return weights.map(() => 0);
+
+  const raw = weights.map((w) => (t * w) / sum);
+  const out = raw.map((v) => Math.floor(v));
+  let assigned = out.reduce((a, b) => a + b, 0);
+  let diff = Math.round(t) - assigned;
+
+  // Hand out the remainder one unit at a time, largest-fraction first so the
+  // rounding error lands on the buckets that were closest to rounding up.
+  const order = raw
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac);
+  let k = 0;
+  while (diff > 0 && order.length > 0) {
+    out[order[k % order.length]!.i] += 1;
+    diff -= 1;
+    k += 1;
+  }
+  k = order.length - 1;
+  while (diff < 0 && order.length > 0) {
+    const idx = order[k % order.length]!.i;
+    if (out[idx]! > 0) {
+      out[idx] -= 1;
+      diff += 1;
+    }
+    k -= 1;
+    if (k < -order.length) break;
+  }
+  return out;
+}
+
+/**
+ * Apportion a float quantity (cost) across weights, keeping the exact total.
+ * Unlike {@link apportion} this does not force integers.
+ */
+export function apportionFloat(total: number, weights: number[]): number[] {
+  if (weights.length === 0) return [];
+  const t = Number.isFinite(total) ? total : 0;
+  const sum = weights.reduce((a, b) => a + b, 0);
+  if (!(sum > 0)) return weights.map(() => 0);
+  const out = weights.map((w) => (t * w) / sum);
+  // Correct accumulated float error on the largest bucket so the sum is exact.
+  const drift = t - out.reduce((a, b) => a + b, 0);
+  if (out.length > 0) out[0] = out[0]! + drift;
+  return out;
+}
+
+/** Token/cost fields that must be apportioned, never copied, when splitting. */
+export interface SplittableUsage {
+  requestCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
+  estimatedCost?: number;
+}
+
+/**
+ * Split one aggregate usage row across the minutes it actually covered.
+ *
+ * Every additive field is APPORTIONED by each bucket's share of the requests,
+ * never copied: copying a session's token/cost totals into N minute-buckets
+ * would multiply them by N (a 3-call, 1200-input-token session over 60 minutes
+ * became 3600 input tokens across the split rows before this was fixed).
+ *
+ * Returns one row per covered minute, each carrying its own timestamp and the
+ * portion of every field it is responsible for; the parts sum back to the
+ * original totals (request counts exactly, tokens exactly, cost to float
+ * precision).
+ */
+export function splitUsageRow(
+  row: SplittableUsage,
+  requests: number,
+  startMs: number,
+  endMs: number,
+): Array<{ timestamp: string } & SplittableUsage> {
+  const buckets = splitSpanWeights(requests, startMs, endMs);
+  if (buckets.length === 0) return [];
+  const weights = buckets.map((b) => b.weight);
+
+  const inParts = apportion(row.inputTokens ?? 0, weights);
+  const outParts = apportion(row.outputTokens ?? 0, weights);
+  const crParts = apportion(row.cacheReadTokens ?? 0, weights);
+  const cwParts = apportion(row.cacheWriteTokens ?? 0, weights);
+  const reasonParts =
+    row.reasoningTokens != null ? apportion(row.reasoningTokens, weights) : null;
+  const costParts =
+    row.estimatedCost != null ? apportionFloat(row.estimatedCost, weights) : null;
+
+  return buckets.map((bucket, i) => {
+    const inputTokens = inParts[i] ?? 0;
+    const outputTokens = outParts[i] ?? 0;
+    const cacheReadTokens = crParts[i] ?? 0;
+    const cacheWriteTokens = cwParts[i] ?? 0;
+    const reasoningTokens = reasonParts ? (reasonParts[i] ?? 0) : undefined;
+    const estimatedCost = costParts ? (costParts[i] ?? 0) : undefined;
+    const piece: { timestamp: string } & SplittableUsage = {
+      timestamp: bucket.timestamp,
+      requestCount: bucket.requestCount,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      // Recompute the total so it always matches the apportioned parts.
+      totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
+    };
+    if (reasoningTokens != null) piece.reasoningTokens = reasoningTokens;
+    if (estimatedCost != null) piece.estimatedCost = estimatedCost;
+    return piece;
+  });
+}
+
 export function extractTimestamp(...candidates: unknown[]): string {
   for (const c of candidates) {
     if (c instanceof Date && !Number.isNaN(c.getTime())) return c.toISOString();
@@ -221,19 +476,7 @@ export function extractTimestamp(...candidates: unknown[]): string {
     }
     if (c && typeof c === "object" && !(c instanceof Date)) {
       const o = c as Record<string, unknown>;
-      for (const k of [
-        "timestamp",
-        "ts",
-        "created_at",
-        "createdAt",
-        "started_at",
-        "startedAt",
-        "completed_at",
-        "completedAt",
-        "time",
-        "date",
-        "mtime",
-      ]) {
+      for (const k of TIMESTAMP_KEYS) {
         const v = o[k];
         if (typeof v === "string" && !Number.isNaN(Date.parse(v))) return new Date(v).toISOString();
         if (typeof v === "number" && Number.isFinite(v) && v > 0) {
