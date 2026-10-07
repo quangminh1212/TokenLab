@@ -43,6 +43,30 @@ const DEFAULT_CONFIG: XlabTokenConfig = {
 };
 
 let cached: XlabTokenConfig | null = null;
+/**
+ * Frozen, pre-normalized snapshot handed to hot paths (pricing runs per event).
+ * Rebuilt only when `cached` is replaced — never cloned per call.
+ */
+let cachedSyncView: XlabTokenConfig | null = null;
+
+/** Deep-freeze the shallow config layers so hot-path readers cannot mutate the cache. */
+function freezeView(cfg: XlabTokenConfig): XlabTokenConfig {
+  Object.freeze(cfg.pricing?.customRates);
+  Object.freeze(cfg.pricing);
+  Object.freeze(cfg.backup);
+  return Object.freeze(cfg);
+}
+
+function buildSyncView(c: XlabTokenConfig): XlabTokenConfig {
+  const view: XlabTokenConfig = { ...c, timezone: normalizeTimezone(c.timezone) };
+  // Shallow copies of nested objects: the frozen view must not alias the mutable
+  // `cached` config, otherwise a later saveConfig could mutate what readers hold.
+  if (c.pricing) {
+    view.pricing = { ...c.pricing, customRates: { ...(c.pricing.customRates || {}) } };
+  }
+  if (c.backup) view.backup = { ...c.backup };
+  return freezeView(view);
+}
 
 export function configPath(): string {
   if (process.env.TOKENLAB_CONFIG) return process.env.TOKENLAB_CONFIG;
@@ -74,31 +98,46 @@ export async function loadConfig(): Promise<XlabTokenConfig> {
     if (await pathExists(p)) {
       const raw = await readFile(p, "utf8");
       const parsed = JSON.parse(raw) as XlabTokenConfig;
-      cached = mergeConfig(DEFAULT_CONFIG, parsed);
+      const mergedCfg = mergeConfig(DEFAULT_CONFIG, parsed);
+      setCachedConfig(mergedCfg);
       // Persist migration UTC → local once so Settings/API stay consistent
       if (parsed.timezone === "UTC" || parsed.timezone === "Etc/UTC") {
         const fixed = normalizeTimezone(parsed.timezone);
         if (fixed !== "UTC") {
-          cached.timezone = fixed;
+          mergedCfg.timezone = fixed;
+          cachedSyncView = null;
           try {
-            await writeFile(p, JSON.stringify(cached, null, 2), "utf8");
+            await writeFile(p, JSON.stringify(mergedCfg, null, 2), "utf8");
           } catch {
             /* best-effort */
           }
         }
       }
-      return cached;
+      return mergedCfg;
     }
   } catch {
     // fall through
   }
-  cached = structuredClone(DEFAULT_CONFIG);
-  return cached;
+  const fallback = structuredClone(DEFAULT_CONFIG);
+  setCachedConfig(fallback);
+  return fallback;
 }
 
+/**
+ * Hot-path config read (called ~3× per event during pricing).
+ * Returns a cached frozen view — no structuredClone per call. Previously this
+ * cloned the entire DEFAULT_CONFIG on every invocation, which dominated scan CPU.
+ */
 export function getConfigSync(): XlabTokenConfig {
-  const c = cached ?? structuredClone(DEFAULT_CONFIG);
-  return { ...c, timezone: normalizeTimezone(c.timezone) };
+  if (cachedSyncView) return cachedSyncView;
+  cachedSyncView = buildSyncView(cached ?? DEFAULT_CONFIG);
+  return cachedSyncView;
+}
+
+/** Invalidate derived views after any config mutation. */
+function setCachedConfig(next: XlabTokenConfig | null): void {
+  cached = next;
+  cachedSyncView = null;
 }
 
 export async function saveConfig(next: XlabTokenConfig): Promise<XlabTokenConfig> {
@@ -107,7 +146,7 @@ export async function saveConfig(next: XlabTokenConfig): Promise<XlabTokenConfig
   const p = configPath();
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify(merged, null, 2), "utf8");
-  cached = merged;
+  setCachedConfig(merged);
   return merged;
 }
 

@@ -243,6 +243,8 @@ let rateLookupCatalogAt = -1;
 function cachedRateLookupState(): Record<string, ModelRate> {
   const custom = customRates();
   const catalogAt = getOpenRouterFetchedAt();
+  // Reference equality is the cache key: customRates() returns the frozen config
+  // view's object, stable until a pricing/catalog revision replaces it.
   if (custom !== rateLookupCustomRates || catalogAt !== rateLookupCatalogAt) {
     rateLookupCache.clear();
     rateLookupCustomRates = custom;
@@ -464,8 +466,11 @@ export function applyPricing(
 ): UsageEvent {
   const totalTokens =
     partial.inputTokens + partial.outputTokens + partial.cacheReadTokens + partial.cacheWriteTokens;
-  const currency = getConfigSync().pricing?.currency || partial.currency || "USD";
-  const preferRouter = getConfigSync().pricing?.preferRouterCost !== false;
+  // Single config read: this runs once per event across the whole dataset, so the
+  // previous two getConfigSync() calls doubled the per-event cost for one field.
+  const pricingCfg = getConfigSync().pricing;
+  const currency = pricingCfg?.currency || partial.currency || "USD";
+  const preferRouter = pricingCfg?.preferRouterCost !== false;
   const routerCost =
     typeof partial.routerCost === "number" && Number.isFinite(partial.routerCost)
       ? partial.routerCost

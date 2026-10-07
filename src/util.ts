@@ -208,6 +208,325 @@ export async function readText(file: string): Promise<string | null> {
   }
 }
 
+/** Cheap file identity for cache invalidation — one stat, no read. */
+export type FileStamp = { size: number; mtimeMs: number };
+
+/**
+ * Stat a file for cache keying. Returns null when missing/unreadable, which
+ * callers treat as "nothing to parse" (same as a failed read).
+ */
+export async function stampFile(file: string): Promise<FileStamp | null> {
+  try {
+    const s = await stat(file);
+    if (!s.isFile()) return null;
+    return { size: s.size, mtimeMs: s.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Per-file JSONL parse cache keyed by (path, size, mtime).
+ *
+ * A full scan re-walks the same corpus every pass, and most session logs do not
+ * change between passes. Keying on the file stamp lets unchanged files skip the
+ * read + JSON.parse entirely, which dominates scan wall time on large histories.
+ *
+ * Bounded by both entry count and retained bytes so a machine with very large
+ * logs cannot use this cache as an unbounded heap. Entries are only ever used
+ * when the stamp matches exactly, so a stale entry can never be served.
+ */
+type JsonlCacheEntry = { stamp: FileStamp; rows: unknown[]; bytes: number };
+
+/**
+ * Cache budget.
+ *
+ * `rows` are parsed JSON objects, which cost several times their source bytes in
+ * heap, so this is deliberately modest: across a 16GB corpus (this host's codex
+ * tree) a large cap only thrashes and wastes RAM without improving hit rate.
+ * The real win comes from *event-level* caching in the parsers, which stores only
+ * the derived usage rows. This cache exists to serialize repeated reads within a
+ * single process for small/medium files.
+ */
+const JSONL_CACHE_MAX_ENTRIES = 4_000;
+const JSONL_CACHE_MAX_BYTES = 96 * 1024 * 1024;
+
+const jsonlCache = new Map<string, JsonlCacheEntry>();
+let jsonlCacheBytes = 0;
+let jsonlCacheHits = 0;
+let jsonlCacheMisses = 0;
+
+export function jsonlCacheStats(): {
+  entries: number;
+  bytes: number;
+  hits: number;
+  misses: number;
+} {
+  return {
+    entries: jsonlCache.size,
+    bytes: jsonlCacheBytes,
+    hits: jsonlCacheHits,
+    misses: jsonlCacheMisses,
+  };
+}
+
+export function clearJsonlCache(): void {
+  jsonlCache.clear();
+  jsonlCacheBytes = 0;
+  jsonlCacheHits = 0;
+  jsonlCacheMisses = 0;
+  eventCache.clear();
+  eventCacheBytes = 0;
+  eventCacheHits = 0;
+  eventCacheMisses = 0;
+}
+
+/**
+ * Per-file cache of *derived usage events*.
+ *
+ * This is the unit that makes rescanning cheap: `UsageEvent` rows are small and
+ * already priced, whereas re-deriving them requires reading and parsing the whole
+ * source log. Keyed by the same (path, size, mtime) stamp, so a cache entry can
+ * only be served for a byte-identical file.
+ *
+ * The cap must exceed a full pass (measured ~200k events for this host's codex
+ * tree alone) or the cache evicts its own entries mid-scan and never scores a
+ * hit. 900k events is roughly the sum of every agent's history here and costs
+ * a few hundred MB at most — far less than the multi-GB of raw JSON it replaces.
+ */
+const EVENT_CACHE_MAX_ENTRIES = 900_000;
+
+const eventCache = new Map<string, { stamp: FileStamp; events: UsageEvent[] }>();
+let eventCacheCount = 0;
+let eventCacheBytes = 0;
+let eventCacheHits = 0;
+let eventCacheMisses = 0;
+
+export function eventCacheStats(): {
+  files: number;
+  events: number;
+  bytes: number;
+  hits: number;
+  misses: number;
+} {
+  return {
+    files: eventCache.size,
+    events: eventCacheCount,
+    bytes: eventCacheBytes,
+    hits: eventCacheHits,
+    misses: eventCacheMisses,
+  };
+}
+
+function evictEventCache(): void {
+  while (eventCacheCount > EVENT_CACHE_MAX_ENTRIES && eventCache.size > 1) {
+    const oldest = eventCache.keys().next();
+    if (oldest.done) break;
+    const entry = eventCache.get(oldest.value);
+    if (entry) {
+      eventCacheCount -= entry.events.length;
+      eventCacheBytes -= entry.events.length * EVENT_BYTES_ESTIMATE;
+    }
+    eventCache.delete(oldest.value);
+  }
+}
+
+/** Rough retained size of one event, used only to expose a memory figure. */
+const EVENT_BYTES_ESTIMATE = 420;
+
+/**
+ * Return cached events for `file` when its stamp is unchanged, otherwise call
+ * `produce` and memoize the result.
+ *
+ * `produce` is only invoked on a miss, so unchanged files skip read + parse +
+ * pricing entirely. Events are frozen into a fresh array per caller to protect
+ * the cached copy from downstream mutation.
+ */
+export async function cachedEventsForFile(
+  file: string,
+  produce: () => Promise<UsageEvent[]>,
+  opts: { maxBytes?: number } = {},
+): Promise<UsageEvent[]> {
+  const stamp = await stampFile(file);
+  if (!stamp) return [];
+  if (opts.maxBytes != null && stamp.size > opts.maxBytes) {
+    eventCacheMisses += 1;
+    return produce();
+  }
+
+  const cached = eventCache.get(file);
+  if (cached && cached.stamp.size === stamp.size && cached.stamp.mtimeMs === stamp.mtimeMs) {
+    eventCacheHits += 1;
+    eventCache.delete(file);
+    eventCache.set(file, cached);
+    return cached.events.slice();
+  }
+
+  eventCacheMisses += 1;
+  const events = await produce();
+  const previous = eventCache.get(file);
+  if (previous) {
+    eventCacheCount -= previous.events.length;
+    eventCacheBytes -= previous.events.length * EVENT_BYTES_ESTIMATE;
+    eventCache.delete(file);
+  }
+  eventCache.set(file, { stamp, events });
+  eventCacheCount += events.length;
+  eventCacheBytes += events.length * EVENT_BYTES_ESTIMATE;
+  evictEventCache();
+  return events;
+}
+
+/**
+ * Generic per-file memo of an arbitrary derived value, keyed by the file stamp.
+ *
+ * Used by parsers whose per-file product is not a `UsageEvent[]` (for example
+ * Claude Code's request candidates, which are deduped globally afterwards).
+ * `produce` runs only on a miss. Callers must treat the returned array as
+ * read-only, because later hits hand back the same cached instance.
+ */
+const derivedCache = new Map<string, { stamp: FileStamp; value: unknown; size: number }>();
+let derivedCacheBytes = 0;
+const DERIVED_CACHE_MAX_BYTES = 256 * 1024 * 1024;
+
+export async function cachedCandidatesForFile<T>(
+  file: string,
+  produce: () => Promise<T[]>,
+  opts: { maxBytes?: number; estimateBytes?: (value: T) => number } = {},
+): Promise<T[]> {
+  const stamp = await stampFile(file);
+  if (!stamp) return [];
+  if (opts.maxBytes != null && stamp.size > opts.maxBytes) return produce();
+
+  const cached = derivedCache.get(file);
+  if (cached && cached.stamp.size === stamp.size && cached.stamp.mtimeMs === stamp.mtimeMs) {
+    eventCacheHits += 1;
+    derivedCache.delete(file);
+    derivedCache.set(file, cached);
+    return cached.value as T[];
+  }
+
+  eventCacheMisses += 1;
+  const value = await produce();
+  const size = opts.estimateBytes
+    ? value.reduce((sum, item) => sum + opts.estimateBytes!(item), 0)
+    : value.length * EVENT_BYTES_ESTIMATE;
+  const previous = derivedCache.get(file);
+  if (previous) {
+    derivedCacheBytes -= previous.size;
+    derivedCache.delete(file);
+  }
+  derivedCache.set(file, { stamp, value, size });
+  derivedCacheBytes += size;
+  while (derivedCacheBytes > DERIVED_CACHE_MAX_BYTES && derivedCache.size > 1) {
+    const oldest = derivedCache.keys().next();
+    if (oldest.done) break;
+    const entry = derivedCache.get(oldest.value);
+    if (entry) derivedCacheBytes -= entry.size;
+    derivedCache.delete(oldest.value);
+  }
+  return value;
+}
+
+function evictJsonlCache(maxEntries: number, maxBytes: number): void {
+  while (jsonlCache.size > maxEntries || jsonlCacheBytes > maxBytes) {
+    const oldest = jsonlCache.keys().next();
+    if (oldest.done) break;
+    const entry = jsonlCache.get(oldest.value);
+    if (entry) jsonlCacheBytes -= entry.bytes;
+    jsonlCache.delete(oldest.value);
+  }
+}
+
+/** Reinsert on hit so the eviction order is LRU rather than FIFO. */
+function touchJsonlCache(file: string, entry: JsonlCacheEntry): void {
+  jsonlCache.delete(file);
+  jsonlCache.set(file, entry);
+}
+
+/**
+ * Read + parse a JSONL file, reusing the previous parse when the file is
+ * byte-identical (same size and mtime) to a cached stamp.
+ *
+ * Returns null when the file cannot be read, matching `readText`.
+ */
+export async function readJsonlCached(
+  file: string,
+  opts: { maxBytes?: number } = {},
+): Promise<unknown[] | null> {
+  const stamp = await stampFile(file);
+  if (!stamp) return null;
+
+  // Skip absurdly large files rather than materializing them as one string.
+  if (opts.maxBytes != null && stamp.size > opts.maxBytes) {
+    jsonlCacheMisses += 1;
+    return null;
+  }
+
+  const cached = jsonlCache.get(file);
+  if (cached && cached.stamp.size === stamp.size && cached.stamp.mtimeMs === stamp.mtimeMs) {
+    jsonlCacheHits += 1;
+    touchJsonlCache(file, cached);
+    return cached.rows;
+  }
+
+  jsonlCacheMisses += 1;
+  const text = await readText(file);
+  if (text == null) return null;
+  const rows = parseJsonl(text);
+  const entry: JsonlCacheEntry = { stamp, rows, bytes: text.length };
+  const previous = jsonlCache.get(file);
+  if (previous) jsonlCacheBytes -= previous.bytes;
+  jsonlCache.set(file, entry);
+  jsonlCacheBytes += entry.bytes;
+  evictJsonlCache(JSONL_CACHE_MAX_ENTRIES, JSONL_CACHE_MAX_BYTES);
+  // `text.length` approximates UTF-16 char count; the string is released here.
+  return rows;
+}
+
+/**
+ * Read + parse a JSON document, reusing the previous parse when the file stamp
+ * is unchanged. Accepts an array or an object with a known array field.
+ */
+export async function readJsonCached(file: string): Promise<unknown[] | null> {
+  const stamp = await stampFile(file);
+  if (!stamp) return null;
+
+  const cached = jsonlCache.get(file);
+  if (cached && cached.stamp.size === stamp.size && cached.stamp.mtimeMs === stamp.mtimeMs) {
+    jsonlCacheHits += 1;
+    touchJsonlCache(file, cached);
+    return cached.rows;
+  }
+
+  jsonlCacheMisses += 1;
+  const text = await readText(file);
+  if (text == null) return null;
+  let rows: unknown[];
+  try {
+    const data = JSON.parse(text) as unknown;
+    if (Array.isArray(data)) rows = data;
+    else if (data && typeof data === "object") {
+      const o = data as Record<string, unknown>;
+      if (Array.isArray(o.messages)) rows = o.messages;
+      else if (Array.isArray(o.events)) rows = o.events;
+      else if (Array.isArray(o.usage)) rows = o.usage;
+      else rows = [data];
+    } else {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  const entry: JsonlCacheEntry = { stamp, rows, bytes: text.length };
+  const previous = jsonlCache.get(file);
+  if (previous) jsonlCacheBytes -= previous.bytes;
+  jsonlCache.set(file, entry);
+  jsonlCacheBytes += entry.bytes;
+  evictJsonlCache(JSONL_CACHE_MAX_ENTRIES, JSONL_CACHE_MAX_BYTES);
+  return rows;
+}
+
 export function parseJsonl(text: string): unknown[] {
   const rows: unknown[] = [];
   for (const line of text.split(/\r?\n/)) {
