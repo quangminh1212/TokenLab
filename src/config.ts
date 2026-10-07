@@ -140,6 +140,17 @@ function setCachedConfig(next: XlabTokenConfig | null): void {
   cachedSyncView = null;
 }
 
+/**
+ * Drop the memoized config so the next `loadConfig()` re-reads from disk.
+ *
+ * Needed by tests that point TOKENLAB_CONFIG at a fixture: `loadConfig` caches
+ * on first call, so without this a later test silently keeps the first
+ * fixture's pricing.
+ */
+export function resetConfigCache(): void {
+  setCachedConfig(null);
+}
+
 export async function saveConfig(next: XlabTokenConfig): Promise<XlabTokenConfig> {
   const merged = mergeConfig(DEFAULT_CONFIG, next);
   merged.timezone = normalizeTimezone(merged.timezone);
