@@ -101,6 +101,11 @@ export interface TokenTotals {
 
 export interface GroupRow extends TokenTotals {
   key: string;
+  /**
+   * Peak RPM inside this bucket: the busiest single calendar minute's request
+   * count (hour/day/agent/model rows alike). See `rpmByGroup`.
+   */
+  rpm?: number;
 }
 
 export interface StatsResult {
