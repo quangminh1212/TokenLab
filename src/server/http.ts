@@ -13,7 +13,6 @@ import {
 import { buildRecentLiveEvents, computeDashboardLiveRate } from "../live-rate.js";
 import {
   AGENTS,
-  dedupeMirroredDshLiteLlmEvents,
   dedupeMirroredOpenClawEvents,
   detectAgents,
   scanAll,
@@ -738,13 +737,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             }
           },
         });
-        const dshEvents = byAgent.get("dsh");
-        const liteLlmEvents = byAgent.get("litellm");
-        if (dshEvents?.length && liteLlmEvents?.length) {
-          const reconciled = dedupeMirroredDshLiteLlmEvents(dshEvents, liteLlmEvents);
-          byAgent.set("dsh", reconciled.dshEvents);
-          byAgent.set("litellm", reconciled.liteLlmEvents);
-        }
+        // LiteLLM is kept independent: its usage is added as-is and is never
+        // reconciled against DSH. Do not reintroduce a cross-agent dedupe here.
         const openclawEvents = byAgent.get("openclaw");
         if (openclawEvents?.length) {
           byAgent.set(
