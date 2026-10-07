@@ -57,18 +57,25 @@ test("parseHermes prefers session_model_usage and does not double-count state.db
     db.close();
 
     const events = await parseHermes([root]);
-    // SMU (2 models); session total lower → no gap event
-    assert.equal(events.length, 2);
+    // Each SMU row is a session summary with a real span, so it is split across
+    // the minutes it covered rather than stamped on one instant. Assert on the
+    // TOTALS: splitting must not duplicate or drop usage.
     const models = new Set(events.map((e) => e.model));
     assert.ok(models.has("claude-opus-4.8"));
     assert.ok(models.has("Kimi-k3"));
     const totalIn = events.reduce((s, e) => s + e.inputTokens, 0);
     assert.equal(totalIn, 1600);
-    // reasoning 50 added on top of opus output 150
-    const opus = events.find((e) => e.model === "claude-opus-4.8")!;
-    assert.equal(opus.outputTokens, 200);
-    assert.ok(Math.abs((opus.estimatedCost ?? 0) - 0.05) < 1e-9);
-    assert.equal(opus.requestCount, 3);
+    // opus: 3 calls over a 1h span -> 3 rows within minutes 10:00..10:02
+    const opus = events.filter((e) => e.model === "claude-opus-4.8");
+    assert.equal(opus.length, 3);
+    // reasoning 50 added on top of opus output 150, and preserved across the split
+    assert.equal(opus.reduce((s, e) => s + e.outputTokens, 0), 200);
+    assert.equal(opus.reduce((s, e) => s + e.cacheReadTokens, 0), 500);
+    assert.ok(Math.abs(opus.reduce((s, e) => s + (e.estimatedCost ?? 0), 0) - 0.05) < 1e-9);
+    assert.equal(opus.reduce((s, e) => s + (e.requestCount ?? 0), 0), 3);
+    // Split rows must not all share one timestamp, or the peak is still faked.
+    const opusTimes = new Set(opus.map((e) => e.timestamp));
+    assert.equal(opusTimes.size, 3);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -121,13 +128,15 @@ test("parseHermes gap-fills when session rollup exceeds SMU (prefer over-count)"
     db.close();
 
     const events = await parseHermes([root]);
-    assert.ok(events.length >= 2);
-    const gap = events.find((e) => e.id && e.estimated === true);
-    assert.ok(gap, "expected gap-fill event");
+    // The gap-fill row and the SMU row are both session summaries with real
+    // spans, so each is split across its covered minutes. Identify the gap rows
+    // by their estimated flag and assert on totals.
+    const gapRows = events.filter((e) => e.estimated === true);
+    assert.ok(gapRows.length >= 1, "expected gap-fill event(s)");
     // session in 10000 - smu 3000 = 7000; out (500+100 reasoning) - smu 100 = 500; cache 2000-500=1500
-    assert.equal(gap!.inputTokens, 7000);
-    assert.equal(gap!.outputTokens, 500);
-    assert.equal(gap!.cacheReadTokens, 1500);
+    assert.equal(gapRows.reduce((s, e) => s + e.inputTokens, 0), 7000);
+    assert.equal(gapRows.reduce((s, e) => s + e.outputTokens, 0), 500);
+    assert.equal(gapRows.reduce((s, e) => s + e.cacheReadTokens, 0), 1500);
     const totalIn = events.reduce((s, e) => s + e.inputTokens, 0);
     assert.equal(totalIn, 10000);
   } finally {
@@ -243,6 +252,54 @@ test("parseHermes falls back to sessions when SMU empty", async () => {
     // output 200 + reasoning 80 (over-count policy)
     assert.equal(events[0]!.outputTokens, 280);
     assert.equal(events[0]!.cacheReadTokens, 1000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parseHermes spreads a long session so peak RPM is not the session total", async () => {
+  // Real regression: a 3135-call hermes session spanning ~25h was emitted as ONE
+  // event on its last_seen minute, so peak RPM read 3135 and all of the traffic
+  // was attributed to the wrong calendar day.
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-hermes-span-"));
+  try {
+    const db = new DatabaseSync(path.join(root, "state.db"));
+    db.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, model TEXT, started_at TEXT, ended_at TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER, reasoning_tokens INTEGER, cwd TEXT,
+        estimated_cost_usd REAL, actual_cost_usd REAL, api_call_count INTEGER
+      );
+      CREATE TABLE session_model_usage (
+        session_id TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+        cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+        estimated_cost_usd REAL, actual_cost_usd REAL, api_call_count INTEGER,
+        first_seen TEXT, last_seen TEXT
+      );
+      INSERT INTO session_model_usage VALUES (
+        'sess-long', 'Kimi-k3', 100000, 5000, 20000, 0, 0,
+        12.5, NULL, 3135, '2026-08-03T16:43:14Z', '2026-08-04T17:57:37Z'
+      );
+    `);
+    db.close();
+
+    const events = await parseHermes([root]);
+    // Totals preserved exactly across the split.
+    assert.equal(events.reduce((s, e) => s + (e.requestCount ?? 0), 0), 3135);
+    assert.equal(events.reduce((s, e) => s + e.inputTokens, 0), 100000);
+    assert.equal(events.reduce((s, e) => s + e.outputTokens, 0), 5000);
+    assert.ok(Math.abs(events.reduce((s, e) => s + (e.estimatedCost ?? 0), 0) - 12.5) < 1e-6);
+
+    // The busiest single minute must be a small fraction of the session total —
+    // that is what stops peak RPM from reading 3135.
+    const busiest = Math.max(...events.map((e) => e.requestCount ?? 0));
+    assert.ok(busiest < 100, `busiest minute should be far below 3135, got ${busiest}`);
+
+    // Traffic lands on BOTH calendar days the session actually spanned.
+    const days = new Set(events.map((e) => e.timestamp.slice(0, 10)));
+    assert.ok(days.has("2026-08-03"), "expected usage on the session's first day");
+    assert.ok(days.has("2026-08-04"), "expected usage on the session's second day");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

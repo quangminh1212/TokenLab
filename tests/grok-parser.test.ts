@@ -215,7 +215,10 @@ test("parseGrok uses usage.json snapshot without double-counting completed updat
     assert.equal(snapshot.totalTokens, 102_000);
     assert.equal(snapshot.inputTokens, 20_000);
     assert.equal(snapshot.cacheReadTokens, 80_000);
-    assert.equal(snapshot.requestCount, 3);
+    // The snapshot carries modelCalls: 3 but exposes no time span, so the 3 calls
+    // cannot be placed on real minutes. The row reports 1 request instead of
+    // stamping all 3 on one instant (which would fake a 3 req/min peak).
+    assert.equal(snapshot.requestCount, 1);
     assert.equal(snapshot.sourcePath, path.join(sessionDir, "usage.json"));
     assert.equal(residual.inputTokens, 40_000);
   } finally {
@@ -251,7 +254,11 @@ test("parseGrok recovers pruned sessions from client-state/session-meta", async 
     assert.equal(events[0]!.inputTokens, 20_000);
     assert.equal(events[0]!.cacheReadTokens, 100_000);
     assert.equal(events[0]!.outputTokens, 3_000);
-    assert.equal(events[0]!.requestCount, 5);
+    // This entry exposes no time span (no created_at/updated_at), so the 5-call
+    // aggregate cannot be placed on a real minute. The row keeps its tokens but
+    // reports 1 request instead of stamping 5 calls on one instant, which would
+    // fake a 5 req/min peak for the session.
+    assert.equal(events[0]!.requestCount, 1);
     assert.equal(events[0]!.estimated, false);
   } finally {
     await rm(parent, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractModel, extractTokenBuckets } from "../src/agents/shared/usage-fields.js";
+import { extractModel, extractTokenBuckets, resolveSpanMs, splitRequestsOverSpan } from "../src/agents/shared/usage-fields.js";
 
 test("extractTokenBuckets reads anthropic-style usage", () => {
   const b = extractTokenBuckets({
@@ -109,4 +109,74 @@ test("extractTokenBuckets reads Codex cached_input_tokens fields", () => {
     cacheWriteTokens: 120,
     inputIncludesCache: true,
   });
+});
+
+// --- resolveSpanMs -------------------------------------------------------
+
+test("resolveSpanMs accepts epoch seconds, epoch ms, ISO and Date, in either order", () => {
+  const iso = "2026-08-03T16:43:14.076Z";
+  const s = 1785775394; // epoch seconds
+  const ms = 1785775394076;
+  assert.deepEqual(resolveSpanMs(iso, iso), [Date.parse(iso), Date.parse(iso)]);
+  assert.deepEqual(resolveSpanMs(s, ms), [1785775394000, ms]);
+  assert.deepEqual(resolveSpanMs(new Date(iso), ms), [Date.parse(iso), ms]);
+  // order-insensitive: last, first must normalise to start <= end
+  assert.deepEqual(resolveSpanMs(1785866257, 1785775394), [1785775394000, 1785866257000]);
+});
+
+test("resolveSpanMs rejects non-spans instead of inventing one", () => {
+  assert.equal(resolveSpanMs(null, "2026-08-03T00:00:00.000Z"), null);
+  assert.equal(resolveSpanMs(0, 1785775394), null); // 0 is not a real timestamp
+  assert.equal(resolveSpanMs("not a date", 1785775394), null);
+  assert.equal(resolveSpanMs(123, 456), null); // tiny numbers are noise, not epochs
+});
+
+// --- splitRequestsOverSpan ----------------------------------------------
+
+test("splitRequestsOverSpan preserves the total exactly", () => {
+  const parts = splitRequestsOverSpan(3135, Date.parse("2026-08-03T16:00:00.000Z"), Date.parse("2026-08-04T17:00:00.000Z"));
+  const sum = parts.reduce((n, p) => n + p.requestCount, 0);
+  assert.equal(sum, 3135);
+});
+
+test("splitRequestsOverSpan spreads a session so the per-minute rate is not the session total", () => {
+  // Real regression: a 3135-call session spanning ~25h was emitted on ONE
+  // timestamp, so peak RPM read 3135. Spread over the real span the busiest
+  // minute is a small fraction of the session total.
+  const start = Date.parse("2026-08-03T16:43:14.000Z");
+  const end = Date.parse("2026-08-04T17:57:37.000Z");
+  const parts = splitRequestsOverSpan(3135, start, end);
+  const peak = Math.max(...parts.map((p) => p.requestCount));
+  assert.ok(peak < 100, `peak per minute should be far below the 3135 session total, got ${peak}`);
+  assert.ok(parts.length > 1000, `expected one bucket per covered minute, got ${parts.length}`);
+  // Every bucket sits inside the real span, so day attribution is correct too.
+  for (const p of parts) {
+    const t = Date.parse(p.timestamp);
+    assert.ok(t >= Math.floor(start / 60000) * 60000 && t <= end, `bucket ${p.timestamp} escaped the span`);
+  }
+});
+
+test("splitRequestsOverSpan gives a single minute for a zero-length span", () => {
+  const t = Date.parse("2026-08-03T16:43:00.000Z");
+  const parts = splitRequestsOverSpan(7, t, t);
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0]!.requestCount, 7);
+  assert.equal(parts[0]!.timestamp, new Date(t).toISOString());
+});
+
+test("splitRequestsOverSpan never emits a zero-request minute", () => {
+  // More minutes than requests: the remainder is front-loaded, so trailing
+  // minutes must be omitted rather than emitted with 0 requests.
+  const start = Date.parse("2026-08-03T00:00:00.000Z");
+  const end = Date.parse("2026-08-03T02:00:00.000Z"); // 121 minutes
+  const parts = splitRequestsOverSpan(3, start, end);
+  assert.equal(parts.length, 3);
+  assert.deepEqual(parts.map((p) => p.requestCount), [1, 1, 1]);
+  assert.equal(parts.reduce((n, p) => n + p.requestCount, 0), 3);
+});
+
+test("splitRequestsOverSpan clamps a non-positive request count to one", () => {
+  const t = Date.parse("2026-08-03T00:00:00.000Z");
+  const parts = splitRequestsOverSpan(0, t, t);
+  assert.equal(parts.reduce((n, p) => n + p.requestCount, 0), 1);
 });
