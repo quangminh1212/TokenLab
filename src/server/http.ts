@@ -29,6 +29,11 @@ import {
   loadScanCache,
   dropPreviousAgentSourceEvents,
   dropPreviousAgentSessionEvents,
+  getMachineId,
+  gistCoverageKey,
+  isGistRollupEvent,
+  machineIdFromEvent,
+  preferRicherEvent,
   pruneStaleSourceEvents,
   mergeEventsByIdPreferRicher,
   mergeLocalPreferOverGistRollups,
@@ -86,6 +91,191 @@ export function periodicLightScanEnabled(): Partial<Record<AgentId, boolean>> {
     enabled[mod.id] = PERIODIC_LIGHT_AGENTS.has(mod.id);
   }
   return enabled;
+}
+
+/**
+ * Codex and Hermes light parses return the complete rows of each file they
+ * actually read. Replacing those source paths is enough. Routers and DSH return
+ * a recent window, so their smaller history still goes through the richer-id
+ * merge. Neither path may collapse or sort the untouched cache: that copy of
+ * ~300k Codex rows was the once-a-minute CPU spike.
+ */
+const LIGHT_SOURCE_REPLACE_AGENTS = new Set<string>(["codex", "hermes"]);
+
+function usageSourceKey(sourcePath: unknown): string {
+  if (typeof sourcePath !== "string") return "";
+  return sourcePath.split(" ← ", 1)[0]!.replace(/\\/g, "/").toLowerCase();
+}
+
+function dedupeFreshById(fresh: UsageEvent[]): UsageEvent[] {
+  const byId = new Map<string, UsageEvent>();
+  for (const event of fresh) {
+    if (!event || typeof event.id !== "string" || !event.id) continue;
+    const prev = byId.get(event.id);
+    byId.set(event.id, prev ? preferRicherEvent(prev, event) : event);
+  }
+  return [...byId.values()];
+}
+
+function mergeSortedUsage(
+  left: UsageEvent[],
+  leftTs: number[],
+  right: UsageEvent[],
+  rightTs: number[],
+): { events: UsageEvent[]; timestampsMs: number[] } {
+  const events = new Array<UsageEvent>(left.length + right.length);
+  const timestampsMs = new Array<number>(events.length);
+  let i = 0;
+  let j = 0;
+  let k = 0;
+  while (i < left.length && j < right.length) {
+    if (leftTs[i]! <= rightTs[j]!) {
+      events[k] = left[i]!;
+      timestampsMs[k] = leftTs[i]!;
+      i += 1;
+    } else {
+      events[k] = right[j]!;
+      timestampsMs[k] = rightTs[j]!;
+      j += 1;
+    }
+    k += 1;
+  }
+  while (i < left.length) {
+    events[k] = left[i]!;
+    timestampsMs[k] = leftTs[i]!;
+    i += 1;
+    k += 1;
+  }
+  while (j < right.length) {
+    events[k] = right[j]!;
+    timestampsMs[k] = rightTs[j]!;
+    j += 1;
+    k += 1;
+  }
+  return { events, timestampsMs };
+}
+
+function dropGistRowsCoveredByFresh(
+  sorted: { events: UsageEvent[]; timestampsMs: number[] },
+  fresh: UsageEvent[],
+): { events: UsageEvent[]; timestampsMs: number[] } {
+  const covered = new Set<string>();
+  for (const event of fresh) {
+    if (!event || isGistRollupEvent(event)) continue;
+    covered.add(gistCoverageKey(event));
+  }
+  if (covered.size === 0) return sorted;
+  const mid = getMachineId();
+  let dropped = false;
+  for (const event of sorted.events) {
+    if (!isGistRollupEvent(event)) continue;
+    const eventMid = machineIdFromEvent(event);
+    if ((!eventMid || eventMid === mid) && covered.has(gistCoverageKey(event))) {
+      dropped = true;
+      break;
+    }
+  }
+  if (!dropped) return sorted;
+  const events: UsageEvent[] = [];
+  const timestampsMs: number[] = [];
+  for (let i = 0; i < sorted.events.length; i += 1) {
+    const event = sorted.events[i]!;
+    if (isGistRollupEvent(event)) {
+      const eventMid = machineIdFromEvent(event);
+      if ((!eventMid || eventMid === mid) && covered.has(gistCoverageKey(event))) continue;
+    }
+    events.push(event);
+    timestampsMs.push(sorted.timestampsMs[i]!);
+  }
+  return { events, timestampsMs };
+}
+
+/**
+ * Apply one light scan onto an already sorted cache.
+ * Untouched rows stay in order. Only the fresh rows are sorted, then merged.
+ */
+export function applyPeriodicLightDelta(
+  prev: UsageEvent[],
+  prevTs: number[] | null,
+  freshByAgent: Map<string, UsageEvent[]>,
+): { events: UsageEvent[]; timestampsMs: number[] } {
+  const replacePaths = new Map<string, Set<string>>();
+  const replaceIds = new Map<string, Set<string>>();
+  const smallAgents = new Set<string>();
+  for (const [agent, fresh] of freshByAgent) {
+    if (fresh.length === 0) continue;
+    if (LIGHT_SOURCE_REPLACE_AGENTS.has(agent)) {
+      const paths = new Set<string>();
+      const ids = new Set<string>();
+      for (const event of fresh) {
+        if (event?.id) ids.add(event.id);
+        const source = usageSourceKey(event?.sourcePath);
+        if (source) paths.add(source);
+      }
+      replacePaths.set(agent, paths);
+      replaceIds.set(agent, ids);
+    } else {
+      smallAgents.add(agent);
+    }
+  }
+
+  const kept: UsageEvent[] = [];
+  const keptTs: number[] = [];
+  const prevSmall = new Map<string, UsageEvent[]>();
+  /** Same id on a file this light pass did not re-read. Richer row wins. */
+  const shadowed = new Map<string, UsageEvent>();
+  const useTs = Boolean(prevTs && prevTs.length === prev.length);
+  for (let i = 0; i < prev.length; i += 1) {
+    const event = prev[i]!;
+    if (replacePaths.has(event.agent)) {
+      const source = usageSourceKey(event.sourcePath);
+      const paths = replacePaths.get(event.agent);
+      if (source && paths?.has(source)) continue;
+      const ids = replaceIds.get(event.agent);
+      if (event.id && ids?.has(event.id)) {
+        const key = `${event.agent}|${event.id}`;
+        const prevRich = shadowed.get(key);
+        shadowed.set(key, prevRich ? preferRicherEvent(prevRich, event) : event);
+        continue;
+      }
+      kept.push(event);
+      if (useTs) keptTs.push(prevTs![i]!);
+      continue;
+    }
+    if (smallAgents.has(event.agent)) {
+      const list = prevSmall.get(event.agent) ?? [];
+      list.push(event);
+      prevSmall.set(event.agent, list);
+      continue;
+    }
+    kept.push(event);
+    if (useTs) keptTs.push(prevTs![i]!);
+  }
+  if (!useTs) {
+    for (const event of kept) {
+      const parsed = Date.parse(event.timestamp);
+      keptTs.push(Number.isNaN(parsed) ? 0 : parsed);
+    }
+  }
+
+  const additions: UsageEvent[] = [];
+  for (const [agent, fresh] of freshByAgent) {
+    if (!replacePaths.has(agent)) continue;
+    for (const event of dedupeFreshById(fresh)) {
+      const prevRich = shadowed.get(`${agent}|${event.id}`);
+      additions.push(prevRich ? preferRicherEvent(prevRich, event) : event);
+    }
+  }
+  for (const agent of smallAgents) {
+    additions.push(
+      ...mergeEventsByIdPreferRicher(freshByAgent.get(agent) ?? [], prevSmall.get(agent) ?? []),
+    );
+  }
+  const sortedAdd = sortEventsByTime(additions);
+  const merged = mergeSortedUsage(kept, keptTs, sortedAdd.events, sortedAdd.timestampsMs);
+  const freshRows: UsageEvent[] = [];
+  for (const events of freshByAgent.values()) freshRows.push(...events);
+  return dropGistRowsCoveredByFresh(merged, freshRows);
 }
 
 export interface ServerOptions {
@@ -211,19 +401,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
    * Replace in-memory event cache. When `sorted` is false (mid-scan progressive),
    * defer the O(n log n) sort until the first period query or scan finalize.
    */
-  function setCache(events: UsageEvent[], opts: { sorted?: boolean } = {}): void {
+  function setCache(
+    events: UsageEvent[],
+    opts: { sorted?: boolean; timestampsMs?: number[] } = {},
+  ): void {
     if (opts.sorted) {
       cache = events;
-      cacheTs = events.length
-        ? (() => {
-            const ts = new Array<number>(events.length);
-            for (let i = 0; i < events.length; i++) {
-              const t = Date.parse(events[i]!.timestamp);
-              ts[i] = Number.isNaN(t) ? 0 : t;
-            }
-            return ts;
-          })()
-        : [];
+      const given = opts.timestampsMs;
+      if (given && given.length === events.length) {
+        cacheTs = given;
+      } else if (events.length) {
+        const ts = new Array<number>(events.length);
+        for (let i = 0; i < events.length; i++) {
+          const t = Date.parse(events[i]!.timestamp);
+          ts[i] = Number.isNaN(t) ? 0 : t;
+        }
+        cacheTs = ts;
+      } else {
+        cacheTs = [];
+      }
       // Publish only complete, timestamp-indexed snapshots to readers.
       readCache = cache;
       readCacheTs = cacheTs;
@@ -440,11 +636,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     if (antigravityAgent && fresh.length >= 5) {
       return fresh;
     }
-    // Codex light scans re-read only files whose mtime changed. Replace the
-    // previous rows for those files before unioning, otherwise a growing
-    // rollout would retain stale partial rows alongside the fresh snapshot.
-    const codexAgent = fresh[0]?.agent === "codex";
-    if (codexAgent) {
+    // Codex and Hermes light scans re-read files that changed. Hermes event
+    // ids include token totals, so an updated session is a new id. Replace the
+    // previous rows for those files before unioning, or the old id and the new
+    // id would both stay and double-count.
+    const replaceBySource = fresh[0]?.agent === "codex" || fresh[0]?.agent === "hermes";
+    if (replaceBySource) {
       const sourceKey = (sourcePath: unknown): string => {
         if (typeof sourcePath !== "string") return "";
         return sourcePath
@@ -511,6 +708,43 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     return mergeEventsByIdPreferRicher(fresh, prevForMerge);
   }
 
+  /** Same tokens, cost, and model means the cached row is already complete. */
+  function usageSig(event: UsageEvent): string {
+    return [
+      event.inputTokens,
+      event.outputTokens,
+      event.cacheReadTokens,
+      event.cacheWriteTokens,
+      event.requestCount ?? "",
+      event.estimatedCost ?? "",
+      event.model ?? "",
+    ].join(":");
+  }
+
+  /**
+   * True when every fresh row is already in the cache with the same totals.
+   * The light tick can then keep the existing array instead of copying it.
+   */
+  function lightFreshAlreadyCached(
+    freshByAgent: Map<string, UsageEvent[]>,
+    prev: UsageEvent[],
+  ): boolean {
+    const need = new Map<string, string>();
+    for (const events of freshByAgent.values()) {
+      for (const event of events) need.set(event.id, usageSig(event));
+    }
+    if (need.size === 0) return true;
+    let found = 0;
+    for (const event of prev) {
+      const want = need.get(event.id);
+      if (want === undefined) continue;
+      if (want !== usageSig(event)) return false;
+      found += 1;
+      if (found === need.size) return true;
+    }
+    return found === need.size;
+  }
+
   /**
    * Rescan local agent usage into memory.
    * - full: true  → historical full pass (all agents). Boot + manual Refresh.
@@ -520,33 +754,42 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     // Coalesce concurrent rescans — never return mid-scan empty cache to callers.
     if (scanPromise) return scanPromise;
     const full = opts.full === true;
+    if (!full) {
+      const now = Date.now();
+      if (now - lastRecentLightScanAt < RECENT_LIGHT_SCAN_MIN_MS) return cache.length;
+      lastRecentLightScanAt = now;
+    }
     grokReplacedSessions.clear();
     scanning = true;
-    // Keep previous cache visible until first progressive batch arrives
-    broadcastStream({
-      type: "scan",
-      revision: scanRevision,
-      updatedAt: Date.now(),
-      reason: full ? "start-full" : "start",
-      eventCount: cache.length,
-      scanning: true,
-      pricingRevision,
-    });
+    // Light ticks stay quiet unless something actually changed. Broadcasting
+    // "start" every minute made the dashboard reload and sort the whole cache.
     if (full) {
+      broadcastStream({
+        type: "scan",
+        revision: scanRevision,
+        updatedAt: Date.now(),
+        reason: "start-full",
+        eventCount: cache.length,
+        scanning: true,
+        pricingRevision,
+      });
       slog("[tokenlab] full historical scan started (all agent usage on disk)…");
     }
     scanPromise = (async () => {
       const prev = cache;
       const byAgent = new Map<string, UsageEvent[]>();
+      /** Light tick: agents that returned rows. Empty means "file unchanged". */
+      const freshByAgent = new Map<string, UsageEvent[]>();
       const agentStats: Array<{ agent: string; events: number; durationMs: number; error?: string }> = [];
       // Full scans collect fresh rows per agent; final aggregation compares them
-      // with prev so a thinner parser cannot erase history. Light scans only
-      // index hot agents and keep the rest in prev.
-      for (const e of prev) {
-        if (!full && !PERIODIC_LIGHT_AGENTS.has(e.agent)) continue;
-        const list = byAgent.get(e.agent) ?? [];
-        list.push(e);
-        byAgent.set(e.agent, list);
+      // with prev so a thinner parser cannot erase history. Light scans copy
+      // the cache only after a parser reports a real change.
+      if (full) {
+        for (const e of prev) {
+          const list = byAgent.get(e.agent) ?? [];
+          list.push(e);
+          byAgent.set(e.agent, list);
+        }
       }
 
       // Keep the old sorted snapshot visible while parsing. Rebuilding the
@@ -663,16 +906,29 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         await scanAll({
           enabled,
           light: !full,
-          // Keep historical scans serial; two light workers limit disk contention.
-          concurrency: full ? 1 : 2,
+          // One light parser at a time. Codex's session walk plus DSH decompress
+          // on two workers stalled the disk and the event loop for minutes.
+          concurrency: 1,
           // Full: no timeout. Periodic: 90s soft cap (prev data kept on miss).
           timeoutMs: full ? 0 : 90_000,
           onAgentDone: ({ agent, events, durationMs, error }) => {
             // Long agent parsers can block the event loop; refresh hang watchdog.
             writeHeartbeat();
             agentsDone += 1;
-            // Force GC sparingly — every agent was multi-100ms and dominated scan wall time.
-            // Heavy parsers + every 6th agent is enough to keep heap in check with --expose-gc.
+            // Light ticks must not collect the whole heap. A full GC after a
+            // large parser was a multi-core spike every minute, and the cache
+            // has to stay resident for the dashboard anyway.
+            if (!full && !error && events.length > 0) freshByAgent.set(agent, events);
+            if (!full) {
+              agentStats.push({
+                agent,
+                events: events.length,
+                durationMs,
+                error: error || undefined,
+              });
+              return;
+            }
+            // Force GC sparingly on full scans only.
             if (
               typeof globalThis.gc === "function" &&
               (agentsDone % 6 === 0 ||
@@ -737,6 +993,22 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             }
           },
         });
+        if (!full) {
+          if (progressBroadcastTimer) {
+            clearTimeout(progressBroadcastTimer);
+            progressBroadcastTimer = null;
+          }
+          // Unchanged files, or a re-read that matches the cache: keep the
+          // same array and the sort index. History already in memory stays.
+          if (freshByAgent.size === 0 || lightFreshAlreadyCached(freshByAgent, prev)) {
+            return cache.length;
+          }
+          const applied = applyPeriodicLightDelta(prev, cacheTs, freshByAgent);
+          setCache(applied.events, { sorted: true, timestampsMs: applied.timestampsMs });
+          bumpScan("complete");
+          scheduleSaveScanCache("quick");
+          return cache.length;
+        }
         // LiteLLM is kept independent: its usage is added as-is and is never
         // reconciled against DSH. Do not reintroduce a cross-agent dedupe here.
         const openclawEvents = byAgent.get("openclaw");
@@ -803,7 +1075,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   function scheduleRecentLightScan(): void {
     const now = Date.now();
     if (scanPromise || now - lastRecentLightScanAt < RECENT_LIGHT_SCAN_MIN_MS) return;
-    lastRecentLightScanAt = now;
     void rescan({ full: false }).catch((err) => {
       slog("[tokenlab] recent light scan failed:", err instanceof Error ? err.message : err);
     });
@@ -1727,7 +1998,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     void (async () => {
       await syncVpsMirrors(doFull ? "periodic-full" : "periodic", 55_000);
       // Skip starting another scan if one is already running (rescan coalesces too).
+      // A dashboard recent-scan in the same minute counts as this tick.
       if (scanPromise) return;
+      if (!doFull && Date.now() - lastRecentLightScanAt < RECENT_LIGHT_SCAN_MIN_MS) return;
       await rescan({ full: doFull });
     })().catch((err) => {
       try {
