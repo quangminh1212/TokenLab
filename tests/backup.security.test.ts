@@ -361,6 +361,62 @@ test("enforceMonotonicAgentDays keeps richer previous day", async () => {
   );
 });
 
+test("pruneStaleSourceEvents drops prev rows a fresh scan re-parsed", async () => {
+  const { pruneStaleSourceEvents } = await import("../src/backup.js");
+  // Regression: a parser change split one session row into per-minute rows, so the
+  // old row's id no longer exists in the fresh scan. Without pruning, the union
+  // kept the stale row forever and the monotonic guard restored it as "richer"
+  // history, which served a fake 3135 req/min peak through full rescans.
+  const previous = [
+    evt({
+      id: "stale-aggregate",
+      agent: "hermes",
+      sourcePath: "C:/hermes/state.db",
+      requestCount: 3135,
+      totalTokens: 872_000_000,
+    }),
+    evt({
+      id: "other-source",
+      agent: "hermes",
+      sourcePath: "C:/hermes/profiles/other/state.db",
+      requestCount: 7,
+    }),
+    evt({
+      id: "gist-backup",
+      agent: "hermes",
+      sourcePath: "backup:gist-daily:quang",
+      requestCount: 2,
+    }),
+  ];
+  const fresh = [
+    evt({ id: "split-0", agent: "hermes", sourcePath: "C:/hermes/state.db", requestCount: 3 }),
+    evt({ id: "split-1", agent: "hermes", sourcePath: "C:/hermes/state.db", requestCount: 4 }),
+  ];
+
+  const pruned = pruneStaleSourceEvents(previous, fresh);
+  assert.ok(
+    !pruned.some((e) => e.id === "stale-aggregate"),
+    "rows whose source was re-parsed must be dropped, not kept by id",
+  );
+  assert.ok(
+    pruned.some((e) => e.id === "other-source"),
+    "sources the scan did not cover must survive untouched",
+  );
+  assert.ok(
+    pruned.some((e) => e.id === "gist-backup"),
+    "backup/gist rows have synthetic sources and must never be pruned",
+  );
+
+  // A row the fresh scan still produces is kept (same id), and an empty fresh
+  // list is a no-op so a failed scan can never wipe history.
+  assert.equal(pruneStaleSourceEvents(previous, []).length, previous.length);
+  assert.ok(
+    pruneStaleSourceEvents(previous, [evt({ id: "stale-aggregate", agent: "hermes", sourcePath: "C:/hermes/state.db" })])
+      .some((e) => e.id === "stale-aggregate"),
+    "same-id rows are preserved",
+  );
+});
+
 test("collapseRouterDailyEvents drops mixed when model rows cover the day", () => {
   const mixed = evt({
     id: "mixed-blob",

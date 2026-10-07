@@ -6,6 +6,7 @@ import {
   computeLiveRequestRate,
   countActiveMinutes,
   costReport,
+  rpmByGroup,
 } from "../src/aggregate.js";
 import type { UsageEvent } from "../src/types.js";
 
@@ -103,8 +104,9 @@ test("costReport matches agent and normalized-model aggregates in one report", (
   );
 });
 
-test("computeActiveUsageRpm uses active minutes only (idle gaps ignored)", () => {
-  // 10 requests across 2 distinct minutes, with a long idle gap between
+test("computeActiveUsageRpm returns the PEAK minute (busiest minute drives RPM)", () => {
+  // 10 requests across 2 distinct minutes, with a long idle gap between.
+  // Minute 01:00 has 4+1 = 5 requests; minute 03:15 has 5 requests.
   const events: UsageEvent[] = [
     {
       ...sample[0]!,
@@ -130,12 +132,31 @@ test("computeActiveUsageRpm uses active minutes only (idle gaps ignored)", () =>
   ];
   assert.equal(countActiveMinutes(events), 2);
   const r = computeActiveUsageRpm(events);
-  assert.equal(r.method, "active_minutes_mean");
+  assert.equal(r.method, "peak_minute");
   assert.equal(r.requests, 10); // 4+1+5
   assert.equal(r.activeMinutes, 2);
-  // NOT 10 / wall-clock hours — only busy minutes
-  assert.equal(r.rpm, 5); // 10 / 2
+  // Peak = busiest single minute = 5 requests (NOT the 10/2 = 5 mean — same
+  // here by coincidence, so the distinguishing case is asserted below).
+  assert.equal(r.rpm, 5);
+  assert.equal(r.meanRpm, 5);
   assert.ok(Math.abs(r.rps - 5 / 60) < 1e-9);
+});
+
+test("peak RPM beats the mean when traffic is bursty (the whole point of the change)", () => {
+  // Minute A: 30 requests packed together. Minutes B..D: 1 request each.
+  // Mean over active minutes = 33/4 = 8.25, but the busiest minute is 30.
+  const events: UsageEvent[] = [
+    { ...sample[0]!, id: "burst", timestamp: "2026-07-28T01:00:00.000Z", requestCount: 30, estimated: false },
+    { ...sample[0]!, id: "b", timestamp: "2026-07-28T01:05:00.000Z", requestCount: 1, estimated: false },
+    { ...sample[0]!, id: "c", timestamp: "2026-07-28T01:10:00.000Z", requestCount: 1, estimated: false },
+    { ...sample[0]!, id: "d", timestamp: "2026-07-28T01:15:00.000Z", requestCount: 1, estimated: false },
+  ];
+  const r = computeActiveUsageRpm(events);
+  assert.equal(r.requests, 33);
+  assert.equal(r.activeMinutes, 4);
+  assert.equal(r.meanRpm, 33 / 4); // 8.25 — the old headline number
+  assert.equal(r.rpm, 30); // peak — the new headline number
+  assert.notEqual(r.rpm, r.meanRpm);
 });
 
 test("computeLiveRequestRate uses sliding-window mean (RPM = N×60/T)", () => {
@@ -304,4 +325,147 @@ test("aggregate by model merges case variants into one lowercase key", () => {
   // No duplicate case-split rows
   assert.equal(r.groups.filter((g) => g.key.toLowerCase() === "kimi-k3").length, 1);
   assert.equal(r.groups.filter((g) => g.key.toLowerCase() === "xlab").length, 1);
+});
+
+test("rpmByGroup reports each hour's PEAK minute, so a burst is not averaged away", () => {
+  const mk = (id: string, ts: string, requestCount: number): UsageEvent => ({
+    ...sample[0]!,
+    id,
+    timestamp: ts,
+    requestCount,
+    estimated: false,
+  });
+  const events: UsageEvent[] = [
+    // 02:00 hour — 1 request in each of 2 minutes → peak minute = 1
+    mk("h2a", "2026-07-28T02:00:10.000Z", 1),
+    mk("h2b", "2026-07-28T02:04:50.000Z", 1),
+    // 03:00 hour — 6 requests all inside ONE minute → peak minute = 6
+    mk("h3a", "2026-07-28T03:10:00.000Z", 4),
+    mk("h3b", "2026-07-28T03:10:30.000Z", 2),
+    // 04:00 hour — one burst of 20 then a trickle: peak must be 20, not 22/2
+    mk("h4a", "2026-07-28T04:00:05.000Z", 20),
+    mk("h4b", "2026-07-28T04:30:00.000Z", 2),
+  ];
+
+  const byHour = rpmByGroup(events, "hour");
+  assert.equal(byHour.get("2026-07-28T02:00"), 1); // peak minute = 1 request
+  assert.equal(byHour.get("2026-07-28T03:00"), 6); // 4+2 in the same minute
+  assert.equal(byHour.get("2026-07-28T04:00"), 20); // burst survives; mean would be 11
+  assert.notEqual(byHour.get("2026-07-28T04:00"), 11);
+});
+
+test("rollups never contribute to peak RPM, but do inflate the Requests column", () => {
+  const mk = (id: string, ts: string, extra: Partial<UsageEvent> = {}): UsageEvent => ({
+    ...sample[0]!,
+    id,
+    timestamp: ts,
+    requestCount: 1,
+    estimated: false,
+    ...extra,
+  });
+  const events: UsageEvent[] = [
+    mk("real", "2026-07-28T05:00:10.000Z"),
+    // Daily rollup blob — a whole day's requests under ONE timestamp
+    mk("rollup", "2026-07-28T05:30:00.000Z", { estimated: true, requestCount: 50 }),
+    // Zero-token / zero-cost stream probe — excluded from live scope
+    mk("probe", "2026-07-28T05:45:00.000Z", {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      estimatedCost: 0,
+    }),
+  ];
+
+  // "live" scope: 1 real request, 1 active minute → peak 1
+  const liveHour = rpmByGroup(events, "hour", null, "live");
+  assert.equal(liveHour.get("2026-07-28T05:00"), 1);
+  const liveDay = rpmByGroup(events, "day", null, "live");
+  assert.equal(liveDay.get("2026-07-28"), 1);
+
+  // "table" scope: same peak. The rollup's 50 is NOT a real minute, so it must
+  // not win the max, and the probe is a real (if pointless) call sharing 05:45.
+  const tableHour = rpmByGroup(events, "hour");
+  assert.equal(tableHour.get("2026-07-28T05:00"), 1);
+
+  // The table row still shows all 52 requests (rollup and probe included) —
+  // Requests and RPM intentionally measure different things now, and the peak
+  // must reflect only rows with trustworthy per-minute timestamps.
+  const hourStats = aggregate(events, "hour", "tokens");
+  const row = hourStats.groups.find((g) => g.key === "2026-07-28T05:00");
+  assert.equal(row?.eventCount, 52); // real 1 + rollup 50 + probe 1
+  assert.equal(row?.rpm, 1); // peak from real rows only — not 50
+
+  // agent/model rows get a peak too
+  const agentStats = aggregate(events, "agent", "cost");
+  assert.ok(agentStats.groups.length > 0);
+  for (const g of agentStats.groups) {
+    assert.ok((g.rpm ?? 0) > 0);
+  }
+});
+
+test("rollup-only groups report no RPM (undefined) instead of a fake peak", () => {
+  const mk = (id: string, model: string, ts: string, over: Partial<UsageEvent> = {}): UsageEvent => ({
+    ...sample[0]!,
+    id,
+    model,
+    timestamp: ts,
+    requestCount: 1,
+    estimated: false,
+    ...over,
+  });
+
+  // A model whose usage arrives ONLY as an estimated rollup (real-world case:
+  // an agent that reports daily totals instead of per-call rows).
+  const onlyRollup: UsageEvent[] = [
+    mk("r1", "claude-sonnet", "2026-07-28T05:00:00.000Z", {
+      estimated: true,
+      requestCount: 157,
+      totalTokens: 1_177_887,
+      inputTokens: 1_000_000,
+    }),
+  ];
+  const s1 = aggregate(onlyRollup, "model", "cost");
+  const row1 = s1.groups[0]!;
+  assert.equal(row1.eventCount, 157);
+  // Previously this row reported rpm 0 (the "157 requests, 0 RPM" contradiction).
+  // Now it reports *undefined*: no live minute exists, so there is no peak to
+  // state, and the UI renders "—" rather than a fabricated 0 or 157.
+  assert.equal(row1.rpm, undefined);
+  assert.equal(rpmByGroup(onlyRollup, "model").get("claude-sonnet"), undefined);
+
+  // The regression that forced this: a rollup sitting next to real rows used to
+  // hijack the peak (verified at 4692 req/min from a single day rollup).
+  const mixed: UsageEvent[] = [
+    mk("m1", "claude-sonnet", "2026-07-28T02:00:00.000Z", { estimated: true, requestCount: 4692 }),
+    mk("m2", "claude-sonnet", "2026-07-28T02:00:10.000Z", { requestCount: 3 }),
+    mk("m3", "claude-sonnet", "2026-07-28T02:05:40.000Z", { requestCount: 5 }),
+  ];
+  const row2 = aggregate(mixed, "model", "cost").groups[0]!;
+  assert.equal(row2.eventCount, 4700); // rollup still counted in Requests
+  // Busiest real minute = 3 (m2 alone); the 4692 rollup must not win.
+  assert.equal(row2.rpm, 5); // m3: 5 in its own minute beats m2's 3
+  assert.notEqual(row2.rpm, 4692);
+});
+
+test("agent/model rpm is scoped per group, so a burst is not diluted by other groups", () => {
+  const mk = (id: string, agent: string, ts: string, requestCount: number): UsageEvent => ({
+    ...sample[0]!,
+    id,
+    agent,
+    timestamp: ts,
+    requestCount,
+    estimated: false,
+  });
+  const events: UsageEvent[] = [
+    // Agent A: 8 requests in ONE minute → 8 RPM
+    mk("a1", "agent-a", "2026-07-28T09:00:05.000Z", 8),
+    // Agent B: 1 request in a different minute → 1 RPM
+    mk("b1", "agent-b", "2026-07-28T09:30:00.000Z", 1),
+  ];
+
+  const stats = aggregate(events, "agent", "cost");
+  assert.equal(stats.groups.find((g) => g.key === "agent-a")?.rpm, 8);
+  assert.equal(stats.groups.find((g) => g.key === "agent-b")?.rpm, 1);
 });
