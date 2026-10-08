@@ -1,0 +1,356 @@
+From cde696075839ef23058c38fe5373ff62bd94daa8 Mon Sep 17 00:00:00 2001
+From: Bach Minh Quang <0947556012abc@gmail.com>
+Date: Sat, 3 Oct 2026 12:06:02 +0700
+Subject: [PATCH 1/2] fix(tokenlab): stop Hermes rescans from stacking the same
+ usage
+
+---
+ src/agents/hermes/index.ts  | 82 +++++++++++++++++++++++--------------
+ src/server/http.ts          | 34 ++++++++++-----
+ tests/hermes-parser.test.ts | 72 ++++++++++++++++++++++++++++++++
+ 3 files changed, 147 insertions(+), 41 deletions(-)
+
+diff --git a/src/agents/hermes/index.ts b/src/agents/hermes/index.ts
+index f5a0470..7b463d9 100644
+--- a/src/agents/hermes/index.ts
++++ b/src/agents/hermes/index.ts
+@@ -2,6 +2,7 @@ import type { AgentModule } from "../shared/types.js";
+ import { pathEnv, unique } from "../shared/env.js";
+ 
+ import path from "node:path";
++import { readdir } from "node:fs/promises";
+ import { applyPricing } from "../../pricing.js";
+ import type { UsageEvent } from "../../types.js";
+ import { num, parseJsonl, pathExists, readText, stableId, walkFiles } from "../../util.js";
+@@ -15,7 +16,11 @@ import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/u
+  * - state-snapshots: only sessions NOT already covered by live state.db (no double-count)
+  * - JSONL only under sessions/ (skip node_modules / venv noise)
+  */
+-export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
++export async function parseHermes(
++  roots: string[],
++  opts?: { light?: boolean },
++): Promise<UsageEvent[]> {
++  const light = opts?.light === true;
+   const events: UsageEvent[] = [];
+   const seenDb = new Set<string>();
+   /** Session ids already counted from a preferred (live) DB — snapshots must skip these. */
+@@ -24,7 +29,7 @@ export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
+   for (const root of roots) {
+     if (!(await pathExists(root))) continue;
+ 
+-    const { primary, snapshots } = await discoverHermesDbPaths(root);
++    const { primary, snapshots } = await discoverHermesDbPaths(root, light);
+ 
+     // 1) Live / primary DBs first (full read)
+     for (const dbPath of primary) {
+@@ -50,8 +55,11 @@ export async function parseHermes(roots: string[]): Promise<UsageEvent[]> {
+     const sessionsDir = path.join(root, "sessions");
+     if (await pathExists(sessionsDir)) {
+       const files = await walkFiles(sessionsDir, {
+-        maxDepth: 6,
+-        match: (n) => n.endsWith(".jsonl") || (n.includes("session") && n.endsWith(".json")),
++        maxDepth: light ? 2 : 6,
++        // request_dump_* is a debug payload (about 2000 files). The ledger is state.db.
++        match: (n) =>
++          !n.startsWith("request_dump_") &&
++          (n.endsWith(".jsonl") || (n.includes("session") && n.endsWith(".json"))),
+       });
+       for (const file of files) {
+         events.push(...(await parseHermesJsonFile(file)));
+@@ -68,7 +76,10 @@ function isSnapshotDbPath(dbPath: string): boolean {
+ }
+ 
+ /** Discover SQLite DBs: primary (live) first, then historical snapshots. */
+-async function discoverHermesDbPaths(root: string): Promise<{ primary: string[]; snapshots: string[] }> {
++async function discoverHermesDbPaths(
++  root: string,
++  light = false,
++): Promise<{ primary: string[]; snapshots: string[] }> {
+   const preferNames = ["state.db", "hermes.db", "sessions.db"];
+   const primary: string[] = [];
+   const snapshots: string[] = [];
+@@ -78,6 +89,34 @@ async function discoverHermesDbPaths(root: string): Promise<{ primary: string[];
+     if (await pathExists(p)) primary.push(p);
+   }
+ 
++  const dedupe = (list: string[]) => {
++    const seen = new Set<string>();
++    const uniq: string[] = [];
++    for (const p of list) {
++      const k = path.resolve(p).toLowerCase();
++      if (seen.has(k)) continue;
++      seen.add(k);
++      uniq.push(p);
++    }
++    return uniq;
++  };
++
++  // Minute scan: live DB plus one-level profiles. No snapshot walk, no request dumps.
++  if (light) {
++    const profiles = path.join(root, "profiles");
++    if (await pathExists(profiles)) {
++      const entries = await readdir(profiles, { withFileTypes: true });
++      for (const entry of entries) {
++        if (!entry.isDirectory()) continue;
++        for (const name of preferNames) {
++          const p = path.join(profiles, entry.name, name);
++          if (await pathExists(p)) primary.push(p);
++        }
++      }
++    }
++    return { primary: dedupe(primary), snapshots };
++  }
++
+   // Nested DBs: state-snapshots for history not in live DB
+   const nested = await walkFiles(root, {
+     maxDepth: 5,
+@@ -96,18 +135,6 @@ async function discoverHermesDbPaths(root: string): Promise<{ primary: string[];
+     }
+   }
+ 
+-  const dedupe = (list: string[]) => {
+-    const seen = new Set<string>();
+-    const uniq: string[] = [];
+-    for (const p of list) {
+-      const k = path.resolve(p).toLowerCase();
+-      if (seen.has(k)) continue;
+-      seen.add(k);
+-      uniq.push(p);
+-    }
+-    return uniq;
+-  };
+-
+   return { primary: dedupe(primary), snapshots: dedupe(snapshots) };
+ }
+ 
+@@ -146,7 +173,7 @@ async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
+       if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) continue;
+       events.push(
+         applyPricing({
+-          id: stableId("hermes", file, String(idx), String(inputTokens), String(outputTokens)),
++          id: stableId("hermes", file, String(idx)),
+           agent: "hermes",
+           model: extractModel(r),
+           timestamp: extractTimestamp(r),
+@@ -162,7 +189,7 @@ async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
+     }
+     events.push(
+       applyPricing({
+-        id: stableId("hermes", file, String(idx), String(buckets.inputTokens), String(buckets.outputTokens)),
++        id: stableId("hermes", file, String(idx)),
+         agent: "hermes",
+         model: extractModel(r),
+         timestamp: extractTimestamp(r),
+@@ -333,7 +360,7 @@ function gapFillSessionsOverSmu(
+       const cost = pickHermesCost(row);
+       gaps.push(
+         applyPricing({
+-          id: stableId("hermes", dbPath, "gap", sid, String(dIn), String(dOut), String(dCr)),
++          id: stableId("hermes", dbPath, "gap", sid),
+           agent: "hermes",
+           model,
+           timestamp: extractTimestamp(row.ended_at ?? row.started_at, row),
+@@ -415,15 +442,7 @@ function readSessionModelUsage(
+       const apiCalls = num(row.api_call_count);
+ 
+       const priced = applyPricing({
+-        id: stableId(
+-          "hermes",
+-          dbPath,
+-          "smu",
+-          sessionId,
+-          model || "unknown",
+-          String(buckets.inputTokens),
+-          String(buckets.outputTokens),
+-        ),
++        id: stableId("hermes", dbPath, "smu", sessionId, model || "unknown"),
+         agent: "hermes",
+         model,
+         timestamp: ts,
+@@ -511,7 +530,7 @@ function readSessionsTable(
+ 
+       events.push(
+         applyPricing({
+-          id: stableId("hermes", dbPath, sid, String(inputTokens), String(outputTokens)),
++          id: stableId("hermes", dbPath, "sess", sid),
+           agent: "hermes",
+           model,
+           timestamp,
+@@ -549,7 +568,7 @@ function readMessagesUsage(
+       if (!buckets) continue;
+       events.push(
+         applyPricing({
+-          id: stableId("hermes", dbPath, "msg", String(i), String(buckets.inputTokens)),
++          id: stableId("hermes", dbPath, "msg", String(i)),
+           agent: "hermes",
+           model: extractModel(row),
+           timestamp: extractTimestamp(row),
+@@ -633,4 +652,5 @@ export const agent: AgentModule = {
+     ]);
+   },
+   parse: parseHermes,
++  parseLight: (roots) => parseHermes(roots, { light: true }),
+ };
+diff --git a/src/server/http.ts b/src/server/http.ts
+index 5be7d33..bab7194 100644
+--- a/src/server/http.ts
++++ b/src/server/http.ts
+@@ -24,6 +24,7 @@ import {
+   dropPreviousAgentSourceEvents,
+   dropPreviousAgentSessionEvents,
+   mergeEventsByIdPreferRicher,
++  replaceFreshAgentSourceEvents,
+   mergeLocalPreferOverGistRollups,
+   migrateLegacyDataDir,
+   restoreBackup,
+@@ -493,6 +494,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
+       // Replace every freshly read database/JSON source so stale gap events do not linger.
+       prevForMerge = dropPreviousAgentSourceEvents(prevForMerge, fresh, "opencode");
+     }
++    if (fresh[0]?.agent === "hermes") {
++      // SMU rows are cumulative. Older scans baked the token count into the id,
++      // so a union kept every snapshot and today's total climbed on each tick.
++      return replaceFreshAgentSourceEvents(fresh, prev, "hermes");
++    }
+     // Union by id; keep higher token/cost row when same id reappears.
+     // Also keeps prev-only rows (already-scanned history) so we only *add*
+     // newly seen ids from this pass rather than re-baselining the agent.
+@@ -595,14 +601,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
+           // Source/session replacements are filtered explicitly below; full
+           // agent rescans still retain prev as the high-water comparison baseline.
+           scanned = enforceMonotonicAgentDays(
+-            dropPreviousAgentSessionEvents(
+-              dropPreviousAgentSourceEvents(
+-                dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
++            dropPreviousAgentSourceEvents(
++              dropPreviousAgentSessionEvents(
++                dropPreviousAgentSourceEvents(
++                  dropPreviousAgentSourceEvents(previousForMonotonic(), scanned, "claude-code"),
++                  scanned,
++                  "opencode",
++                ),
+                 scanned,
+-                "opencode",
++                "grok",
+               ),
+               scanned,
+-              "grok",
++              "hermes",
+             ),
+             scanned,
+           );
+@@ -615,14 +625,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
+         let merged = mergeLocalPreferOverGistRollups(scanned, importedEvents);
+         if (finalize) {
+           merged = enforceMonotonicAgentDays(
+-            dropPreviousAgentSessionEvents(
+-              dropPreviousAgentSourceEvents(
+-                dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
++            dropPreviousAgentSourceEvents(
++              dropPreviousAgentSessionEvents(
++                dropPreviousAgentSourceEvents(
++                  dropPreviousAgentSourceEvents(previousForMonotonic(), merged, "claude-code"),
++                  merged,
++                  "opencode",
++                ),
+                 merged,
+-                "opencode",
++                "openclaw",
+               ),
+               merged,
+-              "openclaw",
++              "hermes",
+             ),
+             merged,
+           );
+diff --git a/tests/hermes-parser.test.ts b/tests/hermes-parser.test.ts
+index f49cfb0..81c9fbb 100644
+--- a/tests/hermes-parser.test.ts
++++ b/tests/hermes-parser.test.ts
+@@ -5,6 +5,7 @@ import path from "node:path";
+ import { test } from "node:test";
+ import { DatabaseSync } from "node:sqlite";
+ import { parseHermes } from "../src/agents/hermes/index.ts";
++import { replaceFreshAgentSourceEvents } from "../src/backup.ts";
+ 
+ test("parseHermes prefers session_model_usage and does not double-count state.db", async () => {
+   const root = await mkdtemp(path.join(tmpdir(), "xlab-hermes-"));
+@@ -247,3 +248,74 @@ test("parseHermes falls back to sessions when SMU empty", async () => {
+     await rm(root, { recursive: true, force: true });
+   }
+ });
++
++test("hermes SMU id stays stable when tokens grow and request dumps are ignored", async () => {
++  const root = await mkdtemp(path.join(tmpdir(), "xlab-hermes-stable-"));
++  try {
++    const dbPath = path.join(root, "state.db");
++    const db = new DatabaseSync(dbPath);
++    db.exec(`
++      CREATE TABLE sessions (
++        id TEXT PRIMARY KEY, model TEXT, started_at TEXT, ended_at TEXT,
++        input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER
++      );
++      CREATE TABLE session_model_usage (
++        session_id TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER,
++        cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
++        api_call_count INTEGER, first_seen TEXT, last_seen TEXT
++      );
++      INSERT INTO sessions VALUES (
++        'sess-live', 'glm-5.3', '2026-10-03T01:00:00Z', '2026-10-03T02:00:00Z',
++        1000, 10, 0
++      );
++      INSERT INTO session_model_usage VALUES (
++        'sess-live', 'glm-5.3', 1000, 10, 0, 0, 0, 1,
++        '2026-10-03T01:00:00Z', '2026-10-03T02:00:00Z'
++      );
++    `);
++    db.close();
++    await mkdir(path.join(root, "sessions"), { recursive: true });
++    await writeFile(
++      path.join(root, "sessions", "request_dump_today.json"),
++      JSON.stringify({
++        timestamp: "2026-10-03T02:00:00Z",
++        model: "glm-5.3",
++        input_tokens: 999999,
++        output_tokens: 1,
++      }),
++    );
++
++    const first = await parseHermes([root]);
++    assert.equal(first.length, 1);
++    assert.equal(first[0]!.inputTokens, 1000);
++
++    const db2 = new DatabaseSync(dbPath);
++    db2.exec(`UPDATE session_model_usage SET input_tokens = 5000, output_tokens = 40 WHERE session_id = 'sess-live'`);
++    db2.close();
++
++    const second = await parseHermes([root], { light: true });
++    assert.equal(second.length, 1);
++    assert.equal(second[0]!.id, first[0]!.id);
++    assert.equal(second[0]!.inputTokens, 5000);
++
++    const stacked = replaceFreshAgentSourceEvents(
++      second,
++      [
++        {
++          ...first[0]!,
++          id: "legacy-token-baked-id",
++          inputTokens: 1000,
++          totalTokens: 1010,
++          estimatedCost: 2,
++        },
++        first[0]!,
++      ],
++      "hermes",
++    );
++    assert.equal(stacked.length, 1);
++    assert.equal(stacked[0]!.inputTokens, 5000);
++    assert.equal(stacked[0]!.id, second[0]!.id);
++  } finally {
++    await rm(root, { recursive: true, force: true });
++  }
++});
+-- 
+2.55.0.windows.2
+
