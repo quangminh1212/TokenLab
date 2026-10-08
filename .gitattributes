@@ -1,0 +1,60 @@
+# Normalize line endings in the repository, not per developer machine.
+#
+# Without this, checkouts depend on each contributor's local core.autocrlf:
+# Windows clones get CRLF, Linux/macOS get LF, and every cross-platform commit
+# shows the whole file as changed. CI runs ubuntu + windows + macos, so the
+# same commit must produce identical bytes everywhere.
+#
+# `text=auto`      store LF in the object database, check out the platform style
+# `eol=lf`         always check out LF (scripts must stay LF to stay executable)
+# `binary`         never touch the bytes
+#
+# After pulling this file, run once:  git add --renormalize .
+* text=auto
+
+# Source: LF everywhere so diffs are stable and no tool rewrites them.
+*.ts   text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.cjs  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+
+# Shell scripts must keep LF or they fail to execute on Linux/macOS.
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Windows launchers: CRLF so cmd.exe/PowerShell behave predictably.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+*.vbs  text eol=crlf
+
+# Binary assets — never normalize or diff.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.zip  binary
+*.tgz  binary
+*.node binary
+*.bundle  binary
+*.patch   binary
+
+# Keep generated lockfiles out of diff noise but still tracked and normalized.
+pnpm-lock.yaml text eol=lf
+package-lock.json text eol=lf
+
+# Linguist: treat vendored mirrors and build output as external so they do not
+# skew the language statistics on GitHub.
+installer/dist/**  linguist-generated=true
+node_modules/**    linguist-vendored=true
+mcps/**            linguist-vendored=true
+terminals/**       linguist-vendored=true
