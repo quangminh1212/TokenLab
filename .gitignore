@@ -66,3 +66,35 @@ check_paths.mjs
 
 
 .playwright-mcp/
+
+# Local repo backups / exported patch sets. These are working copies of other
+# repos, not sources: a full git bundle here is ~22 MB of binary that git can
+# never reclaim once committed. Keep them on disk but out of history.
+.backup-agentlab-commits/*.bundle
+*.bundle
+
+# Logs the server writes next to its data dir
+server.txt
+supervisor.txt
+tray.txt
+backup.txt
+r[0-9]-out.txt
+r[0-9]-err.txt
+restart-out*.txt
+restart-err*.txt
+serve-live-out.txt
+serve-live-err.txt
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+
+# Local environment overrides
+.env
+.env.*
+!.env.example
