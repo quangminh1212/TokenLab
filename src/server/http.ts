@@ -45,7 +45,16 @@ import {
   tryAutoDailyGistBackup,
   uploadBackupToGist,
 } from "../backup.js";
-import { loadConfig, saveConfig, setCustomRates, configPath, getConfigSync } from "../config.js";
+import {
+  fullScanIntervalMinutes,
+  getConfigSync,
+  loadConfig,
+  saveConfig,
+  scanIntervalMinutes,
+  scanPeriodicEnabled,
+  setCustomRates,
+  configPath,
+} from "../config.js";
 import {
   fetchOpenRouterModels,
   getOpenRouterFetchedAt,
@@ -75,7 +84,10 @@ function configuredTimeZone(): string {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Agents refreshed every minute so current usage reaches the dashboard promptly. */
+/**
+ * Agents refreshed by the periodic light scan. The cadence comes from
+ * `config.scan.intervalMinutes` (Settings → Scanning, default 5 min).
+ */
 const PERIODIC_LIGHT_AGENTS = new Set<AgentId>([
   "codex",
   "9router",
@@ -548,7 +560,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let scanPromise: Promise<number> | null = null;
   /** Last background light scan requested by the Recent requests feed. */
   let lastRecentLightScanAt = 0;
-  const RECENT_LIGHT_SCAN_MIN_MS = 60_000;
+  /**
+   * Background scan cadence, driven by `config.scan.intervalMinutes`
+   * (Settings → Scanning, default 5 min). Read per call so a saved setting
+   * applies without restarting the server.
+   */
+  const recentLightScanMinMs = (): number => scanIntervalMinutes() * 60_000;
   /** Bumps after each completed scan so UIs can reload when cache fills. */
   let scanRevision = 0;
   let scanUpdatedAt = 0;
@@ -768,13 +785,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     const full = opts.full === true;
     if (!full) {
       const now = Date.now();
-      if (now - lastRecentLightScanAt < RECENT_LIGHT_SCAN_MIN_MS) return cache.length;
+      if (now - lastRecentLightScanAt < recentLightScanMinMs()) return cache.length;
       lastRecentLightScanAt = now;
     }
     grokReplacedSessions.clear();
     scanning = true;
     // Light ticks stay quiet unless something actually changed. Broadcasting
-    // "start" every minute made the dashboard reload and sort the whole cache.
+    // "start" on every tick made the dashboard reload and sort the whole cache.
     if (full) {
       broadcastStream({
         type: "scan",
@@ -929,7 +946,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             writeHeartbeat();
             agentsDone += 1;
             // Light ticks must not collect the whole heap. A full GC after a
-            // large parser was a multi-core spike every minute, and the cache
+            // large parser was a multi-core spike on every tick, and the cache
             // has to stay resident for the dashboard anyway.
             if (!full && !error && events.length > 0) freshByAgent.set(agent, events);
             if (!full) {
@@ -1098,7 +1115,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
    */
   function scheduleRecentLightScan(): void {
     const now = Date.now();
-    if (scanPromise || now - lastRecentLightScanAt < RECENT_LIGHT_SCAN_MIN_MS) return;
+    if (scanPromise || now - lastRecentLightScanAt < recentLightScanMinMs()) return;
     void rescan({ full: false }).catch((err) => {
       slog("[tokenlab] recent light scan failed:", err instanceof Error ? err.message : err);
     });
@@ -1256,6 +1273,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         scanning,
         scanRevision,
         scanUpdatedAt,
+        // Resolved cadence (clamped) so the UI shows what the server actually does.
+        scanIntervalMinutes: scanIntervalMinutes(),
+        scanFullIntervalMinutes: fullScanIntervalMinutes(),
+        scanPeriodicEnabled: scanPeriodicEnabled(),
+        lastScanAt: lastRecentLightScanAt ? new Date(lastRecentLightScanAt).toISOString() : null,
         pricingRevision,
         pricingUpdatedAt,
         timezone,
@@ -1830,6 +1852,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         body.backup && typeof body.backup === "object"
           ? (body.backup as Record<string, unknown>)
           : null;
+      const bodyScan =
+        body.scan && typeof body.scan === "object"
+          ? (body.scan as NonNullable<typeof prev.scan>)
+          : null;
       const next = await saveConfig({
         ...prev,
         timezone: bodyTz || "local",
@@ -1842,6 +1868,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
               ? (bodyRates as NonNullable<typeof prev.pricing>["customRates"])
               : prev.pricing?.customRates,
         },
+        // saveConfig clamps/merges this block, so partial payloads are safe.
+        scan: bodyScan ? { ...prev.scan, ...bodyScan } : prev.scan,
         backup: {
           ...prev.backup,
           ...(bodyBackup && typeof bodyBackup.autoDaily === "boolean"
@@ -1849,6 +1877,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
             : {}),
         },
       });
+      // A cadence change must take effect now, not after the old window expires:
+      // either clear the rate-limit so the next tick can scan, or mark the
+      // window as just-used so a longer interval is not waited out twice.
+      lastRecentLightScanAt = 0;
+      lastPeriodicFullScanAt = scanPeriodicEnabled() ? Date.now() : lastPeriodicFullScanAt;
       // Reprice when preferRouterCost flips
       repriceCache(next.pricing?.preferRouterCost === false);
       bumpPricing("config");
@@ -1856,6 +1889,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         ok: true,
         ...next,
         configPath: configPath(),
+        scanIntervalMinutes: scanIntervalMinutes(),
+        scanFullIntervalMinutes: fullScanIntervalMinutes(),
+        scanPeriodicEnabled: scanPeriodicEnabled(),
         todayStartsAt: startOfDayInTimeZone(next.timezone || "local").toISOString(),
       });
     }
@@ -2005,6 +2041,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // then refresh only hot remote mirrors. Manual Refresh remains the
       // explicit full historical scan for local agents.
       const bootLightScan = setTimeout(() => {
+        if (!scanPeriodicEnabled()) return;
         void rescan({ full: false }).catch((err) => {
           console.error("[tokenlab] initial light scan failed:", err instanceof Error ? err.message : err);
         });
@@ -2013,19 +2050,35 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       console.log("[tokenlab] warm cache served; deferred full local scan (use Refresh for a full scan)");
     });
 
-  let periodicTick = 0;
-  // Every 60s: pull remote mirrors + light rescan. Full all-agent scan every 6h.
-  // Sync → scan so aggregate/dashboard reflects just-pulled usageDaily.
+  /**
+   * Periodic tick bookkeeping.
+   * Every 60s the tick pulls remote mirrors and checks whether a scan is due;
+   * the scan cadence itself comes from config (`scan.intervalMinutes`, default
+   * 5 min) and the full all-agent cadence from `scan.fullIntervalMinutes`
+   * (default 6h). Full ticks run `fullIntervalMinutes` after the previous one.
+   */
+  let lastPeriodicFullScanAt = Date.now();
   const timer = setInterval(() => {
-    periodicTick += 1;
-    const doFull = periodicTick % 360 === 0;
     void (async () => {
-      await syncVpsMirrors(doFull ? "periodic-full" : "periodic", 55_000);
+      const now = Date.now();
+      const periodicOn = scanPeriodicEnabled();
+      const fullDue =
+        periodicOn && now - lastPeriodicFullScanAt >= fullScanIntervalMinutes() * 60_000;
+      // Always pull mirrors: remote usage is cheap to fetch and the dashboard
+      // reads it directly. Skipping this when scanning is off would freeze
+      // multi-machine totals.
+      await syncVpsMirrors(fullDue ? "periodic-full" : "periodic", 55_000);
+      if (!periodicOn) return;
       // Skip starting another scan if one is already running (rescan coalesces too).
-      // A dashboard recent-scan in the same minute counts as this tick.
+      // A dashboard recent-scan inside the window counts as this tick.
       if (scanPromise) return;
-      if (!doFull && Date.now() - lastRecentLightScanAt < RECENT_LIGHT_SCAN_MIN_MS) return;
-      await rescan({ full: doFull });
+      if (fullDue) {
+        lastPeriodicFullScanAt = now;
+        await rescan({ full: true });
+        return;
+      }
+      if (now - lastRecentLightScanAt < recentLightScanMinMs()) return;
+      await rescan({ full: false });
     })().catch((err) => {
       try {
         console.error(

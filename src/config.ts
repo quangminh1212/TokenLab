@@ -18,6 +18,22 @@ export interface XlabTokenConfig {
     /** USD per 1M tokens overrides, keyed by normalized model name. */
     customRates?: Record<string, ModelRate>;
   };
+  /**
+   * Background scanning cadence. Scanning walks agent logs on disk, so the
+   * defaults are deliberately relaxed (5 min) — every-minute passes kept the
+   * CPU and disk busy on large Codex/Claude histories.
+   */
+  scan?: {
+    /** Minutes between two background light scans (1–60). Default 5. */
+    intervalMinutes?: number;
+    /** When false, no background scan runs (manual Rescan still works). Default true. */
+    periodicEnabled?: boolean;
+    /**
+     * Minutes between two full all-agent scans (5–1440). Default 360 (6h).
+     * Light ticks only refresh hot agents; this is the deep historical pass.
+     */
+    fullIntervalMinutes?: number;
+  };
   /** Optional backup destination (GitHub Gist). Token is local-only — never committed. */
   backup?: {
     gistId?: string;
@@ -33,12 +49,27 @@ export interface XlabTokenConfig {
   };
 }
 
+/** Background light scan cadence (minutes) when config says nothing. */
+export const DEFAULT_SCAN_INTERVAL_MINUTES = 5;
+/** Full all-agent rescan cadence (minutes) when config says nothing (6h). */
+export const DEFAULT_FULL_SCAN_INTERVAL_MINUTES = 360;
+/** Guard rails so a hand-edited config.json cannot turn this into a scan loop. */
+const MIN_SCAN_INTERVAL_MINUTES = 1;
+const MAX_SCAN_INTERVAL_MINUTES = 60;
+const MIN_FULL_SCAN_INTERVAL_MINUTES = 5;
+const MAX_FULL_SCAN_INTERVAL_MINUTES = 1440;
+
 const DEFAULT_CONFIG: XlabTokenConfig = {
   timezone: "local",
   pricing: {
     currency: "USD",
     preferRouterCost: true,
     customRates: {},
+  },
+  scan: {
+    intervalMinutes: DEFAULT_SCAN_INTERVAL_MINUTES,
+    periodicEnabled: true,
+    fullIntervalMinutes: DEFAULT_FULL_SCAN_INTERVAL_MINUTES,
   },
 };
 
@@ -53,6 +84,7 @@ let cachedSyncView: XlabTokenConfig | null = null;
 function freezeView(cfg: XlabTokenConfig): XlabTokenConfig {
   Object.freeze(cfg.pricing?.customRates);
   Object.freeze(cfg.pricing);
+  Object.freeze(cfg.scan);
   Object.freeze(cfg.backup);
   return Object.freeze(cfg);
 }
@@ -64,6 +96,7 @@ function buildSyncView(c: XlabTokenConfig): XlabTokenConfig {
   if (c.pricing) {
     view.pricing = { ...c.pricing, customRates: { ...(c.pricing.customRates || {}) } };
   }
+  if (c.scan) view.scan = { ...c.scan };
   if (c.backup) view.backup = { ...c.backup };
   return freezeView(view);
 }
@@ -140,6 +173,58 @@ function setCachedConfig(next: XlabTokenConfig | null): void {
   cachedSyncView = null;
 }
 
+function clampMinutes(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Resolved background light-scan cadence in minutes (clamped, never NaN). */
+export function scanIntervalMinutes(): number {
+  return clampMinutes(
+    getConfigSync().scan?.intervalMinutes,
+    MIN_SCAN_INTERVAL_MINUTES,
+    MAX_SCAN_INTERVAL_MINUTES,
+    DEFAULT_SCAN_INTERVAL_MINUTES,
+  );
+}
+
+/** Resolved full all-agent rescan cadence in minutes. */
+export function fullScanIntervalMinutes(): number {
+  return clampMinutes(
+    getConfigSync().scan?.fullIntervalMinutes,
+    MIN_FULL_SCAN_INTERVAL_MINUTES,
+    MAX_FULL_SCAN_INTERVAL_MINUTES,
+    DEFAULT_FULL_SCAN_INTERVAL_MINUTES,
+  );
+}
+
+/** Background scanning master switch (default on). */
+export function scanPeriodicEnabled(): boolean {
+  return getConfigSync().scan?.periodicEnabled !== false;
+}
+
+/** Normalize a stored scan block: clamp values, drop junk, keep defaults for missing. */
+export function normalizeScanConfig(
+  scan: XlabTokenConfig["scan"] | undefined,
+): NonNullable<XlabTokenConfig["scan"]> {
+  return {
+    intervalMinutes: clampMinutes(
+      scan?.intervalMinutes,
+      MIN_SCAN_INTERVAL_MINUTES,
+      MAX_SCAN_INTERVAL_MINUTES,
+      DEFAULT_SCAN_INTERVAL_MINUTES,
+    ),
+    fullIntervalMinutes: clampMinutes(
+      scan?.fullIntervalMinutes,
+      MIN_FULL_SCAN_INTERVAL_MINUTES,
+      MAX_FULL_SCAN_INTERVAL_MINUTES,
+      DEFAULT_FULL_SCAN_INTERVAL_MINUTES,
+    ),
+    periodicEnabled: scan?.periodicEnabled !== false,
+  };
+}
+
 /**
  * Drop the memoized config so the next `loadConfig()` re-reads from disk.
  *
@@ -196,6 +281,7 @@ function mergeConfig(base: XlabTokenConfig, over: XlabTokenConfig): XlabTokenCon
         ...(over.pricing?.customRates || {}),
       },
     },
+    scan: normalizeScanConfig({ ...base.scan, ...over.scan }),
     backup: {
       ...base.backup,
       ...over.backup,
