@@ -44,22 +44,22 @@
   <main class="shell settings-page">
     <header class="settings-page-header">
       <h1>Settings</h1>
-      <p>Manage appearance, regional preferences, and cost estimation for this machine.</p>
+      <p>Preferences for this machine. Changes apply as soon as you save.</p>
     </header>
 
     <form class="settings-form" id="settingsForm" onsubmit="return false;">
       <div class="settings-grid">
-      <!-- General -->
+      <!-- Preferences: appearance, timezone, cost -->
       <section class="settings-section u-card">
         <div class="settings-section-head">
-          <h2>General</h2>
-          <p>Interface and calendar day used by Dashboard filters.</p>
+          <h2>Preferences</h2>
+          <p>Interface, calendar day, and how estimated cost is calculated.</p>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
             <label for="settingsThemeBtn">Appearance</label>
-            <span class="settings-help">Stored in this browser only.</span>
+            <span class="settings-help">Saved in this browser only.</span>
           </div>
           <button type="button" class="btn" id="settingsThemeBtn">Light</button>
         </div>
@@ -67,24 +67,15 @@
         <div class="settings-row">
           <div class="settings-row-text">
             <label for="timezoneSelect">Timezone</label>
-            <span class="settings-help">Defines the start of <strong>Today</strong> for usage stats.</span>
-            <span class="settings-help muted" id="todayStartsLabel"></span>
+            <span class="settings-help" id="todayStartsLabel">Sets when <strong>Today</strong> begins.</span>
           </div>
           <select id="timezoneSelect" class="settings-select" aria-label="Timezone"></select>
-        </div>
-      </section>
-
-      <!-- Cost -->
-      <section class="settings-section u-card">
-        <div class="settings-section-head">
-          <h2>Cost estimation</h2>
-          <p>How estimated USD is calculated from token usage. Not actual billing.</p>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
             <label for="preferRouterCost">Prefer router cost</label>
-            <span class="settings-help">When available, use cost reported by 9router / RouterLab / LiteLLM if greater than zero.</span>
+            <span class="settings-help">Use cost reported by 9router / RouterLab / LiteLLM when available.</span>
           </div>
           <label class="settings-toggle">
             <input type="checkbox" id="preferRouterCost" />
@@ -94,116 +85,152 @@
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Currency</span>
-            <span class="settings-help">Display currency for estimates.</span>
-          </div>
-          <code class="settings-value-pill" id="currencyLabel">USD</code>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-text">
             <span class="settings-label">Model rates</span>
-            <span class="settings-help">Edit input / output rates per million tokens.</span>
+            <span class="settings-help">
+              Currency <code id="currencyLabel">USD</code> · edit per-model token rates.
+            </span>
           </div>
           <a class="btn" href="/model">Open models</a>
         </div>
       </section>
 
-      <!-- Backup: one file format for export / import / Gist -->
+      <!-- Scanning -->
+      <section class="settings-section u-card">
+        <div class="settings-section-head">
+          <h2>Scanning</h2>
+          <p>How often the server re-reads agent logs in the background.</p>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="scanPeriodicEnabled">Background scan</label>
+            <span class="settings-help">Off = only the <strong>Rescan</strong> button refreshes usage.</span>
+          </div>
+          <label class="settings-toggle">
+            <input type="checkbox" id="scanPeriodicEnabled" checked />
+            <span class="settings-toggle-ui" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="scanIntervalSelect">Scan frequency</label>
+            <span class="settings-help" id="scanIntervalHint">Background light scans.</span>
+          </div>
+          <select id="scanIntervalSelect" class="settings-select" aria-label="Scan frequency"></select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="scanFullIntervalSelect">Full rescan</label>
+            <span class="settings-help">Deep pass over every agent's history. Runs in the background.</span>
+          </div>
+          <select
+            id="scanFullIntervalSelect"
+            class="settings-select"
+            aria-label="Full rescan interval"
+          ></select>
+        </div>
+
+        <div class="settings-row settings-row-last">
+          <div class="settings-row-text">
+            <span class="settings-help" id="scanLastLabel">&mdash;</span>
+          </div>
+          <div class="settings-inline-actions">
+            <span class="settings-status" id="scanNextLabel"></span>
+            <button type="button" class="btn btn-sm btn-with-icon" id="rescanBtn">Rescan now</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Backup & restore: export / import / Gist -->
       <section class="settings-section u-card">
         <div class="settings-section-head">
           <h2>Backup &amp; restore</h2>
           <p>
-            One file format: <code>tokenlab.json</code>
-            (<code>format: "tokenlab"</code>).
-            Includes <strong>project settings</strong> (timezone, pricing, custom rates, host/port, gist link)
-            plus usage — same JSON for Export, Import, and GitHub Gist.
+            One <code>tokenlab.json</code> format for export, import, and GitHub Gist.
           </p>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Export full</span>
-            <span class="settings-help">
-              Settings + compact hour/day usage rollups + periodStats
-              (Today/24h/7D/30D/All by model &amp; agent) + OpenRouter + compact mirrors.
-              Same compact usage as Gist (scope <code>full</code>); raw request rows are omitted.
-            </span>
+            <span class="settings-label">Export</span>
+            <span class="settings-help">Settings + compact usage rollups. No raw request rows.</span>
           </div>
-          <button type="button" class="btn btn-primary" id="backupDownloadFull">Export full</button>
+          <div class="settings-inline-actions">
+            <button type="button" class="btn btn-primary" id="backupDownloadFull">Full</button>
+            <button type="button" class="btn" id="backupDownloadSettings">Settings</button>
+          </div>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-text">
-            <span class="settings-label">Export settings</span>
-            <span class="settings-help">
-              Settings only (small). Same file type — scope <code>settings</code>.
-            </span>
-          </div>
-          <button type="button" class="btn" id="backupDownloadSettings">Export settings</button>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-text">
-            <span class="settings-label">Import file</span>
-            <span class="settings-help">
-              Any <code>tokenlab-*.json</code> from Export or Gist (settings / full / period-stats).
-            </span>
+            <span class="settings-label">Import</span>
+            <span class="settings-help">Accepts any <code>tokenlab-*.json</code> export or Gist file.</span>
           </div>
           <div class="settings-inline-actions">
             <input type="file" id="backupRestoreFile" accept="application/json,.json" hidden />
-            <button type="button" class="btn" id="backupRestoreBtn">Import file…</button>
+            <button type="button" class="btn" id="backupRestoreBtn">Choose file&hellip;</button>
             <span class="settings-status" id="backupRestoreStatus" aria-live="polite"></span>
           </div>
         </div>
 
-        <div class="settings-row settings-row-stack">
-          <div class="settings-row-text">
-            <span class="settings-label">GitHub Gist (same link + revisions)</span>
-            <span class="settings-help">
-              One secret Gist, one file <code>tokenlab.json</code> — each backup is a
-              <strong>new revision</strong> on the same link (not a new Gist).
-              Full project settings + usage by <strong>model</strong> / <strong>agent</strong>
-              for <strong>Today · 24h · 7D · 30D · All</strong> (compact hour/day rollups).
-              Multi-machine: same gistId → merge hosts and <strong>sum usage</strong>.
-              PAT with <code>gist</code> scope — or env <code>XLAB_GITHUB_TOKEN</code>. Token is never inside the file.
+        <details class="settings-details">
+          <summary>
+            <span class="settings-label">GitHub Gist</span>
+            <span class="settings-help" id="gistSummary">
+              Off-site backup to one secret Gist &mdash; each save is a new revision.
             </span>
-          </div>
-          <div class="settings-gist-box">
-            <input
-              type="password"
-              id="gistToken"
-              class="settings-input"
-              placeholder="ghp_… token (optional if env set)"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <label class="settings-check">
-              <input type="checkbox" id="gistSaveToken" />
-              <span>Remember token in local config</span>
+          </summary>
+          <div class="settings-details-body">
+            <label class="settings-field">
+              <span class="settings-help">Personal access token (<code>gist</code> scope)</span>
+              <input
+                type="password"
+                id="gistToken"
+                class="settings-input"
+                placeholder="ghp_… (optional if XLAB_GITHUB_TOKEN is set)"
+                autocomplete="off"
+                spellcheck="false"
+              />
             </label>
-            <label class="settings-check">
-              <input type="checkbox" id="gistAutoDaily" checked />
-              <span>Auto backup once per day (when gist + token exist)</span>
-            </label>
+
+            <div class="settings-check-row">
+              <label class="settings-check">
+                <input type="checkbox" id="gistSaveToken" />
+                <span>Remember token locally</span>
+              </label>
+              <label class="settings-check">
+                <input type="checkbox" id="gistAutoDaily" checked />
+                <span>Auto backup daily</span>
+              </label>
+            </div>
+
+            <p class="settings-help">
+              Same Gist link stays; each backup replaces the file as a new revision.
+              Multi-machine: the same Gist merges hosts and sums usage.
+              The token is never written into the backup file.
+            </p>
+
             <div class="settings-inline-actions">
               <button type="button" class="btn btn-primary" id="backupGistBtn">Backup to Gist</button>
               <span class="settings-status" id="backupGistStatus" aria-live="polite"></span>
             </div>
+
             <p class="settings-help" id="gistLinkRow" hidden>
-              Last gist:
+              Last backup:
               <a id="gistLink" href="#" target="_blank" rel="noopener noreferrer">—</a>
               <span id="gistMeta" class="settings-help muted"></span>
             </p>
           </div>
-        </div>
+        </details>
       </section>
 
       <!-- System -->
       <section class="settings-section u-card">
         <div class="settings-section-head">
           <h2>System</h2>
-          <p>Local server status and configuration path.</p>
+          <p>Local server status and file locations.</p>
         </div>
 
         <div class="settings-kv-grid">
@@ -212,44 +239,39 @@
             <strong id="versionLabel">&mdash;</strong>
           </div>
           <div>
-            <span class="settings-kv-label">Events cached</span>
+            <span class="settings-kv-label">Events</span>
             <strong id="eventsLabel">&mdash;</strong>
           </div>
           <div>
-            <span class="settings-kv-label">Scan status</span>
+            <span class="settings-kv-label">Scan</span>
             <strong id="scanningLabel">&mdash;</strong>
           </div>
           <div>
-            <span class="settings-kv-label">Pricing revision</span>
+            <span class="settings-kv-label">Pricing</span>
             <strong id="pricingRevLabel">&mdash;</strong>
           </div>
         </div>
 
-        <div class="settings-row settings-row-stack">
-          <div class="settings-row-text">
-            <span class="settings-label">Config file</span>
-            <code class="settings-path-code" id="configPath">&mdash;</code>
+        <details class="settings-details">
+          <summary>
+            <span class="settings-label">Details</span>
+            <span class="settings-help">Config path, runtime, browser timezone.</span>
+          </summary>
+          <div class="settings-details-body">
+            <div class="settings-field">
+              <span class="settings-help">Config file</span>
+              <code class="settings-path-code" id="configPath">&mdash;</code>
+            </div>
+            <div class="settings-field">
+              <span class="settings-help">Runtime</span>
+              <span class="settings-path-code" id="runtimeLabel">&mdash;</span>
+            </div>
+            <div class="settings-field">
+              <span class="settings-help">Browser timezone</span>
+              <span class="settings-path-code" id="browserTzLabel">&mdash;</span>
+            </div>
           </div>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-text">
-            <span class="settings-label">Runtime</span>
-            <span class="settings-help" id="runtimeLabel">&mdash;</span>
-          </div>
-          <span class="settings-help" id="browserTzLabel">&mdash;</span>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-text">
-            <span class="settings-label">Rescan agents</span>
-            <span class="settings-help">Re-read local usage logs into the cache.</span>
-          </div>
-          <div class="settings-inline-actions">
-            <button type="button" class="btn btn-with-icon" id="rescanBtn">Rescan</button>
-            <span class="settings-status" id="rescanStatus" aria-live="polite"></span>
-          </div>
-        </div>
+        </details>
       </section>
       </div><!-- /.settings-grid -->
 
@@ -289,10 +311,9 @@
     $('rescanBtn').innerHTML = ICONS.refresh + '<span>Rescan</span>';
 
     const TIMEZONES = [
-      { value: 'local', label: 'System default' },
-      { value: 'local', label: 'Local (machine timezone) — recommended' },
+      { value: 'local', label: 'Local (recommended)' },
       { value: 'Asia/Ho_Chi_Minh', label: 'Asia/Ho Chi Minh (UTC+7)' },
-      { value: 'UTC', label: 'UTC (not recommended if you are not in UTC)' },
+      { value: 'UTC', label: 'UTC' },
       { value: 'Asia/Bangkok', label: 'Asia/Bangkok' },
       { value: 'Asia/Singapore', label: 'Asia/Singapore' },
       { value: 'Asia/Tokyo', label: 'Asia/Tokyo' },
@@ -326,7 +347,7 @@
     }
 
     function formatTodayStart(iso, tz) {
-      if (!iso) return '';
+      if (!iso) return 'Sets when Today begins.';
       try {
         const d = new Date(iso);
         const zone = !tz || tz === 'local' ? undefined : tz;
@@ -339,15 +360,18 @@
           timeZone: zone,
           timeZoneName: 'short',
         });
-        return 'Today starts at ' + nice;
+        return 'Today began ' + nice;
       } catch {
-        return '';
+        return 'Sets when Today begins.';
       }
     }
+
+    let lastHealth = null;
 
     async function loadHealth() {
       try {
         const h = await fetch('/api/health').then((r) => r.json());
+        lastHealth = h;
         $('meta').textContent = `v${h.version || ''}`;
         $('versionLabel').textContent = h.version || '\u2014';
         $('eventsLabel').textContent = Number(h.eventCount || 0).toLocaleString();
@@ -357,7 +381,7 @@
         $('runtimeLabel').textContent = `${h.platform || '\u2014'} \u00B7 ${h.node || '\u2014'}`;
         if (h.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt, h.timezone);
-        }
+        }        updateScanWordHint(h);
       } catch {
         $('meta').innerHTML = '<span class="err">API offline</span>';
       }
@@ -378,6 +402,105 @@
       }
     }
 
+    /* ---- Scanning ---- */
+    // Keep in sync with src/config.ts clamp ranges (1–60 min / 5–1440 min).
+    const SCAN_INTERVALS = [
+      { value: 1, label: 'Every 1 minute (heavy)' },
+      { value: 2, label: 'Every 2 minutes' },
+      { value: 5, label: 'Every 5 minutes (recommended)' },
+      { value: 10, label: 'Every 10 minutes' },
+      { value: 15, label: 'Every 15 minutes' },
+      { value: 30, label: 'Every 30 minutes' },
+      { value: 60, label: 'Every 60 minutes' },
+    ];
+    const SCAN_FULL_INTERVALS = [
+      { value: 60, label: 'Every 1 hour' },
+      { value: 180, label: 'Every 3 hours' },
+      { value: 360, label: 'Every 6 hours (recommended)' },
+      { value: 720, label: 'Every 12 hours' },
+      { value: 1440, label: 'Every 24 hours' },
+    ];
+    const DEFAULT_SCAN_INTERVAL_MINUTES = 5;
+    const DEFAULT_SCAN_FULL_INTERVAL_MINUTES = 360;
+
+    function fillNumberSelect(id, options, selected, fallback) {
+      const sel = $(id);
+      if (!sel) return;
+      const cur = Number(selected) > 0 ? Math.round(Number(selected)) : fallback;
+      sel.innerHTML = options
+        .map((o) => `<option value="${o.value}"${o.value === cur ? ' selected' : ''}>${o.label}</option>`)
+        .join('');
+      // Unknown value (hand-edited config.json) — surface it instead of lying.
+      if (cur && !options.some((o) => o.value === cur)) {
+        const opt = document.createElement('option');
+        opt.value = String(cur);
+        opt.textContent = `Every ${cur} minutes (custom)`;
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    function readScanForm() {
+      return {
+        periodicEnabled: $('scanPeriodicEnabled') ? $('scanPeriodicEnabled').checked : true,
+        intervalMinutes: Number($('scanIntervalSelect')?.value) || DEFAULT_SCAN_INTERVAL_MINUTES,
+        fullIntervalMinutes:
+          Number($('scanFullIntervalSelect')?.value) || DEFAULT_SCAN_FULL_INTERVAL_MINUTES,
+      };
+    }
+
+    function applyScanForm(scan, health) {
+      const on = scan?.periodicEnabled !== false;
+      if ($('scanPeriodicEnabled')) $('scanPeriodicEnabled').checked = on;
+      fillNumberSelect(
+        'scanIntervalSelect',
+        SCAN_INTERVALS,
+        scan?.intervalMinutes,
+        DEFAULT_SCAN_INTERVAL_MINUTES,
+      );
+      fillNumberSelect(
+        'scanFullIntervalSelect',
+        SCAN_FULL_INTERVALS,
+        scan?.fullIntervalMinutes,
+        DEFAULT_SCAN_FULL_INTERVAL_MINUTES,
+      );
+      updateScanWordHint(health);
+    }
+
+    function describeScanAge(iso) {
+      if (!iso) return 'No background scan yet this session';
+      const ms = Date.now() - new Date(iso).getTime();
+      if (!Number.isFinite(ms) || ms < 0) return 'Last scan: just now';
+      const mins = Math.floor(ms / 60000);
+      if (mins < 1) return 'Last scan: less than a minute ago';
+      if (mins < 60) return `Last scan: ${mins} min ago`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `Last scan: ${hours} h ${mins % 60} min ago`;
+      return `Last scan: ${Math.floor(hours / 24)} day(s) ago`;
+    }
+
+    function updateScanWordHint(health) {
+      const h = health || lastHealth || {};
+      const on = $('scanPeriodicEnabled') ? $('scanPeriodicEnabled').checked : true;
+      const mins = Number($('scanIntervalSelect')?.value) || DEFAULT_SCAN_INTERVAL_MINUTES;
+      const full = Number($('scanFullIntervalSelect')?.value) || DEFAULT_SCAN_FULL_INTERVAL_MINUTES;
+      const hint = $('scanIntervalHint');
+      if (hint) {
+        hint.textContent = on
+          ? `Light scans every ${mins} min, full rescan every ${Math.round(full / 60)} h.`
+          : 'Background scanning is off.';
+      }
+      const last = $('scanLastLabel');
+      if (last) last.textContent = describeScanAge(h.lastScanAt);
+      const next = $('scanNextLabel');
+      if (next) next.textContent = on ? 'Auto' : 'Paused';
+      // Disable the schedule controls when background scanning is off.
+      for (const id of ['scanIntervalSelect', 'scanFullIntervalSelect']) {
+        const el = $(id);
+        if (el) el.disabled = !on;
+      }
+    }
+
     async function loadConfigUi() {
       try {
         const c = await fetch('/api/config').then((r) => r.json());
@@ -387,10 +510,11 @@
         $('currencyLabel').textContent = c.pricing?.currency || 'USD';
         $('preferRouterCost').checked = c.pricing?.preferRouterCost !== false;
         fillTimezoneSelect(c.timezone || 'local');
+        applyScanForm(c.scan, lastHealth);
         try {
-          $('browserTzLabel').textContent = 'Browser: ' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local');
+          $('browserTzLabel').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
         } catch {
-          $('browserTzLabel').textContent = 'Browser: local';
+          $('browserTzLabel').textContent = 'local';
         }
         if (c.backup?.hasGithubToken) {
           $('gistToken').placeholder = 'Token saved / env set \u2014 leave blank to reuse';
@@ -447,7 +571,7 @@
           const btn = $('backupDownloadFull');
           if (btn) {
             btn.disabled = false;
-            btn.textContent = 'Export full';
+            btn.textContent = 'Full';
           }
         }
       } catch (e) {
@@ -455,7 +579,7 @@
         const btn = $('backupDownloadFull');
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Export full';
+          btn.textContent = 'Full';
         }
       }
     }
@@ -566,12 +690,15 @@
             timezone: tz,
             pricing: { preferRouterCost: $('preferRouterCost').checked },
             backup: { autoDaily: $('gistAutoDaily') ? $('gistAutoDaily').checked : true },
+            scan: readScanForm(),
           }),
         }).then((x) => x.json());
         $('prefsStatus').textContent = 'Saved';
         if (r.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(r.todayStartsAt, r.timezone || tz);
         }
+        // Server clamps the values — mirror back what it actually stored.
+        if (r.scan) applyScanForm(r.scan, { ...lastHealth, scanIntervalMinutes: r.scanIntervalMinutes });
         setTimeout(() => { $('prefsStatus').textContent = ''; }, 2200);
       } catch {
         $('prefsStatus').textContent = 'Save failed';
@@ -579,6 +706,13 @@
         btn.disabled = false;
       }
     };
+
+    ['scanPeriodicEnabled', 'scanIntervalSelect', 'scanFullIntervalSelect'].forEach((id) => {
+      const el = $(id);
+      if (el) {
+        el.onchange = () => updateScanWordHint(lastHealth);
+      }
+    });
 
     $('rescanBtn').onclick = async () => {
       $('rescanBtn').disabled = true;
@@ -608,6 +742,8 @@
 
     loadConfigUi();
     setInterval(loadHealth, 10000);
+    // Keep the "last background scan" relative label honest without a full reload.
+    setInterval(() => updateScanWordHint(lastHealth), 30000);
 
     document.querySelectorAll('a.nav-link, a.settings-btn, a.brand-logo-wrap').forEach((a) => {
       a.addEventListener('pointerenter', () => {
