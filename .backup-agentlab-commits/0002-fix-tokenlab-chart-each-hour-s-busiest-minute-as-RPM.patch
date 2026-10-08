@@ -1,0 +1,562 @@
+From b5279c10abbaf26ed18b9cfe683dba8efa3f222f Mon Sep 17 00:00:00 2001
+From: Bach Minh Quang <0947556012abc@gmail.com>
+Date: Sat, 3 Oct 2026 12:24:09 +0700
+Subject: [PATCH 2/2] fix(tokenlab): chart each hour's busiest minute as RPM
+
+---
+ src/aggregate.ts          | 146 +++++++++++++++++++++++++++-----------
+ src/server/dashboard.html |  51 ++++++-------
+ src/server/http.ts        |   2 +-
+ src/server/styles.css     |   1 +
+ src/types.ts              |   2 +
+ tests/aggregate.test.ts   | 102 ++++++++++++++++++--------
+ 6 files changed, 209 insertions(+), 95 deletions(-)
+
+diff --git a/src/aggregate.ts b/src/aggregate.ts
+index d44bb07..2a7f6fc 100644
+--- a/src/aggregate.ts
++++ b/src/aggregate.ts
+@@ -75,6 +75,8 @@ export function aggregate(
+   const map = new Map<string, GroupRow>();
+   const n = events.length;
+   const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
++  const trackPeak = groupBy === "hour" || groupBy === "day";
++  const minutes = trackPeak ? new Map<number, number>() : null;
+ 
+   for (let i = 0; i < n; i++) {
+     const e = events[i]!;
+@@ -95,6 +97,16 @@ export function aggregate(
+       map.set(key, row);
+     }
+     addWithParts(row, e, parts);
++    if (minutes) {
++      const ts = useTs ? timestampsMs![i]! : Date.parse(e.timestamp);
++      bumpMinute(minutes, ts, peakMinuteWeight(e));
++    }
++  }
++
++  if (minutes) {
++    const peaks = peakUsageFromMinutes(minutes);
++    const byBucket = groupBy === "hour" ? peaks.hour : peaks.day;
++    for (const row of map.values()) row.peakRpm = byBucket.get(row.key) || 0;
+   }
+ 
+   const groups = [...map.values()].sort((a, b) =>
+@@ -137,7 +149,7 @@ export function precomputeDashboardPeriods(
+     model: Map<string, GroupRow>;
+     day: Map<string, GroupRow>;
+     hour: Map<string, GroupRow>;
+-    rpmEvents: UsageEvent[];
++    minutes: Map<number, number>;
+   };
+   const acc = new Map<DashPeriodKey, Acc>();
+   for (const k of keys) {
+@@ -147,7 +159,7 @@ export function precomputeDashboardPeriods(
+       model: new Map(),
+       day: new Map(),
+       hour: new Map(),
+-      rpmEvents: [],
++      minutes: new Map(),
+     });
+   }
+ 
+@@ -179,6 +191,8 @@ export function precomputeDashboardPeriods(
+     const modelKey = (normalizeModelName(e.model) || `unknown (${e.agent})`).toLowerCase();
+     const dayKey = new Date(t).toISOString().slice(0, 10);
+     const hourKey = `${new Date(t).toISOString().slice(0, 13)}:00`;
++    const weight = peakMinuteWeight(e);
++    const minuteKey = Math.floor(t / 60_000);
+ 
+     for (const pk of keys) {
+       const start = bounds[pk];
+@@ -191,7 +205,7 @@ export function precomputeDashboardPeriods(
+       bump(a.day, dayKey, e, parts);
+       // Hour series only needed for today/24h charts
+       if (pk === "today" || pk === "24h") bump(a.hour, hourKey, e, parts);
+-      a.rpmEvents.push(e);
++      if (weight > 0) bumpMinute(a.minutes, minuteKey * 60_000, weight);
+     }
+   }
+ 
+@@ -224,6 +238,9 @@ export function precomputeDashboardPeriods(
+     dayStats.totals = { ...a.totals };
+     const hourStats = finish(a.hour, "hour", "tokens", since);
+     hourStats.totals = { ...a.totals };
++    const peaks = peakUsageFromMinutes(a.minutes);
++    for (const row of a.hour.values()) row.peakRpm = peaks.hour.get(row.key) || 0;
++    for (const row of a.day.values()) row.peakRpm = peaks.day.get(row.key) || 0;
+     out.set(pk, {
+       builtAt: nowMs,
+       byGroup: {
+@@ -232,7 +249,14 @@ export function precomputeDashboardPeriods(
+         day: dayStats,
+         hour: hourStats,
+       },
+-      usageRpm: computeActiveUsageRpm(a.rpmEvents),
++      usageRpm: {
++        requests: peaks.requests,
++        activeMinutes: peaks.activeMinutes,
++        rpm: peaks.rpm,
++        rps: peaks.rps,
++        method: peaks.method,
++        unit: peaks.unit,
++      },
+     });
+   }
+   return out;
+@@ -267,45 +291,100 @@ export function countActiveMinutes(events: UsageEvent[]): number {
+   return buckets.size;
+ }
+ 
+-function eventRequestCount(e: UsageEvent): number {
++/**
++ * One logged call in this minute.
++ * Session snapshots store a lifetime requestCount on a single timestamp, so that
++ * count is not a burst. Estimated rollups and empty probes are skipped.
++ */
++function peakMinuteWeight(e: UsageEvent): number {
++  return minuteRequestWeight(e) > 0 ? 1 : 0;
++}
++
++/**
++ * Live-window weight. Estimated rollups and empty probes are skipped.
++ * requestCount counts only for a real batch of 1..100; a session total above that is one row.
++ */
++export function minuteRequestWeight(e: UsageEvent): number {
++  if (!e || e.estimated) return 0;
++  const tok =
++    (Number(e.inputTokens) || 0) +
++    (Number(e.outputTokens) || 0) +
++    (Number(e.cacheReadTokens) || 0) +
++    (Number(e.cacheWriteTokens) || 0);
++  if (tok <= 0 && !(Number(e.estimatedCost) > 0)) return 0;
+   const rc = e.requestCount;
+-  if (typeof rc === "number" && Number.isFinite(rc) && rc > 0) return Math.floor(rc);
++  if (typeof rc === "number" && Number.isFinite(rc) && rc > 0 && rc <= 100) return Math.floor(rc);
+   return 1;
+ }
+ 
++function bumpMinute(minutes: Map<number, number>, tsMs: number, weight: number): void {
++  if (weight <= 0 || !Number.isFinite(tsMs)) return;
++  const mk = Math.floor(tsMs / 60_000);
++  minutes.set(mk, (minutes.get(mk) || 0) + weight);
++}
++
++function peakUsageFromMinutes(minutes: Map<number, number>): {
++  requests: number;
++  activeMinutes: number;
++  rpm: number;
++  rps: number;
++  method: "peak_minute";
++  unit: "req/min";
++  hour: Map<string, number>;
++  day: Map<string, number>;
++} {
++  let requests = 0;
++  let rpm = 0;
++  const hour = new Map<string, number>();
++  const day = new Map<string, number>();
++  for (const [mk, count] of minutes) {
++    requests += count;
++    if (count > rpm) rpm = count;
++    const d = new Date(mk * 60_000);
++    const hourKey = `${d.toISOString().slice(0, 13)}:00`;
++    const dayKey = d.toISOString().slice(0, 10);
++    if (count > (hour.get(hourKey) || 0)) hour.set(hourKey, count);
++    if (count > (day.get(dayKey) || 0)) day.set(dayKey, count);
++  }
++  return {
++    requests,
++    activeMinutes: minutes.size,
++    rpm,
++    rps: rpm / 60,
++    method: "peak_minute",
++    unit: "req/min",
++    hour,
++    day,
++  };
++}
++
+ /**
+- * Period RPM over **active usage minutes only** (not full wall-clock Today/24h/7d).
+- *
+- *   activeMinutes = |{ floor(ts/60s) for each event }|
+- *   RPM = totalRequests / activeMinutes
+- *
+- * Same definition as RouterLab usage stats. Idle time between bursts is ignored,
+- * so 11 requests in 5 busy minutes → 2.2 RPM (not 11 / minutes-since-midnight).
++ * Period RPM = the busiest single minute in the range (not the mean).
++ * The chart uses the same peak inside each hour or day.
+  */
+ export function computeActiveUsageRpm(events: UsageEvent[]): {
+   requests: number;
+   activeMinutes: number;
+-  /** RPM = requests / activeMinutes */
++  /** Highest requests in any one minute */
+   rpm: number;
+   /** RPS equivalent = rpm / 60 */
+   rps: number;
+-  method: "active_minutes_mean";
++  method: "peak_minute";
+   unit: "req/min";
+ } {
+-  let requests = 0;
++  const minutes = new Map<number, number>();
+   for (const e of events) {
+     if (!e) continue;
+-    requests += eventRequestCount(e);
++    bumpMinute(minutes, Date.parse(e.timestamp), peakMinuteWeight(e));
+   }
+-  const activeMinutes = countActiveMinutes(events);
+-  const rpm = activeMinutes > 0 ? requests / activeMinutes : 0;
++  const peaks = peakUsageFromMinutes(minutes);
+   return {
+-    requests,
+-    activeMinutes,
+-    rpm,
+-    rps: rpm / 60,
+-    method: "active_minutes_mean",
+-    unit: "req/min",
++    requests: peaks.requests,
++    activeMinutes: peaks.activeMinutes,
++    rpm: peaks.rpm,
++    rps: peaks.rps,
++    method: peaks.method,
++    unit: peaks.unit,
+   };
+ }
+ 
+@@ -343,24 +422,11 @@ export function computeLiveRequestRate(
+   let total = 0;
+   for (const e of events) {
+     if (!e) continue;
+-    // Estimated daily / model rollups are not live API calls
+-    if (e.estimated) continue;
+     const t = new Date(e.timestamp).getTime();
+     // Open-closed window (start, now] with small clock-skew tolerance
+     if (!Number.isFinite(t) || t <= start || t > nowMs + 5_000) continue;
+-    // Empty stream probes (0 tokens, no cost) are not billable API usage
+-    const tok =
+-      (Number(e.inputTokens) || 0) +
+-      (Number(e.outputTokens) || 0) +
+-      (Number(e.cacheReadTokens) || 0) +
+-      (Number(e.cacheWriteTokens) || 0);
+-    if (tok <= 0 && !(Number(e.estimatedCost) > 0)) continue;
+-    // Live row = one completed request; requestCount only when a true multi-call batch
+-    const rc = e.requestCount;
+-    const reqs =
+-      typeof rc === "number" && Number.isFinite(rc) && rc > 0 && rc <= 100
+-        ? Math.floor(rc)
+-        : 1;
++    const reqs = minuteRequestWeight(e);
++    if (reqs <= 0) continue;
+     total += reqs;
+     const ageMs = nowMs - t;
+     const ageMin = Math.min(mins - 1, Math.max(0, Math.floor(ageMs / 60_000)));
+diff --git a/src/server/dashboard.html b/src/server/dashboard.html
+index a8d1964..8130520 100644
+--- a/src/server/dashboard.html
++++ b/src/server/dashboard.html
+@@ -67,6 +67,7 @@
+           <div class="seg seg-sm" id="chartMode" role="tablist" aria-label="Chart metric">
+             <button type="button" class="seg-btn active" data-mode="tokens">Tokens</button>
+             <button type="button" class="seg-btn" data-mode="cost">Cost</button>
++            <button type="button" class="seg-btn" data-mode="rpm">RPM</button>
+           </div>
+         </div>
+         <div class="chart-body" id="chartBody">
+@@ -389,6 +390,7 @@
+         outputTokens: 0,
+         cacheReadTokens: 0,
+         cacheWriteTokens: 0,
++        peakRpm: 0,
+       });
+       const end = new Date();
+       end.setMinutes(0, 0, 0);
+@@ -445,13 +447,7 @@
+       return 'all';
+     }
+ 
+-    /**
+-     * RPM over active usage minutes only (idle gaps ignored):
+-     *   activeMinutes = distinct minute buckets with ≥1 request
+-     *   RPM = totalRequests / activeMinutes
+-     * Server computes this in /api/stats.usageRpm (RouterLab-compatible).
+-     * Fallback: same formula if only totals are present (activeMinutes unknown → 0).
+-     */
++    /** Card RPM is the busiest minute in the selected range (chart peak). */
+     function periodRequestRate(totalRequests) {
+       const ur = state.usageRpm;
+       if (ur && typeof ur === 'object' && Number.isFinite(Number(ur.rpm))) {
+@@ -460,7 +456,7 @@
+           activeMinutes: Number(ur.activeMinutes) || 0,
+           rpm: Number(ur.rpm) || 0,
+           rps: Number(ur.rps) || 0,
+-          method: ur.method || 'active_minutes_mean',
++          method: ur.method || 'peak_minute',
+           unit: 'req/min',
+           period: periodLabel(),
+         };
+@@ -471,7 +467,7 @@
+         activeMinutes: 0,
+         rpm: 0,
+         rps: 0,
+-        method: 'active_minutes_mean',
++        method: 'peak_minute',
+         unit: 'req/min',
+         period: periodLabel(),
+       };
+@@ -479,14 +475,13 @@
+ 
+     function renderOverview(t, live) {
+       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
+-      // RPM = requests / active usage minutes (not wall-clock Today/24h)
++      // RPM = busiest minute in the selected range
+       const rate = periodRequestRate(t.eventCount || 0);
+       const rpmVal = (Math.round(rate.rpm * 10) / 10).toLocaleString(undefined, {
+         minimumFractionDigits: 0,
+         maximumFractionDigits: 1,
+       });
+-      // Active-usage mean — no subtitle under RPM
+-      const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
++      const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary', 'Peak minute');
+       // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout on common widths)
+       $('overview').innerHTML = [
+         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
+@@ -590,11 +585,18 @@
+         </ul>`;
+     }
+ 
++    function chartValue(d, mode) {
++      if (mode === 'rpm') return Number(d.peakRpm) || 0;
++      if (mode === 'tokens') return d.totalTokens || 0;
++      return d.estimatedCost || 0;
++    }
++
+     function renderChart() {
+       const series = state.daySeries;
+       const mode = state.chartMode;
+-      const vals = series.map((d) => mode === 'tokens' ? (d.totalTokens || 0) : (d.estimatedCost || 0));
+-      const has = vals.some((v) => v > 0);
++      const vals = series.map((d) => chartValue(d, mode));
++      // RPM still draws a flat zero line, same hour axis as Tokens.
++      const has = mode === 'rpm' ? series.length > 0 : vals.some((v) => v > 0);
+       if (!has) {
+         $('chartBody').innerHTML = `<div class="chart-empty">${emptyMsg('chart')}</div>`;
+         return;
+@@ -602,25 +604,22 @@
+ 
+       const W = 640, H = 200, PL = 44, PR = 12, PT = 12, PB = 28;
+       const iw = W - PL - PR, ih = H - PT - PB;
+-      const max = Math.max(...vals, mode === 'tokens' ? 1 : 0.0001);
++      const max = Math.max(...vals, mode === 'cost' ? 0.0001 : 1);
+       const n = series.length;
+       const xAt = (i) => PL + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
+       const yAt = (v) => PT + ih - (v / max) * ih;
+ 
+-      const pts = series.map((d, i) => {
+-        const v = mode === 'tokens' ? (d.totalTokens || 0) : (d.estimatedCost || 0);
+-        return [xAt(i), yAt(v)];
+-      });
++      const pts = series.map((d, i) => [xAt(i), yAt(chartValue(d, mode))]);
+       const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+       const area = line + ` L${pts[pts.length - 1][0].toFixed(1)},${(PT + ih).toFixed(1)} L${pts[0][0].toFixed(1)},${(PT + ih).toFixed(1)} Z`;
+-      const stroke = mode === 'tokens' ? 'var(--chart-tokens)' : 'var(--chart-cost)';
+-      const fillId = mode === 'tokens' ? 'gradTok' : 'gradCost';
+-      const fillFrom = mode === 'tokens' ? 'rgba(99,102,241,0.28)' : 'rgba(245,158,11,0.28)';
++      const stroke = mode === 'rpm' ? 'var(--chart-rpm)' : mode === 'tokens' ? 'var(--chart-tokens)' : 'var(--chart-cost)';
++      const fillId = mode === 'rpm' ? 'gradRpm' : mode === 'tokens' ? 'gradTok' : 'gradCost';
++      const fillFrom = mode === 'rpm' ? 'rgba(34,211,238,0.28)' : mode === 'tokens' ? 'rgba(99,102,241,0.28)' : 'rgba(245,158,11,0.28)';
+ 
+       const yTicks = [0, 0.5, 1].map((t) => {
+         const v = max * t;
+         const y = yAt(v);
+-        const label = mode === 'tokens' ? fmt(v) : money4(v);
++        const label = mode === 'tokens' ? fmt(v) : mode === 'rpm' ? (v >= 1000 ? fmt(v) : String(Math.round(v * 10) / 10)) : money4(v);
+         return `<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" class="chart-grid" />
+           <text x="${PL - 6}" y="${y + 3}" class="chart-tick" text-anchor="end">${label}</text>`;
+       }).join('');
+@@ -648,6 +647,10 @@
+               <stop offset="5%" stop-color="${fillFrom}" />
+               <stop offset="95%" stop-color="rgba(245,158,11,0)" />
+             </linearGradient>
++            <linearGradient id="gradRpm" x1="0" y1="0" x2="0" y2="1">
++              <stop offset="5%" stop-color="${fillFrom}" />
++              <stop offset="95%" stop-color="rgba(34,211,238,0)" />
++            </linearGradient>
+           </defs>
+           ${yTicks}
+           <path d="${area}" fill="url(#${fillId})" />
+@@ -806,7 +809,7 @@
+       void meta;
+ 
+       state.totals = stats.totals || {};
+-      // Period RPM: active-minutes mean from filtered events (not wall-clock span)
++      // Period RPM: busiest minute in the selected range
+       if (stats.usageRpm && typeof stats.usageRpm === 'object') state.usageRpm = stats.usageRpm;
+       else if (seriesStats.usageRpm && typeof seriesStats.usageRpm === 'object') state.usageRpm = seriesStats.usageRpm;
+       else state.usageRpm = null;
+diff --git a/src/server/http.ts b/src/server/http.ts
+index bab7194..e8b80f5 100644
+--- a/src/server/http.ts
++++ b/src/server/http.ts
+@@ -1017,7 +1017,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
+           const { events, timestampsMs } = eventsInPeriodDetailed(since, until);
+           writeHeartbeat();
+           const stats = aggregate(events, groupBy, sort, since, until, timestampsMs);
+-          // Period RPM: requests / active usage minutes (idle gaps excluded — RouterLab-style)
++          // Period RPM: busiest minute in the range (same peak the chart draws per hour).
+           const usageRpm = computeActiveUsageRpm(events);
+           periodPart = { stats, usageRpm };
+         }
+diff --git a/src/server/styles.css b/src/server/styles.css
+index 3bdb299..b7d26bd 100644
+--- a/src/server/styles.css
++++ b/src/server/styles.css
+@@ -553,6 +553,7 @@
+ :root {
+   --chart-tokens: #6366f1;
+   --chart-cost: #f59e0b;
++  --chart-rpm: #22d3ee;
+   --info: #3b82f6;
+   --u-radius: 14px;
+   --u-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px -8px rgba(15,23,42,0.08);
+diff --git a/src/types.ts b/src/types.ts
+index 8a53a11..3c5917a 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -100,6 +100,8 @@ export interface TokenTotals {
+ 
+ export interface GroupRow extends TokenTotals {
+   key: string;
++  /** Busiest minute in this hour or day, in requests. */
++  peakRpm?: number;
+ }
+ 
+ export interface StatsResult {
+diff --git a/tests/aggregate.test.ts b/tests/aggregate.test.ts
+index c6cd9fa..33e19a6 100644
+--- a/tests/aggregate.test.ts
++++ b/tests/aggregate.test.ts
+@@ -5,6 +5,7 @@ import {
+   computeActiveUsageRpm,
+   computeLiveRequestRate,
+   countActiveMinutes,
++  precomputeDashboardPeriods,
+ } from "../src/aggregate.js";
+ import type { UsageEvent } from "../src/types.js";
+ 
+@@ -62,39 +63,80 @@ test("aggregate eventCount sums requestCount (daily rollup style)", () => {
+   assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
+ });
+ 
+-test("computeActiveUsageRpm uses active minutes only (idle gaps ignored)", () => {
+-  // 10 requests across 2 distinct minutes, with a long idle gap between
++test("RPM is the busiest minute in each hour, not the period mean", () => {
++  const row = (
++    id: string,
++    timestamp: string,
++    requestCount: number,
++    extra: Partial<UsageEvent> = {},
++  ): UsageEvent => ({
++    ...sample[0]!,
++    id,
++    timestamp,
++    requestCount,
++    estimated: false,
++    ...extra,
++  });
++  // Session requestCount is not a burst. Three logged calls in one minute beat it.
+   const events: UsageEvent[] = [
+-    {
+-      ...sample[0]!,
+-      id: "a1",
+-      timestamp: "2026-07-28T01:00:10.000Z",
+-      requestCount: 4,
+-      estimated: false,
+-    },
+-    {
+-      ...sample[0]!,
+-      id: "a2",
+-      timestamp: "2026-07-28T01:00:40.000Z", // same minute as a1
+-      requestCount: 1,
+-      estimated: false,
+-    },
+-    {
+-      ...sample[0]!,
+-      id: "b1",
+-      timestamp: "2026-07-28T03:15:00.000Z", // different minute, long idle after a*
+-      requestCount: 5,
+-      estimated: false,
+-    },
++    row("a1", "2026-07-28T01:00:10.000Z", 4),
++    row("a2", "2026-07-28T01:00:40.000Z", 1),
++    row("a3", "2026-07-28T01:10:00.000Z", 1),
++    row("fat", "2026-07-28T01:20:00.000Z", 800),
++    row("est", "2026-07-28T01:30:00.000Z", 50, { estimated: true }),
++    row("probe", "2026-07-28T01:40:00.000Z", 40, {
++      inputTokens: 0,
++      outputTokens: 0,
++      cacheReadTokens: 0,
++      cacheWriteTokens: 0,
++      totalTokens: 0,
++      estimatedCost: 0,
++    }),
++    row("b1", "2026-07-28T03:15:00.000Z", 9),
++    row("c1", "2026-07-28T03:16:01.000Z", 1),
++    row("c2", "2026-07-28T03:16:20.000Z", 1),
++    row("c3", "2026-07-28T03:16:40.000Z", 1),
+   ];
+-  assert.equal(countActiveMinutes(events), 2);
++  assert.equal(countActiveMinutes(events), 7);
+   const r = computeActiveUsageRpm(events);
+-  assert.equal(r.method, "active_minutes_mean");
+-  assert.equal(r.requests, 10); // 4+1+5
+-  assert.equal(r.activeMinutes, 2);
+-  // NOT 10 / wall-clock hours — only busy minutes
+-  assert.equal(r.rpm, 5); // 10 / 2
+-  assert.ok(Math.abs(r.rps - 5 / 60) < 1e-9);
++  assert.equal(r.method, "peak_minute");
++  assert.equal(r.requests, 8); // estimated + probe skipped; each other row counts once
++  assert.equal(r.activeMinutes, 5);
++  assert.equal(r.rpm, 3); // 03:16 has 3 calls, not 4+1 and not 800
++  assert.ok(Math.abs(r.rps - 3 / 60) < 1e-9);
++
++  const byHour = aggregate(events, "hour", "tokens");
++  assert.equal(byHour.groups.find((g) => g.key === "2026-07-28T01:00")?.peakRpm, 2);
++  assert.equal(byHour.groups.find((g) => g.key === "2026-07-28T03:00")?.peakRpm, 3);
++
++  const now = Date.parse("2026-07-28T04:00:00.000Z");
++  const pre = precomputeDashboardPeriods(
++    events,
++    events.map((e) => Date.parse(e.timestamp)),
++    {
++      today: Date.parse("2026-07-28T00:00:00.000Z"),
++      "24h": now - 24 * 3_600_000,
++      "7d": now - 7 * 86_400_000,
++      "30d": now - 30 * 86_400_000,
++      all: null,
++    },
++    now,
++  );
++  const today = pre.get("today")!;
++  assert.equal(today.usageRpm.method, "peak_minute");
++  assert.equal(today.usageRpm.rpm, 3);
++  assert.equal(
++    today.byGroup.hour.groups.find((g) => g.key === "2026-07-28T01:00")?.peakRpm,
++    2,
++  );
++  assert.equal(
++    today.byGroup.hour.groups.find((g) => g.key === "2026-07-28T03:00")?.peakRpm,
++    3,
++  );
++  assert.equal(
++    today.byGroup.day.groups.find((g) => g.key === "2026-07-28")?.peakRpm,
++    3,
++  );
+ });
+ 
+ test("computeLiveRequestRate uses sliding-window mean (RPM = N×60/T)", () => {
+-- 
+2.55.0.windows.2
+
