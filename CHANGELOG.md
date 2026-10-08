@@ -5,6 +5,27 @@ All notable changes to TokenLab are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Configurable scan frequency** — Settings → **Scanning** lets you set the
+  background scan cadence (1/2/5/10/15/30/60 min), the full all-agent rescan
+  interval (1/3/6/12/24 h), and toggle background scanning entirely. Stored as
+  `scan.{intervalMinutes,fullIntervalMinutes,periodicEnabled}` in `config.json`
+  and applied without a server restart.
+- `scanIntervalMinutes` / `scanFullIntervalMinutes` / `scanPeriodicEnabled` /
+  `lastScanAt` in `GET /api/health` so the UI shows the resolved cadence.
+
+### Changed
+- **Background scans now run every 5 minutes instead of every 60 seconds**
+  (full all-agent pass still every 6 hours by default). Scanning walks agent
+  logs on disk, so the per-minute pass was the largest recurring CPU/disk cost.
+  Remote mirror sync still runs every minute.
+- Settings page decluttered: General and Cost estimation merged into one
+  **Preferences** card, the Gist and config-path details moved behind
+  disclosures, and row spacing tightened so the page fits one screen. The
+  **Rescan** button moved from System to **Scanning**, where it belongs.
+
 ## [1.0.6] — 2026-09-13
 
 ### Added
