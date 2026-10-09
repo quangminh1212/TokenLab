@@ -20,16 +20,16 @@ export interface XlabTokenConfig {
   };
   /**
    * Background scanning cadence. Scanning walks agent logs on disk, so the
-   * defaults are deliberately relaxed (5 min) — every-minute passes kept the
-   * CPU and disk busy on large Codex/Claude histories.
+   * default is deliberately relaxed (1h) — every-minute passes kept the CPU and
+   * disk busy on large Codex/Claude histories.
    */
   scan?: {
-    /** Minutes between two background light scans (1–60). Default 5. */
+    /** Minutes between two background light scans (1–60). Default 60. */
     intervalMinutes?: number;
     /** When false, no background scan runs (manual Rescan still works). Default true. */
     periodicEnabled?: boolean;
     /**
-     * Minutes between two full all-agent scans (5–1440). Default 360 (6h).
+     * Minutes between two full all-agent scans (5–1440). Default 60 (1h).
      * Light ticks only refresh hot agents; this is the deep historical pass.
      */
     fullIntervalMinutes?: number;
@@ -47,12 +47,46 @@ export interface XlabTokenConfig {
      */
     autoDaily?: boolean;
   };
+  /**
+   * Request-rate auditing against the router's own limits.
+   *
+   * Two independent things are configured here, because they answer different
+   * questions and neither can be derived from the other:
+   *
+   *  - `windows` / `models` reproduce LiteLLM's pre-call guard (see
+   *    `src/rate-guard.ts`), which is a 1-second and 60-second sliding window.
+   *  - `flag` thresholds drive the per-day activity report (see
+   *    `src/flag-report.ts`), which is what explains a provider's
+   *    "18 giờ/ngày" warning.
+   *
+   * Env overrides (take precedence over config.json):
+   *   TOKENLAB_RATE_LIMIT_WINDOWS   e.g. "5/30s,2/1s"
+   *   TOKENLAB_RATE_LIMIT_MODELS    e.g. "glm-5.3,glm-5.53" or "*"
+   */
+  rateLimit?: {
+    /** Windows as "limit/window" pairs, e.g. "1/1s,60/60s". */
+    windows?: string;
+    /** Model ids the guard applies to; "*" or omitted-plus-empty means all. */
+    models?: string;
+    flag?: {
+      /** Hours of first→last span at or above which a day is flagged. */
+      spanHours?: number;
+      /** Hours of request-bearing minutes at or above which a day is flagged. */
+      activeHours?: number;
+      /** Gap in seconds still counted as the same continuous run. */
+      continuousGapSeconds?: number;
+      /** Idle hours inside the span allowed before a day reads as "always on". */
+      maxIdleHours?: number;
+      /** Share (0–1) of sub-60s gaps that reads as an automated cadence. */
+      automatedGapShare?: number;
+    };
+  };
 }
 
-/** Background light scan cadence (minutes) when config says nothing. */
-export const DEFAULT_SCAN_INTERVAL_MINUTES = 5;
-/** Full all-agent rescan cadence (minutes) when config says nothing (6h). */
-export const DEFAULT_FULL_SCAN_INTERVAL_MINUTES = 360;
+/** Background light scan cadence (minutes) when config says nothing (1h). */
+export const DEFAULT_SCAN_INTERVAL_MINUTES = 60;
+/** Full all-agent rescan cadence (minutes) when config says nothing (1h). */
+export const DEFAULT_FULL_SCAN_INTERVAL_MINUTES = 60;
 /** Guard rails so a hand-edited config.json cannot turn this into a scan loop. */
 const MIN_SCAN_INTERVAL_MINUTES = 1;
 const MAX_SCAN_INTERVAL_MINUTES = 60;
@@ -86,6 +120,8 @@ function freezeView(cfg: XlabTokenConfig): XlabTokenConfig {
   Object.freeze(cfg.pricing);
   Object.freeze(cfg.scan);
   Object.freeze(cfg.backup);
+  Object.freeze(cfg.rateLimit?.flag);
+  Object.freeze(cfg.rateLimit);
   return Object.freeze(cfg);
 }
 
@@ -98,6 +134,9 @@ function buildSyncView(c: XlabTokenConfig): XlabTokenConfig {
   }
   if (c.scan) view.scan = { ...c.scan };
   if (c.backup) view.backup = { ...c.backup };
+  if (c.rateLimit) {
+    view.rateLimit = { ...c.rateLimit, flag: { ...(c.rateLimit.flag || {}) } };
+  }
   return freezeView(view);
 }
 

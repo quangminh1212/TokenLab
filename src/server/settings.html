@@ -143,6 +143,94 @@
         </div>
       </section>
 
+      <!--
+        Rate limits. Two independent controls: the sliding windows TokenLab
+        reproduces from LiteLLM's own pre-call guard, and the thresholds that
+        decide when a day is reported as "tool/bot"-like.
+      -->
+      <section class="settings-section u-card">
+        <div class="settings-section-head">
+          <h2>Rate limits</h2>
+          <p>
+            Windows TokenLab reproduces from LiteLLM's own <code>pre_call_hook</code>, plus the
+            thresholds used to explain a provider's "tool/bot" warning.
+          </p>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="rateLimitWindows">Request windows</label>
+            <span class="settings-help">
+              Comma-separated <code>limit/window</code> pairs, e.g. <code>1/1s,60/60s</code>
+              (LiteLLM's own) or <code>5/30s,2/1s</code> (provider-style). Leave empty for the
+              LiteLLM default.
+            </span>
+          </div>
+          <input
+            type="text"
+            id="rateLimitWindows"
+            class="settings-input"
+            placeholder="1/1s,60/60s"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="rateLimitModels">Models</label>
+            <span class="settings-help">
+              Model ids the windows apply to, comma-separated. Use <code>*</code> for every model.
+              Leave empty for the LiteLLM default (<code>glm-5.3</code>, <code>glm-5.53</code>).
+            </span>
+          </div>
+          <input
+            type="text"
+            id="rateLimitModels"
+            class="settings-input"
+            placeholder="glm-5.3,glm-5.53"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="rateFlagSpanHours">Flag: span hours</label>
+            <span class="settings-help">
+              Flag a day when first→last request span reaches this many hours. Loose by design —
+              it counts idle gaps.
+            </span>
+          </div>
+          <input type="number" id="rateFlagSpanHours" class="settings-input settings-input-num"
+            min="0" max="24" step="0.5" placeholder="18" />
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <label for="rateFlagActiveHours">Flag: active hours</label>
+            <span class="settings-help">
+              Flag a day when request-bearing minutes reach this many hours. Excludes idle time,
+              so it is the honest counterpart to the span figure.
+            </span>
+          </div>
+          <input type="number" id="rateFlagActiveHours" class="settings-input settings-input-num"
+            min="0" max="24" step="0.5" placeholder="12" />
+        </div>
+
+        <div class="settings-row settings-row-last">
+          <div class="settings-row-text">
+            <label for="rateFlagGapShare">Flag: automated cadence</label>
+            <span class="settings-help">
+              Flag a day when this share of gaps between requests is ≤ 60s. This is the actual
+              tool/bot signature — a human does not send a request every few seconds.
+            </span>
+          </div>
+          <input type="number" id="rateFlagGapShare" class="settings-input settings-input-num"
+            min="0" max="1" step="0.05" placeholder="0.9" />
+        </div>
+      </section>
+
       <!-- Backup & restore: export / import / Gist -->
       <section class="settings-section u-card">
         <div class="settings-section-head">
@@ -367,6 +455,12 @@
     }
 
     let lastHealth = null;
+    /**
+     * Authoritative cadence from /api/config. Kept so periodic refreshes
+     * (loadHealth / the 30s tick) relabel from data instead of scraping the DOM,
+     * which could race the programmatic <select> rebuild and reset the values.
+     */
+    let lastScanValues = null;
 
     async function loadHealth() {
       try {
@@ -381,7 +475,7 @@
         $('runtimeLabel').textContent = `${h.platform || '\u2014'} \u00B7 ${h.node || '\u2014'}`;
         if (h.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt, h.timezone);
-        }        updateScanWordHint(h);
+        }        updateScanWordHint(h, lastScanValues);
       } catch {
         $('meta').innerHTML = '<span class="err">API offline</span>';
       }
@@ -407,21 +501,22 @@
     const SCAN_INTERVALS = [
       { value: 1, label: 'Every 1 minute (heavy)' },
       { value: 2, label: 'Every 2 minutes' },
-      { value: 5, label: 'Every 5 minutes (recommended)' },
+      { value: 5, label: 'Every 5 minutes' },
       { value: 10, label: 'Every 10 minutes' },
       { value: 15, label: 'Every 15 minutes' },
       { value: 30, label: 'Every 30 minutes' },
-      { value: 60, label: 'Every 60 minutes' },
+      { value: 60, label: 'Every 60 minutes (recommended)' },
     ];
     const SCAN_FULL_INTERVALS = [
-      { value: 60, label: 'Every 1 hour' },
+      { value: 60, label: 'Every 1 hour (recommended)' },
       { value: 180, label: 'Every 3 hours' },
-      { value: 360, label: 'Every 6 hours (recommended)' },
+      { value: 360, label: 'Every 6 hours' },
       { value: 720, label: 'Every 12 hours' },
       { value: 1440, label: 'Every 24 hours' },
     ];
-    const DEFAULT_SCAN_INTERVAL_MINUTES = 5;
-    const DEFAULT_SCAN_FULL_INTERVAL_MINUTES = 360;
+    // Keep in sync with src/config.ts DEFAULT_SCAN_* (both 60 min).
+    const DEFAULT_SCAN_INTERVAL_MINUTES = 60;
+    const DEFAULT_SCAN_FULL_INTERVAL_MINUTES = 60;
 
     function fillNumberSelect(id, options, selected, fallback) {
       const sel = $(id);
@@ -441,11 +536,14 @@
     }
 
     function readScanForm() {
+      // Never coalesce a failed read into a default: that silently rewrote the
+      // user's saved cadence back to the 1 h default on reload. Treat it as unset.
+      const mins = Number($('scanIntervalSelect')?.value);
+      const full = Number($('scanFullIntervalSelect')?.value);
       return {
         periodicEnabled: $('scanPeriodicEnabled') ? $('scanPeriodicEnabled').checked : true,
-        intervalMinutes: Number($('scanIntervalSelect')?.value) || DEFAULT_SCAN_INTERVAL_MINUTES,
-        fullIntervalMinutes:
-          Number($('scanFullIntervalSelect')?.value) || DEFAULT_SCAN_FULL_INTERVAL_MINUTES,
+        ...(Number.isFinite(mins) && mins > 0 ? { intervalMinutes: mins } : {}),
+        ...(Number.isFinite(full) && full > 0 ? { fullIntervalMinutes: full } : {}),
       };
     }
 
@@ -464,7 +562,19 @@
         scan?.fullIntervalMinutes,
         DEFAULT_SCAN_FULL_INTERVAL_MINUTES,
       );
-      updateScanWordHint(health);
+      // Only adopt values the server actually returned. A /api/config response
+      // that failed to include `scan` (or omitted one field) must not blank the
+      // authoritative cadence — that is what let the 30s tick fall back to the
+      // stale <select> and relabel the saved cadence as the 1 h default.
+      lastScanValues = {
+        intervalMinutes: Number.isFinite(Number(scan?.intervalMinutes))
+          ? Number(scan.intervalMinutes)
+          : lastScanValues?.intervalMinutes,
+        fullIntervalMinutes: Number.isFinite(Number(scan?.fullIntervalMinutes))
+          ? Number(scan.fullIntervalMinutes)
+          : lastScanValues?.fullIntervalMinutes,
+      };
+      updateScanWordHint(health, lastScanValues);
     }
 
     function describeScanAge(iso) {
@@ -479,16 +589,47 @@
       return `Last scan: ${Math.floor(hours / 24)} day(s) ago`;
     }
 
-    function updateScanWordHint(health) {
+    /**
+     * `values` carries the cadence saved in /api/config. `health` (from
+     * /api/health) also reports the server's resolved cadence, so we treat both
+     * as authoritative and only fall back to the live <select> when neither
+     * source answers. A missing read must never mean "default": the periodic 30s
+     * tick used to do exactly that and relabel the saved choice as the 1 h default.
+     *
+     * Precedence: freshest /api/health value → cached /api/config value → <select>.
+     * Health wins because loadHealth() runs on its own 10s interval and can land
+     * after a cadence change, whereas `values` is only refreshed on save/reload.
+     */
+    function updateScanWordHint(health, values) {
       const h = health || lastHealth || {};
-      const on = $('scanPeriodicEnabled') ? $('scanPeriodicEnabled').checked : true;
-      const mins = Number($('scanIntervalSelect')?.value) || DEFAULT_SCAN_INTERVAL_MINUTES;
-      const full = Number($('scanFullIntervalSelect')?.value) || DEFAULT_SCAN_FULL_INTERVAL_MINUTES;
+      const toggle = $('scanPeriodicEnabled');
+      const positive = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : null);
+      // Server-resolved switch wins over the DOM: a failed /api/config load left
+      // the checkbox rendered from the HTML default (`checked`) even though the
+      // saved config had scanning off, and this hint then disagreed with the
+      // dropdown right next to it.
+      const on =
+        typeof h.scanPeriodicEnabled === 'boolean'
+          ? h.scanPeriodicEnabled
+          : toggle
+            ? toggle.checked
+            : true;
+      if (toggle && typeof h.scanPeriodicEnabled === 'boolean') toggle.checked = on;
+      const readMins = Number($('scanIntervalSelect')?.value);
+      const readFull = Number($('scanFullIntervalSelect')?.value);
+      const mins =
+        positive(h.scanIntervalMinutes) ??
+        positive(values?.intervalMinutes) ??
+        positive(readMins);
+      const full =
+        positive(h.scanFullIntervalMinutes) ??
+        positive(values?.fullIntervalMinutes) ??
+        positive(readFull);
       const hint = $('scanIntervalHint');
       if (hint) {
-        hint.textContent = on
-          ? `Light scans every ${mins} min, full rescan every ${Math.round(full / 60)} h.`
-          : 'Background scanning is off.';
+        if (!on) hint.textContent = 'Background scanning is off.';
+        else if (mins == null || full == null) hint.textContent = 'Background light scans.';
+        else hint.textContent = `Light scans every ${mins} min, full rescan every ${Math.round(full / 60)} h.`;
       }
       const last = $('scanLastLabel');
       if (last) last.textContent = describeScanAge(h.lastScanAt);
@@ -503,6 +644,9 @@
 
     async function loadConfigUi() {
       try {
+        // Health first: it calls updateScanWordHint(), which must not run after
+        // applyScanForm() and overwrite the freshly-applied saved cadence.
+        await loadHealth();
         const c = await fetch('/api/config').then((r) => r.json());
         const pathEl = $('configPath');
         pathEl.textContent = c.configPath || '\u2014';
@@ -511,6 +655,7 @@
         $('preferRouterCost').checked = c.pricing?.preferRouterCost !== false;
         fillTimezoneSelect(c.timezone || 'local');
         applyScanForm(c.scan, lastHealth);
+        applyRateLimitForm(c.rateLimit);
         try {
           $('browserTzLabel').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
         } catch {
@@ -523,7 +668,6 @@
           $('gistAutoDaily').checked = c.backup?.autoDaily !== false;
         }
         showGistLink(c.backup?.gistUrl, c.backup?.lastBackupAt);
-        await loadHealth();
       } catch {
         $('configPath').textContent = '(unavailable)';
       }
@@ -677,6 +821,45 @@
       };
     }
 
+    /**
+     * Read the rate-limit form.
+     *
+     * Empty text fields are sent as empty strings rather than omitted, because
+     * the server treats "" as "clear this override" and falls back to the
+     * LiteLLM default — that is how a user removes an override. Numeric fields
+     * are sent only when they parse, so a half-typed value cannot save NaN.
+     */
+    function readRateLimitForm() {
+      const num = (id) => {
+        const raw = $(id)?.value;
+        if (raw == null || String(raw).trim() === '') return undefined;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : undefined;
+      };
+      const flag = {};
+      const span = num('rateFlagSpanHours');
+      const active = num('rateFlagActiveHours');
+      const gapShare = num('rateFlagGapShare');
+      if (span !== undefined) flag.spanHours = span;
+      if (active !== undefined) flag.activeHours = active;
+      if (gapShare !== undefined) flag.automatedGapShare = gapShare;
+      return {
+        windows: $('rateLimitWindows')?.value?.trim() ?? '',
+        models: $('rateLimitModels')?.value?.trim() ?? '',
+        ...(Object.keys(flag).length ? { flag } : {}),
+      };
+    }
+
+    /** Populate the rate-limit form from a saved config block. */
+    function applyRateLimitForm(rl) {
+      if ($('rateLimitWindows')) $('rateLimitWindows').value = rl?.windows ?? '';
+      if ($('rateLimitModels')) $('rateLimitModels').value = rl?.models ?? '';
+      const f = rl?.flag || {};
+      if ($('rateFlagSpanHours')) $('rateFlagSpanHours').value = f.spanHours ?? '';
+      if ($('rateFlagActiveHours')) $('rateFlagActiveHours').value = f.activeHours ?? '';
+      if ($('rateFlagGapShare')) $('rateFlagGapShare').value = f.automatedGapShare ?? '';
+    }
+
     $('savePrefs').onclick = async () => {
       const btn = $('savePrefs');
       btn.disabled = true;
@@ -691,14 +874,26 @@
             pricing: { preferRouterCost: $('preferRouterCost').checked },
             backup: { autoDaily: $('gistAutoDaily') ? $('gistAutoDaily').checked : true },
             scan: readScanForm(),
+            rateLimit: readRateLimitForm(),
           }),
         }).then((x) => x.json());
         $('prefsStatus').textContent = 'Saved';
         if (r.todayStartsAt) {
           $('todayStartsLabel').textContent = formatTodayStart(r.todayStartsAt, r.timezone || tz);
         }
-        // Server clamps the values — mirror back what it actually stored.
-        if (r.scan) applyScanForm(r.scan, { ...lastHealth, scanIntervalMinutes: r.scanIntervalMinutes });
+        // Server clamps the values — mirror back what it actually stored. The
+        // PUT response carries the full resolved scan block plus the top-level
+        // scan* fields, so derive the health shape from it rather than spreading
+        // a stale `lastHealth` (which would shadow the just-saved full interval).
+        if (r.scan) {
+          applyScanForm(r.scan, {
+            scanIntervalMinutes: r.scanIntervalMinutes ?? r.scan.intervalMinutes,
+            scanFullIntervalMinutes: r.scanFullIntervalMinutes ?? r.scan.fullIntervalMinutes,
+            scanPeriodicEnabled: r.scanPeriodicEnabled ?? r.scan.periodicEnabled,
+          });
+        }
+        // Re-read health so lastHealth stops reporting the pre-save cadence.
+        void loadHealth();
         setTimeout(() => { $('prefsStatus').textContent = ''; }, 2200);
       } catch {
         $('prefsStatus').textContent = 'Save failed';
@@ -710,7 +905,25 @@
     ['scanPeriodicEnabled', 'scanIntervalSelect', 'scanFullIntervalSelect'].forEach((id) => {
       const el = $(id);
       if (el) {
-        el.onchange = () => updateScanWordHint(lastHealth);
+        el.onchange = () => {
+          // The user just picked this, so the DOM is authoritative here. Drop the
+          // stale health/config cadence instead of passing it along: health-first
+          // precedence would otherwise relabel the control back to the old value
+          // until the next /api/health poll caught up with the unsaved edit.
+          lastScanValues = {
+            intervalMinutes: Number($('scanIntervalSelect')?.value),
+            fullIntervalMinutes: Number($('scanFullIntervalSelect')?.value),
+          };
+          const toggle = $('scanPeriodicEnabled');
+          updateScanWordHint(
+            {
+              // Keep last-scan age, but let the pending edit drive the cadence.
+              lastScanAt: lastHealth?.lastScanAt,
+              scanPeriodicEnabled: toggle ? toggle.checked : undefined,
+            },
+            lastScanValues,
+          );
+        };
       }
     });
 
@@ -743,7 +956,7 @@
     loadConfigUi();
     setInterval(loadHealth, 10000);
     // Keep the "last background scan" relative label honest without a full reload.
-    setInterval(() => updateScanWordHint(lastHealth), 30000);
+    setInterval(() => updateScanWordHint(lastHealth, lastScanValues), 30000);
 
     document.querySelectorAll('a.nav-link, a.settings-btn, a.brand-logo-wrap').forEach((a) => {
       a.addEventListener('pointerenter', () => {
