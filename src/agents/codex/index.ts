@@ -113,7 +113,7 @@ interface TurnBucket {
 /**
  * Files a light scan has already read, keyed by absolute path.
  * The value is relative path + size + mtime. A later tick that still sees that
- * signature does not open the file. The 6h full scan does not use this map.
+ * signature does not open the file. The periodic full scan does not use this map.
  */
 const lightFileSignatures = new Map<string, string>();
 /** Roots whose historical session trees were listed once. Later light ticks skip them. */
@@ -229,7 +229,7 @@ async function parseCodexInternal(
   for (const root of orderRootsCanonicalFirst(roots)) {
     if (!(await pathExists(root))) continue;
     // The Orca runtime home mirrors ~/.codex, including gigabytes of copies.
-    // Light scans read the canonical tree only; the 6h full scan still sees both.
+    // Light scans read the canonical tree only; the periodic full scan still sees both.
     if (options.recentOnly && isMirrorCodexRoot(root)) {
       let canonical = false;
       for (const other of roots) {
@@ -255,7 +255,7 @@ async function parseCodexInternal(
 
     // After one light listing, do not walk archived history again. New usage
     // lands in today's or yesterday's session folder, or in a file already
-    // kept warm. The 6h full scan still walks every tree, including mirrors.
+    // kept warm. The periodic full scan still walks every tree, including mirrors.
     let scanRoots: string[];
     if (indexed) {
       scanRoots = [root];
