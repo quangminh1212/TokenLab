@@ -82,6 +82,14 @@ export interface UsageEvent {
    * Aggregate `eventCount` sums this (defaults to 1 when omitted).
    */
   requestCount?: number;
+  /**
+   * True when the source record actually exposed cache fields (even as zero),
+   * false/absent when the provider said nothing about caching.
+   *
+   * Lets the dashboard tell a measured cache hit rate of 0 apart from "no cache
+   * data in this feed", which otherwise both render as a bare 0.
+   */
+  cacheReported?: boolean;
 }
 
 export interface TokenTotals {
@@ -97,6 +105,37 @@ export interface TokenTotals {
   outputCost?: number;
   currency: string;
   eventCount: number;
+  /**
+   * Events in this bucket whose source actually reported a cache field (read or
+   * write), versus events that said nothing about caching.
+   *
+   * `cacheReadTokens === 0` alone cannot tell the two apart, so CACHE $ rendered
+   * "—" for both "this provider does not cache" and "we never saw the number".
+   * With the count, the dashboard shows a measured $0.00 when every event in the
+   * bucket reported cache, and "—" only when nothing did.
+   */
+  cacheReportedEvents?: number;
+  /**
+   * Cache-read tokens the bucket's rate table actually charges a discount on.
+   *
+   * Cache-hit tokens can be measured (and worth displaying) while the model's
+   * published rate table gives them no discount at all. LiteLLM does exactly
+   * this: its mirror bills Claude traffic as
+   * `cost = inputPer1M * promptTokens + outputPer1M * completionTokens` with
+   * `cacheReadPer1M === inputPer1M`, so those rows carry billions of cache-hit
+   * tokens yet contribute $0.00 to `cacheCost`.
+   *
+   * Without this split "CACHE $ 0.00" is indistinguishable from "cache was never
+   * scanned" — the two look identical in the dashboard.
+   */
+  cacheBilledTokens?: number;
+  /**
+   * Cache-read tokens that earned no discount because the rate table publishes
+   * `cacheReadPer1M >= inputPer1M` for that model.
+   *
+   * `cacheFreeTokens + cacheBilledTokens === cacheReadTokens`.
+   */
+  cacheFreeTokens?: number;
 }
 
 export interface GroupRow extends TokenTotals {
