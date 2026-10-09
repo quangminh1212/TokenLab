@@ -1,5 +1,5 @@
 import type { GroupBy, GroupRow, StatsResult, TokenTotals, UsageEvent } from "./types.js";
-import { priceCostParts } from "./pricing.js";
+import { priceCostParts, getRateForModel } from "./pricing.js";
 import { normalizeModelName } from "./util.js";
 
 function emptyTotals(currency = "USD"): TokenTotals {
@@ -15,6 +15,8 @@ function emptyTotals(currency = "USD"): TokenTotals {
     outputCost: 0,
     currency,
     eventCount: 0,
+    cacheBilledTokens: 0,
+    cacheFreeTokens: 0,
   };
 }
 
@@ -30,6 +32,21 @@ function addWithParts(t: TokenTotals, e: UsageEvent, parts: CostParts): void {
   t.inputCost = (t.inputCost || 0) + parts.inputCost;
   t.cacheCost = (t.cacheCost || 0) + parts.cacheCost;
   t.outputCost = (t.outputCost || 0) + parts.outputCost;
+  // Split the cache-read bucket by whether the rate table actually discounts it.
+  // A bucket can carry billions of cache-hit tokens and still bill $0.00 for them
+  // (LiteLLM mirrors Claude traffic at cacheReadPer1M === inputPer1M), so the
+  // dashboard needs to say "measured, no discount" instead of looking unscanned.
+  const cacheRead = e.cacheReadTokens || 0;
+  if (cacheRead > 0) {
+    const { rate } = getRateForModel(e.model);
+    const discountsCache =
+      rate.cacheReadPer1M != null && rate.cacheReadPer1M < rate.inputPer1M;
+    if (discountsCache) t.cacheBilledTokens = (t.cacheBilledTokens || 0) + cacheRead;
+    else t.cacheFreeTokens = (t.cacheFreeTokens || 0) + cacheRead;
+  }
+  // Count rows that actually told us about caching. A row with explicit zeroes
+  // still counts: "the provider said 0" is a measurement, unlike silence.
+  if (e.cacheReported) t.cacheReportedEvents = (t.cacheReportedEvents || 0) + 1;
   // Sum real API requests (daily rollups carry model.requests; per-call rows = 1)
   const reqs = e.requestCount;
   t.eventCount += typeof reqs === "number" && Number.isFinite(reqs) && reqs > 0 ? Math.floor(reqs) : 1;
