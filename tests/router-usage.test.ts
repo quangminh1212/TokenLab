@@ -1019,4 +1019,376 @@ describe("router usage parsers", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  // --- cache reporting (CACHE $ column) ------------------------------------
+
+  it("flags cacheReported when a history row carries the cachedTokens key, even as 0", async () => {
+    // Regression: LiteLLM's per-request export always emits `cachedTokens`, so a
+    // 0 is a measurement ("no cache reused"), not silence. Before this, the
+    // parser never set `cacheReported`, so the dashboard rendered CACHE $ as "—"
+    // for the whole litellm agent even while it carried billions of cached
+    // tokens on other rows.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cacherep-"));
+    try {
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        [
+          JSON.stringify({
+            id: "with-cache",
+            timestamp: "2026-10-08T01:00:00.000Z",
+            model: "anthropic/claude-opus-5.5",
+            model_group: "claude-opus-5.5",
+            provider: "openai",
+            promptTokens: 96_235,
+            completionTokens: 512,
+            cachedTokens: 95_872,
+            cost: 0.011692,
+            tokens: { prompt_tokens: 96_235, completion_tokens: 512 },
+          }),
+          JSON.stringify({
+            id: "zero-cache-but-reported",
+            timestamp: "2026-10-08T01:05:00.000Z",
+            model: "anthropic/claude-opus-5.5",
+            model_group: "claude-opus-5.5",
+            provider: "openai",
+            promptTokens: 44_461,
+            completionTokens: 458,
+            cachedTokens: 0,
+            cost: 0.186748,
+            tokens: { prompt_tokens: 44_461, completion_tokens: 458 },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      assert.equal(events.length, 2);
+      const withCache = events.find((e) => e.cacheReadTokens === 95_872)!;
+      const zeroCache = events.find((e) => e.cacheReadTokens === 0)!;
+      assert.ok(withCache, "the cached row must survive parsing");
+      assert.equal(withCache.cacheReported, true);
+      assert.equal(
+        zeroCache.cacheReported,
+        true,
+        "an explicit cachedTokens:0 still counts as reported cache",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("aggregate reports litellm cacheReportedEvents so CACHE $ stops rendering an em dash", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { aggregate } = await import("../src/aggregate.js");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cacheagg-"));
+    try {
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        [
+          JSON.stringify({
+            id: "r1",
+            timestamp: "2026-10-08T02:00:00.000Z",
+            model: "anthropic/claude-opus-5.5",
+            provider: "openai",
+            promptTokens: 10_000,
+            completionTokens: 100,
+            cachedTokens: 9_000,
+            cost: 0.1,
+            tokens: { prompt_tokens: 10_000, completion_tokens: 100 },
+          }),
+          JSON.stringify({
+            id: "r2",
+            timestamp: "2026-10-08T02:01:00.000Z",
+            model: "anthropic/claude-opus-5.5",
+            provider: "openai",
+            promptTokens: 10_000,
+            completionTokens: 100,
+            cachedTokens: 0,
+            cost: 0.1,
+            tokens: { prompt_tokens: 10_000, completion_tokens: 100 },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const result = aggregate(events, "agent", "cost");
+      const row = result.groups.find((g) => g.key === "litellm")!;
+      assert.equal(row.cacheReportedEvents, 2, "both rows reported cache");
+      assert.equal(row.cacheReadTokens, 9_000);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("splits LiteLLM's cache-inclusive prompt tokens into input and cache-read", async () => {
+    // LiteLLM's invariant (litellm/cost_calculator.py L455-460):
+    //   "prompt_tokens already INCLUDES cached_tokens"
+    // TokenLab keeps the two apart, so inputTokens + cacheReadTokens must equal
+    // the source promptTokens exactly — not exceed it by the cache count.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-litellm-split-"));
+    try {
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        [
+          JSON.stringify({
+            id: "s1",
+            timestamp: "2026-10-08T02:00:00.000Z",
+            model: "anthropic/claude-opus-5.5",
+            provider: "openai",
+            promptTokens: 119_173,
+            completionTokens: 180,
+            cachedTokens: 117_632,
+            cost: 0.009764,
+            tokens: { prompt_tokens: 119_173, completion_tokens: 180 },
+          }),
+          // No cache field at all: the prompt stays entirely uncached.
+          JSON.stringify({
+            id: "s2",
+            timestamp: "2026-10-08T02:01:00.000Z",
+            model: "anthropic/claude-fable-5",
+            provider: "openai",
+            promptTokens: 1_000,
+            completionTokens: 10,
+            cost: 0.01,
+            tokens: { prompt_tokens: 1_000, completion_tokens: 10 },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const cached = events.find((e) => e.id && e.cacheReadTokens > 0)!;
+      assert.equal(cached.cacheReadTokens, 117_632);
+      assert.equal(cached.inputTokens, 119_173 - 117_632, "cache is carved out of the prompt");
+      assert.equal(cached.inputTokens + cached.cacheReadTokens, 119_173, "prompt reconciles");
+      assert.equal(cached.totalTokens, 119_173 + 180);
+
+      const plain = events.find((e) => e.inputTokens === 1_000)!;
+      assert.equal(plain.cacheReadTokens, 0);
+      assert.equal(plain.cacheReported, false, "absence of the key is silence, not a zero");
+
+      const { aggregate } = await import("../src/aggregate.js");
+      const row = aggregate(events, "agent", "cost").groups.find((g) => g.key === "litellm")!;
+      assert.equal(row.inputTokens, 1_000 + (119_173 - 117_632));
+      assert.equal(row.cacheReadTokens, 117_632);
+      assert.equal(row.totalTokens, 1_000 + 10 + 119_173 + 180, "no token counted twice");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("separates cache tokens that earn no discount from ones that do", async () => {
+    // Both of these LiteLLM mirror models have cacheReadPer1M === inputPer1M, so
+    // their billions of cache-hit tokens bill $0.00. The dashboard must be able to
+    // say "measured, no published discount" instead of looking unscanned.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { aggregate } = await import("../src/aggregate.js");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-cache-billed-"));
+    try {
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        [
+          // claude-fable-5: cacheReadPer1M === inputPer1M === 10 -> no discount.
+          JSON.stringify({
+            id: "b1", timestamp: "2026-10-08T02:00:00.000Z", model: "anthropic/claude-fable-5",
+            provider: "openai", promptTokens: 1_000_000, completionTokens: 1_000,
+            cachedTokens: 800_000, cost: 1,
+            tokens: { prompt_tokens: 1_000_000, completion_tokens: 1_000 },
+          }),
+          // deepseek-v4-pro: cacheReadPer1M 0.003625 < inputPer1M 0.435 -> discounted.
+          JSON.stringify({
+            id: "b2", timestamp: "2026-10-08T02:01:00.000Z", model: "deepseek-v4-pro",
+            provider: "openai", promptTokens: 500_000, completionTokens: 500,
+            cachedTokens: 400_000, cost: 1,
+            tokens: { prompt_tokens: 500_000, completion_tokens: 500 },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const row = aggregate(events, "agent", "cost").groups.find((g) => g.key === "litellm")!;
+      assert.equal(row.cacheReadTokens, 1_200_000);
+      assert.equal(row.cacheFreeTokens, 800_000, "claude-fable-5 hits bill at the input rate");
+      assert.equal(row.cacheBilledTokens, 400_000, "deepseek-v4-pro hits earn a real discount");
+      assert.equal(
+        (row.cacheFreeTokens || 0) + (row.cacheBilledTokens || 0),
+        row.cacheReadTokens,
+        "every measured cache token is classified",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a day's cache exactly once when byModel keys are overlapping views", async () => {
+    // Real LiteLLM mirror, 2026-07-31. The VPS UI export emits ONE model view
+    // twice — a provider-native key and a bare key, byte-identical — and both
+    // carry `rawModel: "openai/Kimi-k3"`, which is the model's IDENTITY. The
+    // day-level `cachedTokens` is the sum over requests (LiteLLM has no period
+    // divisor), so it equals what the model rows carry: the duplicate key is the
+    // only double-count and must be dropped, never the cache.
+    //
+    //   day          in=1310221946 out=7806517 cache=2176363904 req=22797 cost=1000.37
+    //   kimi-k3      in=1209500081 out=6795583 cache=1088118336 req=20782 cost=467.01
+    //   openai/…     in=1209500081 out=6795583 cache=1088118336 req=20782 cost=467.01
+    //
+    // Deduping by rawModel collapses the twin so 1,088,118,336 lands once. The
+    // previous behaviour also zeroed the remainder's cache and kept only HALF the
+    // day's cache; that under-count is what this test now guards against.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cache-rem-"));
+    try {
+      const DAY = "2026-07-31";
+      const modelCache = 1_088_118_336;
+      const bigIn = 1_209_500_081;
+      const bigOut = 6_795_583;
+      const view = {
+        requests: 20_782,
+        promptTokens: bigIn,
+        completionTokens: bigOut,
+        cachedTokens: modelCache,
+        cost: 467.01,
+        rawModel: "openai/Kimi-k3",
+        provider: "openai",
+      };
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: 22_797,
+            promptTokens: 1_310_221_946,
+            completionTokens: 7_806_517,
+            cachedTokens: 2_176_363_904,
+            cost: 1_000.37,
+            byModel: {
+              "kimi-k3|openai": view,
+              "openai/Kimi-k3|openai": view,
+              "qwen3.7-max|openai": {
+                requests: 1,
+                promptTokens: 66_121,
+                completionTokens: 782,
+                cachedTokens: 63_616,
+                cost: 0.019245,
+                rawModel: "openai/qwen3.7-max",
+                provider: "openai",
+              },
+              "openai/qwen3.7-max|openai": {
+                requests: 1,
+                promptTokens: 66_121,
+                completionTokens: 782,
+                cachedTokens: 63_616,
+                cost: 0.019245,
+                rawModel: "openai/qwen3.7-max",
+                provider: "openai",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+      const totalCache = rows.reduce((a, e) => a + e.cacheReadTokens, 0);
+      assert.equal(
+        totalCache,
+        2_176_363_904,
+        `each cached token must be counted once, got ${totalCache}`,
+      );
+      // Twin keys collapsed: one row per real model, plus the genuinely uncovered
+      // tail (the day has 22,797 requests; the named models account for 20,783).
+      assert.deepEqual(
+        rows.map((e) => e.model).sort(),
+        ["Kimi-k3", "qwen3.7-max", "unattributed"],
+      );
+      // The named model rows appear ONCE each — that is the dedupe under test.
+      for (const m of ["Kimi-k3", "qwen3.7-max"]) {
+        assert.equal(rows.filter((e) => e.model === m).length, 1, `${m} must not be duplicated`);
+      }
+      // Prompt tokens reconcile with the day by ADDITION, cache-inclusive
+      // (LiteLLM convention: prompt_tokens includes cached_tokens). The day's own
+      // prompt field is a partial read of a rolling export, so the rows can exceed
+      // it; what must hold is that no token is counted twice or dropped.
+      assert.equal(
+        rows.reduce((a, e) => a + e.inputTokens + e.cacheReadTokens, 0),
+        2_398_403_898,
+      );
+      assert.equal(rows.reduce((a, e) => a + e.outputTokens, 0), 7_806_517);
+      // The uncached account is the prompt account minus exactly one copy of cache.
+      assert.equal(rows.reduce((a, e) => a + e.inputTokens, 0), 222_039_994);
+      assert.equal(
+        rows.reduce((a, e) => a + e.inputTokens + e.cacheReadTokens, 0) -
+          rows.reduce((a, e) => a + e.cacheReadTokens, 0),
+        222_039_994,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("still attributes cache to a remainder row covering models byModel misses", async () => {
+    // Here 60% of the day's prompt tokens belong to models the byModel map never
+    // mentions, so the remainder is real traffic — not a mirror of the rows above
+    // it. It keeps both its tokens and its cache.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cache-rem2-"));
+    try {
+      const DAY = "2026-07-25";
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: 100,
+            promptTokens: 1_000_000,
+            completionTokens: 10_000,
+            cachedTokens: 500_000,
+            cost: 5,
+            byModel: {
+              "gpt-5.6-sol|openai": {
+                requests: 40,
+                promptTokens: 400_000,
+                completionTokens: 4_000,
+                cachedTokens: 200_000,
+                cost: 2,
+                rawModel: "gpt-5.6-sol",
+                provider: "openai",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+      const remainder = rows.find((e) => e.model === "unattributed");
+      assert.ok(remainder, "a genuine uncovered remainder must still be emitted");
+      // Day prompt 1,000,000 − model prompt 400,000 = 600,000, of which the
+      // remainder's own cache hit (500,000 − 200,000 = 300,000) is already inside.
+      assert.equal(remainder.inputTokens, 500_000);
+      assert.equal(remainder.cacheReadTokens, 300_000, "its cache belongs to it");
+      assert.equal(remainder.inputTokens + remainder.cacheReadTokens, 800_000);
+      assert.equal(rows.reduce((a, e) => a + e.cacheReadTokens, 0), 500_000);
+      assert.equal(rows.reduce((a, e) => a + e.inputTokens, 0), 700_000);
+      assert.equal(rows.reduce((a, e) => a + e.outputTokens, 0), 10_000);
+      // Same identity as above: prompt account − cache copy === uncached account.
+      assert.equal(
+        rows.reduce((a, e) => a + e.inputTokens + e.cacheReadTokens, 0) -
+          rows.reduce((a, e) => a + e.cacheReadTokens, 0),
+        rows.reduce((a, e) => a + e.inputTokens, 0),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

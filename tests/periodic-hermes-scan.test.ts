@@ -325,12 +325,25 @@ test("dsh light scan reads a changed session once and skips the next identical p
     assert.equal(second.length, 0);
     await writeFile(file, `${line(1, 3)}\n${line(2, 9)}\n`);
     const third = await dshAgent.parseLight!(roots);
-    assert.deepEqual(third.map((event) => event.inputTokens).sort((a, b) => a - b), [3, 9]);
+    // Turn 1 is fresh input (nothing cached yet). Turn 2's prompt of 9 re-reads
+    // turn 1's prompt of 3 from cache, so only the 6-token growth is fresh input.
+    // Asserting [3, 9] fed the cache back in as input and left cacheReadTokens at
+    // 0, which is what made the dashboard show "—" under CACHE $.
+    assert.deepEqual(
+      third.map((event) => event.inputTokens).sort((a, b) => a - b),
+      [3, 6],
+    );
+    assert.deepEqual(
+      third.map((event) => event.cacheReadTokens ?? 0).sort((a, b) => a - b),
+      [0, 3],
+    );
     const sessionDir2 = path.join(root, "sessions", "s2");
     await mkdir(sessionDir2, { recursive: true });
     await writeFile(path.join(sessionDir2, "session.jsonl"), `${line(1, 4)}\n`);
     const fourth = await dshAgent.parseLight!(roots);
+    // A brand-new session has nothing to re-read, so its first turn is all input.
     assert.deepEqual(fourth.map((event) => event.inputTokens), [4]);
+    assert.deepEqual(fourth.map((event) => event.cacheReadTokens ?? 0), [0]);
   } finally {
     if (oldHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = oldHome;
