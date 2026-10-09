@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import {
+  cachedEventsForFile,
   estimateTokensFromChars,
   estimateTokensFromText,
   num,
@@ -16,6 +17,7 @@ import {
   readJsonlCached,
   readText,
   stableId,
+  stampFile,
   walkFiles,
 } from "../../util.js";
 import { resolveSpanMs, splitUsageRow } from "../shared/usage-fields.js";
@@ -57,7 +59,7 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
       const SESSION_CONC = 4;
       for (let i = 0; i < sessionDirs.length; i += SESSION_CONC) {
         const chunk = sessionDirs.slice(i, i + SESSION_CONC);
-        const batches = await Promise.all(chunk.map((dir) => parseGrokSession(dir)));
+        const batches = await Promise.all(chunk.map((dir) => parseGrokSessionCached(dir)));
         for (const batch of batches) {
           for (const e of batch) events.push(e);
         }
@@ -75,6 +77,39 @@ export async function parseGrok(roots: string[]): Promise<UsageEvent[]> {
   }
 
   return events;
+}
+
+/**
+ * Session-level event cache.
+ *
+ * `parseGrokSession` re-derives events from up to four artifacts (summary.json,
+ * usage.json, updates.jsonl, chat_history.jsonl) and does a stack of small
+ * reads/stats per directory. Measured at ~38ms per session dir, it never scored
+ * a hit on repeat ticks: a warm light scan still spent ~4.2s on 109 sessions for
+ * 320 events. `readJsonCached`/`readJsonlCached` cache the JSON layer only, so
+ * all the per-session derivation re-ran every pass.
+ *
+ * The cache key is the session directory plus a stamp of every artifact in it,
+ * so any append to any of the four files invalidates the entry. Stamping each
+ * artifact (not just the directory mtime) matters because Grok appends to an
+ * open updates.jsonl without touching the directory.
+ */
+const SESSION_ARTIFACTS = ["summary.json", "usage.json", "updates.jsonl", "chat_history.jsonl"];
+
+async function grokSessionSignature(dir: string): Promise<string> {
+  const parts: string[] = [];
+  for (const name of SESSION_ARTIFACTS) {
+    const st = await stampFile(path.join(dir, name));
+    parts.push(st ? `${name}|${st.size}|${Math.trunc(st.mtimeMs)}` : `${name}|-`);
+  }
+  return parts.join(",");
+}
+
+async function parseGrokSessionCached(dir: string): Promise<UsageEvent[]> {
+  const signature = await grokSessionSignature(dir);
+  return cachedEventsForFile(`${dir}\u0000grok-session`, async () => parseGrokSession(dir), {
+    signature,
+  });
 }
 
 async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
