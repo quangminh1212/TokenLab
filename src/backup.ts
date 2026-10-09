@@ -1141,6 +1141,23 @@ export function enforceMonotonicAgentDays(
   prev = dropGrokStaleResiduals(prev);
   next = dropGrokStaleResiduals(next);
 
+  /**
+   * Router (9router / routerlab / litellm) estimated daily rollups.
+   *
+   * Their `cachedTokens` day field sums overlapping `byModel` keys, so it is
+   * inflated against the per-request history (live LiteLLM mirror 2026-10-08:
+   * daily=4,371,968 vs usage-history.jsonl=2,185,984, exactly 2x) and the router
+   * `cost` field is priced off that same inflated cache. Both make a stale
+   * snapshot look "richer" than a corrected one, so this high-water guard kept
+   * restoring the over-count and a cache parser fix could never stick.
+   *
+   * Billed (input+output) tokens are additive and already reconcile with the
+   * day, so they are the only trustworthy envelope for these agents.
+   */
+  const isRouterRollup = (e: UsageEvent): boolean =>
+    e.estimated === true &&
+    (e.agent === "litellm" || e.agent === "9router" || e.agent === "routerlab");
+
   /** Envelope weight: ignore Grok estimated out=0 stream residuals (ghost inflation). */
   const monoTokenWeight = (e: UsageEvent): number => {
     if (
@@ -1152,6 +1169,33 @@ export function enforceMonotonicAgentDays(
     ) {
       return 0;
     }
+    if (isRouterRollup(e)) {
+      /**
+       * The whole prompt ACCOUNT, not just its uncached part.
+       *
+       * A row's prompt account is `inputTokens + cacheReadTokens` when the cache
+       * is a slice of the prompt (LiteLLM reports `cached_tokens` inside
+       * `prompt_tokens`), and `inputTokens` alone otherwise. Adding the two
+       * columns unconditionally is therefore right for both: for a
+       * cache-inclusive row the sum IS the prompt count, and for a separate-bucket
+       * row the two are genuinely disjoint.
+       *
+       * Weighting only `inputTokens + outputTokens` made a corrected parser look
+       * like a THINNER snapshot: carving the cache hit out of the prompt moves
+       * billions of tokens from `inputTokens` into `cacheReadTokens` without
+       * changing how much usage the row describes, so the guard saw the fix as a
+       * loss and restored the stale row (which still counted the hit in both
+       * columns) as "richer history". Measured on the live mirror, `litellm`
+       * 2026-07-31: 2,298,465,111 billed-token weight after the fix vs
+       * 13,180,284,63 before, while the day's real prompt account - 1,310,221,946
+       * plus 7,806,517 output — is unchanged either way.
+       */
+      return (
+        (Number(e.inputTokens) || 0) +
+        (Number(e.cacheReadTokens) || 0) +
+        (Number(e.outputTokens) || 0)
+      );
+    }
     return eventTokenWeight(e);
   };
 
@@ -1159,9 +1203,46 @@ export function enforceMonotonicAgentDays(
     events: UsageEvent[];
     tok: number;
     cost: number;
+    /**
+     * Cost excluding the cache component. For router rollups the cache rate is
+     * what the inflated, overlapping `cachedTokens` field drives, so comparing
+     * raw cost would let the stale over-count win the envelope even when billed
+     * (input+output) cost is identical.
+     */
+    billedCost: number;
     req: number;
     live: number;
     estOutPos: number;
+    /**
+     * Cache-read tokens, used only as a last-resort tiebreaker between snapshots
+     * that are otherwise indistinguishable.
+     *
+     * Deliberately NOT part of `tok`: a router rollup's cache is a *slice* of its
+     * prompt tokens, so counting it toward the envelope double-counts the same
+     * tokens and lets the old half-cache snapshot win.
+     *
+     * But once two snapshots agree on billed tokens, cost and requests, the one
+     * reporting MORE cache is strictly better informed — it is the difference
+     * between a scan that recovered the cache column and one that dropped it.
+     * Without this tiebreak `enforceMonotonicAgentDays` reverted every litellm
+     * cache recovery on the next save: the stale snapshot held the identical
+     * billed envelope and won on `req` (its extra `unattributed` remainder row).
+     */
+    cacheRead: number;
+  };
+  /** Cost of a row's non-cache tokens, so cache inflation is not a tiebreaker. */
+  const billedCostOf = (e: UsageEvent): number => {
+    // Router rollups carry a cost priced off their inflated cache; using it here
+    // would just reintroduce the same bias the token weight was fixed for.
+    if (isRouterRollup(e)) return 0;
+    const total = Number(e.estimatedCost) || 0;
+    if (total <= 0) return 0;
+    const cache = (Number(e.cacheReadTokens) || 0) + (Number(e.cacheWriteTokens) || 0);
+    const billed = (Number(e.inputTokens) || 0) + (Number(e.outputTokens) || 0);
+    if (cache <= 0 || billed <= 0) return total;
+    // Token-proportional split; exact rates are unavailable here and only the
+    // relative ordering of same-day snapshots matters.
+    return total * (billed / (billed + cache));
   };
   const bucketize = (list: UsageEvent[]): Map<string, Bucket> => {
     const map = new Map<string, Bucket>();
@@ -1175,12 +1256,14 @@ export function enforceMonotonicAgentDays(
         : `${scope}|${agent}|__noday__|${e.id}`;
       let b = map.get(key);
       if (!b) {
-        b = { events: [], tok: 0, cost: 0, req: 0, live: 0, estOutPos: 0 };
+        b = { events: [], tok: 0, cost: 0, billedCost: 0, req: 0, live: 0, estOutPos: 0, cacheRead: 0 };
         map.set(key, b);
       }
       b.events.push({ ...e, agent });
       b.tok += monoTokenWeight(e);
       b.cost += Number(e.estimatedCost) || 0;
+      b.billedCost += billedCostOf(e);
+      b.cacheRead += Number(e.cacheReadTokens) || 0;
       const rc = e.requestCount;
       b.req += typeof rc === "number" && rc > 0 ? Math.floor(rc) : 1;
       if (!e.estimated) b.live += 1;
@@ -1212,21 +1295,49 @@ export function enforceMonotonicAgentDays(
     // ever preserve genuinely richer history — never resurrect an over-count.
     if (a.tok > b.tok * 1.001) return a;
     if (b.tok > a.tok * 1.001) return b;
-    if (a.cost > b.cost * 1.001) return a;
-    if (b.cost > a.cost * 1.001) return b;
+    // Compare cost on the billed basis so a cache-inflated stale snapshot cannot
+    // win here either (see Bucket.billedCost). For router rollups both sides are
+    // 0, deliberately skipping the cost tiebreak below as well.
+    if (a.billedCost > b.billedCost * 1.001) return a;
+    if (b.billedCost > a.billedCost * 1.001) return b;
+    const bothRouterRollups =
+      a.events.every(isRouterRollup) && b.events.every(isRouterRollup);
+    if (!bothRouterRollups) {
+      if (a.cost > b.cost * 1.001) return a;
+      if (b.cost > a.cost * 1.001) return b;
+    }
 
     // Same tokens/cost: pure estimated daily (VPS dailySummary) beats a swarm of
     // live zero-token probes that only inflate request count (e.g. 1 vs 35).
     if (aEst > 0 && aLive === 0 && bLive > 0 && a.req > 0 && b.req > a.req * 1.5) return a;
     if (bEst > 0 && bLive === 0 && aLive > 0 && b.req > 0 && a.req > b.req * 1.5) return b;
 
+    // The envelopes agree EXACTLY. From here on neither snapshot is "richer" in
+    // usage, only in how much of the day it managed to describe — so prefer the
+    // one carrying more cache. This is the tiebreak that lets a parser fix stick:
+    // a corrected router snapshot and the stale one it replaces agree on billed
+    // tokens and cost, and the stale one wins every rule below on request count
+    // (its overlapping byModel views mint an extra `unattributed` remainder row).
+    // Runs before the request rules for exactly that reason.
+    if (a.cacheRead !== b.cacheRead) return a.cacheRead > b.cacheRead ? a : b;
+
     // Same envelope: prefer multi-RQ live detail over pure daily (local Today / RECENT).
     if (bLive >= 20 && aEst > 0 && aLive === 0 && b.req >= a.req * 0.75) return b;
     if (aLive >= 20 && bEst > 0 && bLive === 0 && a.req >= b.req * 0.75) return a;
 
-    // Same tokens/cost — prefer higher request coverage when both sides same kind
-    if (a.req > b.req) return a;
-    if (b.req > a.req) return b;
+    // Same tokens/cost — prefer higher request coverage when both sides same kind.
+    // Router rollups are excluded: their req count is inflated by the same
+    // overlapping byModel views as their cache (a stale snapshot carries an extra
+    // `unattributed` row), so it must not decide the envelope either.
+    if (!bothRouterRollups) {
+      if (a.req > b.req) return a;
+      if (b.req > a.req) return b;
+    }
+    // Router rollups with an identical billed envelope: take the freshly parsed
+    // side (`b` is always the scan's `next`). Their only remaining difference is
+    // the inflated cache/cost/req we deliberately stopped weighing, so falling
+    // back to "prev wins" would restore the over-count on every save.
+    if (bothRouterRollups) return b;
     return a.events.length >= b.events.length ? a : b;
   };
 
@@ -1989,6 +2100,10 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
       workspace: e.workspace == null ? null : String(e.workspace),
       sourcePath: typeof e.sourcePath === "string" ? e.sourcePath : "backup",
       estimated: Boolean(e.estimated),
+      // Must survive the round-trip: without it a reloaded cache reports no
+      // cache for any provider, so the dashboard's CACHE $ fell back to "—"
+      // after the first save/load even for agents that do report cache.
+      ...(e.cacheReported === true ? { cacheReported: true } : {}),
       ...(typeof e.machineScope === "string" && e.machineScope.trim()
         ? { machineScope: e.machineScope.trim() }
         : {}),
