@@ -296,7 +296,10 @@ export function clearJsonlCache(): void {
  */
 const EVENT_CACHE_MAX_ENTRIES = 900_000;
 
-const eventCache = new Map<string, { stamp: FileStamp; events: UsageEvent[] }>();
+const eventCache = new Map<
+  string,
+  { stamp: FileStamp; events: UsageEvent[]; signature?: string }
+>();
 let eventCacheCount = 0;
 let eventCacheBytes = 0;
 let eventCacheHits = 0;
@@ -341,12 +344,42 @@ const EVENT_BYTES_ESTIMATE = 420;
  * `produce` is only invoked on a miss, so unchanged files skip read + parse +
  * pricing entirely. Events are frozen into a fresh array per caller to protect
  * the cached copy from downstream mutation.
+ *
+ * `opts.signature` supports products derived from more than one file: pass a
+ * digest of every source artifact and the caller supplies its own identity for
+ * `file`. When set, the stat-based stamp is bypassed — the caller has already
+ * resolved the freshness that matters, and `file` need not even exist.
  */
 export async function cachedEventsForFile(
   file: string,
   produce: () => Promise<UsageEvent[]>,
-  opts: { maxBytes?: number } = {},
+  opts: { maxBytes?: number; signature?: string } = {},
 ): Promise<UsageEvent[]> {
+  // Caller-managed signature: skip the single-file stat entirely.
+  if (opts.signature != null) {
+    const signature = opts.signature;
+    const cached = eventCache.get(file);
+    if (cached && cached.signature === signature) {
+      eventCacheHits += 1;
+      eventCache.delete(file);
+      eventCache.set(file, cached);
+      return cached.events.slice();
+    }
+    eventCacheMisses += 1;
+    const events = await produce();
+    const previous = eventCache.get(file);
+    if (previous) {
+      eventCacheCount -= previous.events.length;
+      eventCacheBytes -= previous.events.length * EVENT_BYTES_ESTIMATE;
+      eventCache.delete(file);
+    }
+    eventCache.set(file, { stamp: { size: 0, mtimeMs: 0 }, events, signature });
+    eventCacheCount += events.length;
+    eventCacheBytes += events.length * EVENT_BYTES_ESTIMATE;
+    evictEventCache();
+    return events;
+  }
+
   const stamp = await stampFile(file);
   if (!stamp) return [];
   if (opts.maxBytes != null && stamp.size > opts.maxBytes) {
