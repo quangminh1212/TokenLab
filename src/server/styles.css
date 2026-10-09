@@ -156,6 +156,16 @@
       max-width: min(42vw, 280px);
       overflow: hidden; text-overflow: ellipsis;
     }
+    /* Active time is measured data, not status chatter — tint it so it reads as
+       a metric sitting beside the neutral version/scan chip. */
+    #activeChip {
+      color: var(--xlab);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      background: color-mix(in srgb, var(--xlab) 12%, transparent);
+      border-color: color-mix(in srgb, var(--xlab) 30%, transparent);
+    }
+    #activeChip[hidden] { display: none; }
     .icon-btn, .btn {
       appearance: none; border: 1px solid var(--border);
       background: var(--panel); color: var(--text);
@@ -699,6 +709,7 @@ html.dark {
   display: flex; flex-direction: column;
   max-height: 320px;
 }
+
 .recent-scroll {
   flex: 1; overflow: auto;
   padding: 0.15rem 0.35rem 0.5rem;
@@ -1039,9 +1050,11 @@ html.dark {
   }
 }
 
-/* Small phones */
+/* Small phones: drop the version/scan pill to save width, but keep Active time
+   — that one is the metric, and it is the only place it is shown. */
 @media (max-width: 400px) {
-  .meta-chip { display: none; }
+  #meta { display: none; }
+  #activeChip { font-size: 0.72rem; padding: 0.3rem 0.55rem; }
   .overview-grid { grid-template-columns: 1fr 1fr; }
   .ov-value { font-size: 1.05rem; }
   .provider-grid { grid-template-columns: 1fr; }
@@ -1360,6 +1373,16 @@ a.icon-btn:hover {
   font: inherit;
   font-size: 0.86rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/*
+ * Numeric variant: right-aligned with tabular figures so the threshold columns
+ * in the Rate limits section line up and are scannable, and narrower than the
+ * free-text inputs because the values are short.
+ */
+.settings-input-num {
+  max-width: 9rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .settings-check {
   display: inline-flex;

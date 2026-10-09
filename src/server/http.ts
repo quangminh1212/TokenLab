@@ -62,6 +62,8 @@ import {
   loadOpenRouterCacheFromDisk,
 } from "../openrouter-models.js";
 import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
+import { computeFlagReport, resolveFlagThresholds, type FlagThresholds } from "../flag-report.js";
+import { replayThroughGuard, resolveRateSpec } from "../rate-guard.js";
 import { writeHeartbeat } from "../process-guard.js";
 import type { AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
 import {
@@ -82,11 +84,36 @@ function configuredTimeZone(): string {
   return (tz && String(tz).trim()) || "local";
 }
 
+/**
+ * Build the per-day activity audit that explains a provider's "18 giờ/ngày"
+ * style warning.
+ *
+ * Deliberately reports every candidate definition rather than one "hours used"
+ * figure: the measurements disagree by design (a day can read 22.7h by span and
+ * 14.6h by active minutes), and that disagreement is the finding. Callers get
+ * `spreadHours` so the UI can show the gap instead of hiding it.
+ */
+function buildRateAuditFlag(
+  events: UsageEvent[],
+  thresholds: FlagThresholds,
+): ReturnType<typeof computeFlagReport> & {
+  spreadHours: Array<{ day: string; spanHours: number; activeHours: number; spread: number }>;
+} {
+  const report = computeFlagReport(events, thresholds);
+  const spreadHours = report.days.map((d) => ({
+    day: d.day,
+    spanHours: d.spanHours,
+    activeHours: d.activeHours,
+    spread: d.spanHours - d.activeHours,
+  }));
+  return { ...report, spreadHours };
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Agents refreshed by the periodic light scan. The cadence comes from
- * `config.scan.intervalMinutes` (Settings → Scanning, default 5 min).
+ * `config.scan.intervalMinutes` (Settings → Scanning, default 60 min).
  */
 const PERIODIC_LIGHT_AGENTS = new Set<AgentId>([
   "codex",
@@ -562,7 +589,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let lastRecentLightScanAt = 0;
   /**
    * Background scan cadence, driven by `config.scan.intervalMinutes`
-   * (Settings → Scanning, default 5 min). Read per call so a saved setting
+   * (Settings → Scanning, default 60 min). Read per call so a saved setting
    * applies without restarting the server.
    */
   const recentLightScanMinMs = (): number => scanIntervalMinutes() * 60_000;
@@ -1344,6 +1371,91 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       return json(res, 200, await getLiveRateCached(mins));
     }
 
+    if (req.method === "GET" && pathname === "/api/rate-audit") {
+      const since = url.searchParams.get("since");
+      const until = url.searchParams.get("until");
+      const sinceDate = parseSince(since, configuredTimeZone());
+      const untilDate = until ? new Date(until) : null;
+      const sinceMs = sinceDate ? sinceDate.getTime() : null;
+      const untilMs =
+        untilDate && !Number.isNaN(untilDate.getTime()) ? untilDate.getTime() : null;
+
+      /**
+       * Scope the audit to ONE agent by default.
+       *
+       * A rate limit is enforced per key/route, so pooling agents is wrong: the
+       * mirror day 2026-10-07 holds 3905 LiteLLM requests, but the same window
+       * pooled across all agents reports 8631 — and interleaving independent
+       * agents fabricates a continuous cadence that no single key produced.
+       * `agent=*` is available for an explicit all-agents view.
+       */
+      const agentParam = url.searchParams.get("agent");
+      const agentFilter = agentParam === "*" ? null : agentParam || "litellm";
+
+      // Rate auditing needs real per-call rows only. Estimated daily rollups
+      // carry a whole day under one timestamp, so they would fabricate both the
+      // cadence and the sliding-window pressure (same reasoning as rpmByGroup).
+      const source = scanning ? readCache : cache;
+      const inPeriod = (e: UsageEvent, agent: string | null): boolean => {
+        if (!e || e.estimated) return false;
+        if (agent != null && e.agent !== agent) return false;
+        const t = Date.parse(e.timestamp);
+        if (!Number.isFinite(t)) return false;
+        if (sinceMs != null && t < sinceMs) return false;
+        if (untilMs != null && t > untilMs) return false;
+        return true;
+      };
+
+      const events = source.filter((e) => inPeriod(e, agentFilter));
+
+      // Per-agent counts in the same window, so a pooled figure can never be
+      // mistaken for a single key's traffic.
+      const agentsInPeriod: Array<{ agent: string; eventCount: number }> = [];
+      {
+        const counts = new Map<string, number>();
+        for (const e of source) {
+          if (!inPeriod(e, null)) continue;
+          counts.set(e.agent, (counts.get(e.agent) || 0) + 1);
+        }
+        for (const [agent, eventCount] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+          agentsInPeriod.push({ agent, eventCount });
+        }
+      }
+
+      const resolved = resolveRateSpec({
+        configWindows: getConfigSync().rateLimit?.windows ?? null,
+        configModels: getConfigSync().rateLimit?.models ?? null,
+      });
+      const thresholds = resolveFlagThresholds(getConfigSync().rateLimit?.flag);
+
+      return json(res, 200, {
+        guard: {
+          spec: resolved.spec,
+          windowsSource: resolved.windowsSource,
+          modelsSource: resolved.modelsSource,
+          warnings: resolved.warnings,
+          isUpstreamDefault: resolved.isUpstreamDefault,
+          /**
+           * The algorithm the guard reproduces, named so a reader knows the
+           * numbers come from LiteLLM's own pre-call hook rather than from a
+           * TokenLab invention.
+           */
+          algorithm: "litellm_pre_call_sliding_window",
+        },
+        flag: buildRateAuditFlag(events, thresholds),
+        scope: {
+          /** null when every agent is pooled via `agent=*`. */
+          agent: agentFilter,
+          agentsInPeriod,
+        },
+        period: {
+          since: sinceMs != null ? new Date(sinceMs).toISOString() : null,
+          until: untilMs != null ? new Date(untilMs).toISOString() : null,
+        },
+        eventCount: events.length,
+      });
+    }
+
     if (req.method === "GET" && pathname === "/api/cost") {
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
@@ -1856,6 +1968,46 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         body.scan && typeof body.scan === "object"
           ? (body.scan as NonNullable<typeof prev.scan>)
           : null;
+      /**
+       * Rate-limit overrides. `""` is a meaningful value: it is how the UI
+       * clears an override and returns to the LiteLLM default, so an empty
+       * string is stored rather than being treated as "absent". Non-string
+       * values are ignored so a malformed payload cannot corrupt the config.
+       */
+      const bodyRate =
+        body.rateLimit && typeof body.rateLimit === "object"
+          ? (body.rateLimit as Record<string, unknown>)
+          : null;
+      const rateLimitNext = (() => {
+        if (!bodyRate) return prev.rateLimit;
+        const pickString = (v: unknown, fallback: string | undefined): string | undefined =>
+          typeof v === "string" ? v : fallback;
+        const bodyFlag =
+          bodyRate.flag && typeof bodyRate.flag === "object"
+            ? (bodyRate.flag as Record<string, unknown>)
+            : null;
+        const flag = bodyFlag
+          ? { ...(prev.rateLimit?.flag || {}) }
+          : prev.rateLimit?.flag;
+        if (bodyFlag && flag) {
+          // Only finite numbers are adopted; a half-typed field must not save NaN.
+          for (const key of [
+            "spanHours",
+            "activeHours",
+            "continuousGapSeconds",
+            "maxIdleHours",
+            "automatedGapShare",
+          ] as const) {
+            const raw = bodyFlag[key];
+            if (typeof raw === "number" && Number.isFinite(raw)) flag[key] = raw;
+          }
+        }
+        return {
+          windows: pickString(bodyRate.windows, prev.rateLimit?.windows),
+          models: pickString(bodyRate.models, prev.rateLimit?.models),
+          ...(flag && Object.keys(flag).length ? { flag } : {}),
+        };
+      })();
       const next = await saveConfig({
         ...prev,
         timezone: bodyTz || "local",
@@ -1870,6 +2022,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         },
         // saveConfig clamps/merges this block, so partial payloads are safe.
         scan: bodyScan ? { ...prev.scan, ...bodyScan } : prev.scan,
+        rateLimit: rateLimitNext,
         backup: {
           ...prev.backup,
           ...(bodyBackup && typeof bodyBackup.autoDaily === "boolean"
@@ -2054,8 +2207,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
    * Periodic tick bookkeeping.
    * Every 60s the tick pulls remote mirrors and checks whether a scan is due;
    * the scan cadence itself comes from config (`scan.intervalMinutes`, default
-   * 5 min) and the full all-agent cadence from `scan.fullIntervalMinutes`
-   * (default 6h). Full ticks run `fullIntervalMinutes` after the previous one.
+   * 60 min) and the full all-agent cadence from `scan.fullIntervalMinutes`
+   * (default 60 min). Full ticks run `fullIntervalMinutes` after the previous one.
    */
   let lastPeriodicFullScanAt = Date.now();
   const timer = setInterval(() => {
