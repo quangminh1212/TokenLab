@@ -435,9 +435,24 @@ function groupDailyByModel(
       grouped.set(key, {
         ...row,
         display: model.length > prev.display.length ? model : prev.display,
+        // The views overlap, so the winner's cache count is not always the
+        // largest one — several keys for one model report the SAME prompt/output
+        // totals while only one of them carries the cache count. Measured on the
+        // live mirror (2026-10-07, model `openai/claude-opus-5.5`):
+        //
+        //   anthropic/claude-opus-5.5|openai  in=1000 out=100 cache=236416
+        //   claude-opus-5.5|openai            in=1000 out=100 cache=0
+        //
+        // Both describe one model, so taking only the winner dropped the whole
+        // day's cache. Cache is a *slice* of prompt_tokens for litellm, so the
+        // larger count is the more complete reading of the same tokens; for
+        // 9router/routerlab (cache not inside prompt) it is likewise the larger
+        // measured hit count. Never additive in either case.
+        cachedTokens: Math.max(prev.cachedTokens, row.cachedTokens),
       });
-    } else if (model.length > prev.display.length) {
-      prev.display = model;
+    } else if (model.length > prev.display.length || row.cachedTokens > prev.cachedTokens) {
+      if (row.cachedTokens > prev.cachedTokens) prev.cachedTokens = row.cachedTokens;
+      if (model.length > prev.display.length) prev.display = model;
     }
   }
 
@@ -860,6 +875,32 @@ function expandOneDay(
       const remCache = Math.max(0, dayCache - modelCache);
       // Nothing material left over → byModel is the whole day.
       if (coveredTok >= dayTok * 0.98 && coveredTok <= dayTok * 1.02) return out;
+      /*
+       * Cache is NOT additive across the overlapping byModel views.
+       *
+       * `groupDailyByModel` dedupes keys that describe the same model, so
+       * `modelCache` ends up with only the winning view's cache while `dayCache`
+       * is the whole day. When input+output are already fully covered by the
+       * per-model rows, the "missing" cache is just the dropped mirror of the
+       * same tokens — measured on the live LiteLLM mirror for 2026-07-31:
+       *
+       *   day        in=1310221946 out=7806517 cache=2176363904 req=22797
+       *   kimi-k3    in=1209500081 out=6795583 cache=1088118336
+       *   unattributed       in=0 out=0      cache=1088181952
+       *
+       * in+out already balanced against the day (remIn = remOut = 0), yet the
+       * remainder restated half the cache, so the day's cache was counted twice
+       * under two labels and the cache column did not reconcile with the source.
+       *
+       * The original guard for that (`remainderHasOwnPrompt = remIn > 0 || remOut > 0`)
+       * only fired on the exact case it was written from — a `byModel` that lands
+       * 0 on the day. `byModel` routinely *overshoots* instead (it summed 22967
+       * requests against a 22797-request day above), which clamps remIn/remOut to 0
+       * anyway, so the guard never fired and the remainder still restated the cache:
+       * litellm kept 4,488,779,697 of the day-level 8,498,526,641 cached tokens —
+       * 47.2% of all cache served, silently dropped. Use the real cache remainder
+       * instead of inferring it from prompt tokens.
+       */
       const remainder = remainderRow(
         dateKey,
         agent,
@@ -1124,20 +1165,85 @@ function rowToEvent(
       r.cache_creation_input_tokens,
   );
 
+  /**
+   * Did the source actually expose a cache field, even as an explicit zero?
+   *
+   * Router exports (LiteLLM `cachedTokens`, 9router `cached_tokens`, …) always
+   * carry the key, so a `0` there is a *measurement* ("this request re-used no
+   * cache"), not silence. Without this flag the dashboard cannot tell the two
+   * apart and renders CACHE $ as "—" for every router bucket — litellm included
+   * — even while it is carrying billions of real cache-read tokens.
+   */
+  const hasCacheField =
+    tokensObj.cached_tokens != null ||
+    tokensObj.cache_read_tokens != null ||
+    tokensObj.cache_read_input_tokens != null ||
+    tokensObj.cacheReadTokens != null ||
+    tokensObj.cachedReadTokens != null ||
+    tokensObj.cached_content_token_count != null ||
+    tokensObj.cache_write_tokens != null ||
+    tokensObj.cache_creation_input_tokens != null ||
+    tokensObj.cacheWriteTokens != null ||
+    tokensObj.cache_creation_tokens != null ||
+    promptDetails?.cached_tokens != null ||
+    promptDetails?.cache_read_tokens != null ||
+    promptDetails?.cachedTokens != null ||
+    promptDetails?.cache_read_input_tokens != null ||
+    promptDetails?.cache_write_tokens != null ||
+    promptDetails?.cache_creation_input_tokens != null ||
+    r.cachedTokens != null ||
+    r.cached_tokens != null ||
+    r.cacheReadTokens != null ||
+    r.cache_read_input_tokens != null ||
+    r.cache_read_tokens != null ||
+    r.cacheWriteTokens != null ||
+    r.cache_write_tokens != null ||
+    r.cache_creation_input_tokens != null;
+
   const requestHint = num(r.requests ?? r.requestCount ?? r.request_count);
   const routerCostHint = num(
     r.cost ?? r.estimatedCost ?? r.usd,
   );
+
+  /**
+   * LiteLLM's prompt count is INCLUSIVE of cache reads — split it into our buckets.
+   *
+   * `litellm/cost_calculator.py` L455-460 states the invariant outright:
+   *
+   *   - Claude-Fable-compatible: usage.prompt_tokens_details.cached_tokens
+   *     (prompt_tokens already INCLUDES cached_tokens)
+   *
+   * and `litellm/proxy/spend_tracking/spend_tracking_utils.py` L762-765 maps
+   * `prompt_tokens_details.cached_tokens` onto `cache_read_input_tokens`, which the
+   * VPS UI then exports as the row's `cachedTokens`. So for litellm, `cachedTokens`
+   * is the cache-HIT count and a SUBSET of `promptTokens` — never a second bucket.
+   *
+   * TokenLab keeps input and cache-read apart, so subtract the hit out of the prompt
+   * count: `inputTokens + cacheReadTokens === promptTokens` exactly. Without this the
+   * hit was counted in both columns and `totalTokens` overstated the prompt by 4.5B.
+   *
+   * Only rows that actually publish a cache count are split. LiteLLM bills the hit at
+   * `cache_read_input_token_cost` only for those rows; the Claude-Fable-compatible
+   * aggregate rows in this mirror carry no cache field at all and were billed at the
+   * plain input rate (verified: claude-fable-5 cost = 10*prompt + 50*out on every
+   * billed row), so splitting them would invent a discount LiteLLM never charged.
+   */
+  let effectiveInputTokens = inputTokens;
+  if (agent === "litellm" && cacheReadTokens > 0) {
+    const billedCacheRead = Math.min(cacheReadTokens, inputTokens);
+    effectiveInputTokens = inputTokens - billedCacheRead;
+  }
+
   // Empty stream probes (0 tokens, 0 cost) must never become usage events —
   // even when a caller stamps requests:1. VPS dailySummary already ignores them.
   if (
-    inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 &&
+    effectiveInputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 &&
     routerCostHint <= 0
   ) {
     return null;
   }
   if (
-    inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 &&
+    effectiveInputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 &&
     requestHint <= 0
   ) {
     return null;
@@ -1196,7 +1302,7 @@ function rowToEvent(
     id: stableId(
       agent,
       nativeId,
-      String(inputTokens),
+      String(effectiveInputTokens),
       String(outputTokens),
       ts,
       connectionId,
@@ -1205,13 +1311,14 @@ function rowToEvent(
     agent,
     model: modelLabel,
     timestamp: ts,
-    inputTokens,
+    inputTokens: effectiveInputTokens,
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
     workspace: provider ? `provider:${provider}` : null,
     sourcePath: source,
     requestCount,
+    cacheReported: hasCacheField,
     routerCost: hasRouterCostField && routerCostRaw > 0 ? routerCostRaw : null,
   });
 
