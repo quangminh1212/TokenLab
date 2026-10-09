@@ -34,6 +34,7 @@
         <a class="nav-link" href="/model">Model</a>
       </nav>
       <div class="top-actions">
+        <span class="meta-chip" id="activeChip" hidden></span>
         <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
         <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings"></a>
@@ -187,6 +188,9 @@
       live: null,
       /** Period peak RPM (busiest minute) from /api/stats.usageRpm */
       usageRpm: null,
+      /** Server version for the header chip — kept so a bare updateMeta() (no
+       *  full /api/stats pass) can still rewrite the version text intact. */
+      version: '',
       /** Server local-day start for "today" (ISO) */
       todayStartsAt: null,
       scanning: false,
@@ -451,6 +455,18 @@
     }
 
     /**
+     * Minutes → compact "1h 30m" / "45m". Under an hour stays in minutes so a
+     * short period never rounds away to "0h" and reads as no usage at all.
+     */
+    function fmtActiveTime(mins) {
+      const m = Math.max(0, Math.round(Number(mins) || 0));
+      if (m < 60) return m + 'm';
+      const h = Math.floor(m / 60);
+      const rest = m % 60;
+      return rest ? `${h}h ${rest}m` : `${h}h`;
+    }
+
+    /**
      * Period PEAK RPM — the busiest single minute in the period:
      *   RPM = max over minutes of (requests landing in that calendar minute)
      * Server computes this in /api/stats.usageRpm.rpm.
@@ -482,6 +498,39 @@
       };
     }
 
+    /**
+     * Single writer for the header chips, so the version/scan chip and the
+     * Active-time chip can never drift out of sync across the three code paths
+     * that refresh the header (full load, recent-only refresh, SSE progress).
+     *
+     * Active time = every minute in the period carrying ≥1 request counts as a
+     * full minute of use. It comes from usageRpm.activeMinutes, counted on the
+     * server over distinct minute buckets — the client must never re-derive it,
+     * because it only ever sees a paged event window.
+     */
+    function updateMeta(version) {
+      const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
+      const v = version || state.version || '';
+      $('meta').textContent = `v${v}${scanHint}`;
+
+      const chip = $('activeChip');
+      // Round BEFORE the >0 test: activeMinutes is always a whole number of
+      // minute buckets, but a fractional value must not slip through and render
+      // "Active 0m" — that would read as a measured zero.
+      const m = Math.round(Number(state.usageRpm && state.usageRpm.activeMinutes));
+      if (!Number.isFinite(m) || m <= 0) {
+        // No requests in the period → no measured active time. Hide rather than
+        // render "Active 0m", which would read as a real measurement of zero.
+        chip.hidden = true;
+        chip.textContent = '';
+        chip.removeAttribute('title');
+        return;
+      }
+      chip.hidden = false;
+      chip.textContent = `Active ${fmtActiveTime(m)}`;
+      chip.title = `${m} minute${m === 1 ? '' : 's'} with requests in ${periodLabel()} \u2014 any minute containing a request counts in full`;
+    }
+
     function renderOverview(t, live) {
       const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
       // RPM = busiest single minute in the period (peak, not an average)
@@ -492,7 +541,7 @@
       });
       // Peak metric — no subtitle under RPM
       const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
-      // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout on common widths)
+      // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout)
       $('overview').innerHTML = [
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
         overviewCard('Cached tokens', fmtFull(cache), 'tone-info'),
@@ -501,6 +550,8 @@
         rpmCard,
         overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing'),
       ].join('');
+      // Active time lives in the header chip (see updateMeta): it is a period-wide
+      // figure, so it belongs beside the version chip rather than in a card row.
     }
 
     function timeAgo(iso) {
@@ -572,8 +623,7 @@
     function renderRecent(events) {
       if (!events.length) {
         $('recentBody').innerHTML = `<div class="chart-empty">${emptyMsg('recent')}</div>`;
-        return;
-      }
+        return;      }
       $('recentBody').innerHTML = `
         <ul class="recent-list">
           ${events.map((e) => {
@@ -726,13 +776,20 @@
               maximumFractionDigits: 1,
             })
           : '\u2014';
+        // CACHE $ is "—" only when the feed never mentioned caching. A group
+        // whose rows all reported cache (even as zero) shows its real number —
+        // otherwise a measured $0.00 was indistinguishable from missing data.
+        const cacheReported = Number(g.cacheReportedEvents) || 0;
+        const cacheCell = cache || cacheReported
+          ? money(cacheCost)
+          : '\u2014';
         if (costs) {
           return `<tr>
             <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
             <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
             <td class="num muted">${rpmCell}</td>
             <td class="num muted">${money(inputCost)}</td>
-            <td class="num muted">${cache ? money(cacheCost) : '\u2014'}</td>
+            <td class="num muted">${cacheCell}</td>
             <td class="num muted">${money(outCost)}</td>
             <td class="num toned-cost"><strong>${money(cost)}</strong></td>
           </tr>`;
@@ -878,9 +935,9 @@
       state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
       state.lastEventCount = eventCount;
 
-      // Header meta: version only (+ scan state). Rows / RPM live in overview cards.
-      const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
-      $('meta').textContent = `v${health.version || ''}${scanHint}`;
+      if (typeof health.version === 'string' && health.version) state.version = health.version;
+      // Header: version + scan state + Active time (period-wide, so it lives up here)
+      updateMeta();
 
       renderOverview(state.totals, state.live);
       renderChart();
@@ -915,8 +972,8 @@
         if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
         if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
         state.lastEventCount = health.eventCount || 0;
-        const scanHint = state.scanning ? ' · scanning…' : (state.awaitingData ? ' · waiting…' : '');
-        $('meta').textContent = `v${health.version || ''}${scanHint}`;
+        if (typeof health.version === 'string' && health.version) state.version = health.version;
+        updateMeta();
         renderRecent(recentEventsForDisplay(eventsRes, since));
       } catch {
         // The regular dashboard load / SSE reconnect remains the fallback.
@@ -1013,6 +1070,7 @@
                 state.awaitingData = true;
                 scheduleScanPoll();
               }
+              updateMeta();
               return;
             }
             if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
@@ -1027,6 +1085,7 @@
               state.scanning = Boolean(msg.scanning);
               if (msg.reason === 'start') {
                 state.awaitingData = state.awaitingData || state.lastEventCount === 0;
+                updateMeta();
                 scheduleScanPoll();
                 return;
               }
@@ -1039,11 +1098,11 @@
                   state._lastProgressLoadAt = now;
                   requestLoad({ quiet: true });
                 } else {
-                  // Cheap meta update without re-fetching all charts
-                  const m = $('meta');
-                  if (m && typeof msg.eventCount === 'number') {
-                    m.textContent = m.textContent.replace(/scanning\u2026|waiting\u2026/, 'scanning\u2026');
-                  }
+                  // Cheap header refresh without re-fetching all charts. Goes
+                  // through updateMeta so both chips stay on one code path —
+                  // the old string-replace could only ever patch the version chip.
+                  state.scanning = true;
+                  updateMeta();
                 }
                 return;
               }
