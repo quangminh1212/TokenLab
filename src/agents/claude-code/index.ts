@@ -220,6 +220,9 @@ export async function parseClaudeCode(roots: string[]): Promise<UsageEvent[]> {
         workspace: workspaceFromFile(candidate.file, allRoots),
         sourcePath: candidate.file,
         estimated: false,
+        // Claude Code always writes the cache buckets, so a zero here is a real
+        // measurement rather than a missing field.
+        cacheReported: true,
       }),
     );
   }

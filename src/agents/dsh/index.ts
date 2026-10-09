@@ -216,6 +216,43 @@ async function latestSessionFiles(roots: string[], modifiedAfter?: number): Prom
   return recent.filter((file): file is string => file !== null);
 }
 
+/**
+ * DSH sessions report prompt usage in two shapes:
+ *
+ *  A) cache-aware — `{ inputTokens, outputTokens, cacheReadTokens, totalTokens }`
+ *     where `totalTokens = inputTokens + cacheReadTokens + outputTokens`.
+ *  B) legacy — `{ inputTokens, outputTokens, totalTokens }` with no cache field,
+ *     and the invariant `totalTokens = inputTokens + outputTokens`.
+ *
+ * Shape B is ~99.5% of recorded rows, so it produced `cacheReadTokens = 0` for
+ * almost everything and the dashboard's CACHE $ column read "—".
+ *
+ * DSH does not record the split in shape B, but the cache-aware rows state the
+ * rule outright: **the cache read equals the previous turn's whole prompt.**
+ * Verified on 68 consecutive cache-aware turns, where
+ * `cacheRead(n) ≈ inputTokens(n-1) + cacheReadTokens(n-1)`.
+ *
+ * The split below only decides how the SAME prompt total is displayed between
+ * Input $ and Cache $. It deliberately does not change the money: this gateway
+ * bills `cost = inputPer1M * prompt + outputPer1M * output` (7153/7153 billed
+ * LiteLLM rows exact), i.e. a cache read costs the same as fresh input, and the
+ * rate table sets `cacheReadPer1M === inputPer1M` so the two parts re-add to the
+ * provider's total either way.
+ */
+function splitLegacyPromptUsage(
+  promptTokens: number,
+  previousPromptTokens: number | null,
+): { inputTokens: number; cacheReadTokens: number } {
+  const prompt = Math.max(0, promptTokens);
+  if (previousPromptTokens == null || previousPromptTokens <= 0) {
+    // First turn of a session: nothing to re-read from cache yet.
+    return { inputTokens: prompt, cacheReadTokens: 0 };
+  }
+  // A cache read can never exceed the prompt the provider was given.
+  const cacheReadTokens = Math.max(0, Math.min(Math.floor(previousPromptTokens), prompt));
+  return { inputTokens: prompt - cacheReadTokens, cacheReadTokens };
+}
+
 async function parseSessionFile(
   file: string,
   decompress: ((buffer: Buffer) => Buffer) | undefined,
@@ -224,6 +261,11 @@ async function parseSessionFile(
   let workspace: string | null = null;
   let currentModel: string | null = null;
   let lineNumber = 0;
+  /**
+   * Whole prompt (fresh + cache) of the previous assistant turn in this session.
+   * Used to reconstruct the cache read for legacy rows — see splitLegacyPromptUsage.
+   */
+  let previousPromptTokens: number | null = null;
 
   for await (const line of readSessionLines(file, decompress)) {
     lineNumber += 1;
@@ -250,7 +292,14 @@ async function parseSessionFile(
       continue;
     }
 
-    if (parsed.type !== "assistant/message" && parsed.type !== "assistant/attempt") {
+    // `compaction/summary` is a real model call too — it carries its own usage
+    // and must be billed, otherwise every context compaction's tokens vanish.
+    const isSummary = parsed.type === "compaction/summary";
+    if (
+      parsed.type !== "assistant/message" &&
+      parsed.type !== "assistant/attempt" &&
+      !isSummary
+    ) {
       continue;
     }
 
@@ -268,16 +317,31 @@ async function parseSessionFile(
     const model = extractModel(source, data) ?? currentModel;
     if (model) currentModel = model;
 
+    // Normalise both shapes into explicit fresh-input + cache-read buckets, then
+    // remember this turn's whole prompt for the next one. Cache is priced at the
+    // input rate, so splitting here preserves the provider's billed total.
+    const reported = buckets.inputIncludesCache === true || buckets.cacheReadTokens > 0;
+    const split: { inputTokens: number; cacheReadTokens: number } = reported
+      ? { inputTokens: buckets.inputTokens, cacheReadTokens: buckets.cacheReadTokens }
+      : splitLegacyPromptUsage(buckets.inputTokens, previousPromptTokens);
+    previousPromptTokens = split.inputTokens + split.cacheReadTokens;
+
     events.push(
       applyPricing({
         id: stableId("dsh", file, String(parsed.seq ?? lineNumber)),
         agent: "dsh",
         model,
         timestamp: extractTimestamp(parsed, message),
-        ...buckets,
+        inputTokens: split.inputTokens,
+        outputTokens: buckets.outputTokens,
+        cacheReadTokens: split.cacheReadTokens,
+        cacheWriteTokens: buckets.cacheWriteTokens,
         requestCount: 1,
         workspace,
         sourcePath: file,
+        // A cache-aware row told us the number outright; a reconstructed legacy
+        // row is a carried-forward estimate, so it must not claim to be measured.
+        cacheReported: reported,
       }),
     );
   }
