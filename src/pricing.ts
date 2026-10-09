@@ -157,20 +157,30 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   digigo: { inputPer1M: 0, outputPer1M: 0 },
 
   // --- LiteLLM mirror models seen in real usage (2026-07 .. 2026-10) ---
-  // Rates back-solved from the router's own per-request cost across every day the
-  // model appeared (cost = input*rIn + output*rOut, least squares per model), so
-  // the local rate table reproduces the router's spend without ever copying its
-  // `cost` field. Where the solution lands on a clean vendor list price, that
-  // price is used. Keys MUST be lowercase: `resolveModelKey` lowercases the
-  // lookup before consulting this table, so a capitalised key never matches.
-  "claude-fable-5": { inputPer1M: 10, outputPer1M: 50 },
+  // Rates back-solved from the router's own per-request cost, so the local table
+  // reproduces the gateway's spend without ever copying its `cost` field. Keys
+  // MUST be lowercase: `resolveModelKey` lowercases before consulting this table,
+  // so a capitalised key never matches.
+  //
+  // IMPORTANT — how these gateways bill caching:
+  // they report `prompt_tokens` as the WHOLE prompt (cache reads included) and
+  //   cost = inputPer1M * promptTokens + outputPer1M * completionTokens
+  // i.e. a cache read is billed at the SAME rate as fresh input, not at a
+  // discount. Verified on every billed row in the live LiteLLM mirror:
+  //   claude-fable-5   cost = 10*prompt + 50*out   -> 7153/7153 rows exact
+  //   claude-opus-5.5  cost =  4*prompt + 20*out   ->  109/109 rows exact
+  // So `cacheReadPer1M` is deliberately equal to `inputPer1M`: the `cachedTokens`
+  // field tells you the hit rate, not a cheaper price. Setting it lower (or to 0)
+  // would silently under-bill every cached token, which is exactly the bug this
+  // table previously shipped.
+  "claude-fable-5": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 10 },
   // RouterLab exports the same Claude-Fable traffic under "Claude-Fable" too.
-  "claude-fable": { inputPer1M: 10, outputPer1M: 50 },
-  "claude-opus-5": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
-  "claude-opus-5.5": { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25 },
-  "claude-sonnet-5.5": { inputPer1M: 2.38, outputPer1M: 10.79, cacheReadPer1M: 0.24 },
-  "gpt-5.6-sol": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
-  "gpt-5.6-terra": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5 },
+  "claude-fable": { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 10 },
+  "claude-opus-5": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 4, cacheWritePer1M: 5 },
+  "claude-opus-5.5": { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 4, cacheWritePer1M: 5 },
+  "claude-sonnet-5.5": { inputPer1M: 2, outputPer1M: 10.21, cacheReadPer1M: 2 },
+  "gpt-5.6-sol": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 5 },
+  "gpt-5.6-terra": { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 5 },
   "pmv-opus-4.7": { inputPer1M: 1.6, outputPer1M: 10.24 },
   "pmv-default": { inputPer1M: 1.66, outputPer1M: 9.65 },
   "openai-default": { inputPer1M: 1.66, outputPer1M: 9.65 },
@@ -557,6 +567,7 @@ export function repriceEvents(
       sourcePath: e.sourcePath,
       estimated: e.estimated,
       requestCount: e.requestCount,
+      cacheReported: e.cacheReported,
       routerCost: useTable ? null : e.estimatedCost,
     });
   });
