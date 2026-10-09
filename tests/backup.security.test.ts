@@ -361,6 +361,140 @@ test("enforceMonotonicAgentDays keeps richer previous day", async () => {
   );
 });
 
+test("enforceMonotonicAgentDays keeps a router cache recovery instead of reverting it", async () => {
+  const { enforceMonotonicAgentDays } = await import("../src/backup.js");
+  // Regression (real LiteLLM mirror, 2026-07-31): the corrected parser splits the
+  // cache hit out of an inclusive `promptTokens`, so the corrected row and the
+  // stale pre-fix row describe the SAME billed usage and therefore weigh the same
+  // in `monoTokenWeight` — but the corrected row reports twice the cache, because
+  // the old parse dropped half of it (`groupDailyByModel` kept only the winning
+  // byModel view's cache and the remainder guard zeroed the rest).
+  //
+  //   stale   in=1209500081 cache=1088118336 out=6795583
+  //   fixed   in= 121381745 cache=1088118336 out=6795583   (+ unattributed cache)
+  //
+  // Both weigh (input + cacheRead + output) = same envelope, so the guard fell
+  // through to the request-count rule and the stale snapshot won on its extra
+  // `unattributed` remainder row — reverting the fix on every save. More cache at
+  // an identical envelope is strictly better information, so it must win.
+  const DAY = "2026-07-31T12:00:00.000Z";
+  const stale = evt({
+    id: "litellm-daily-stale",
+    agent: "litellm",
+    model: "kimi-k3",
+    estimated: true,
+    inputTokens: 1_209_500_081,
+    outputTokens: 6_795_583,
+    cacheReadTokens: 1_088_118_336,
+    totalTokens: 1_209_500_081 + 6_795_583 + 1_088_118_336,
+    estimatedCost: 467.01,
+    timestamp: DAY,
+  });
+  const recovered = evt({
+    id: "litellm-daily-recovered",
+    agent: "litellm",
+    model: "kimi-k3",
+    estimated: true,
+    inputTokens: 121_381_745,
+    outputTokens: 6_795_583,
+    cacheReadTokens: 1_088_118_336,
+    totalTokens: 121_381_745 + 6_795_583 + 1_088_118_336,
+    estimatedCost: 467.01,
+    timestamp: DAY,
+  });
+  const remainder = evt({
+    id: "litellm-daily-remainder",
+    agent: "litellm",
+    model: "unattributed",
+    estimated: true,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 1_088_181_952,
+    totalTokens: 1_088_181_952,
+    estimatedCost: 0,
+    timestamp: DAY,
+  });
+
+  // prev = stale half-cache snapshot, next = corrected parser output.
+  const merged = enforceMonotonicAgentDays([stale], [recovered, remainder]);
+  const cache = merged.reduce((a, e) => a + (e.cacheReadTokens || 0), 0);
+  assert.equal(
+    cache,
+    1_088_118_336 + 1_088_181_952,
+    "the recovered cache must not be reverted by the high-water guard",
+  );
+  assert.ok(
+    merged.some((e) => e.id === "litellm-daily-recovered"),
+    "the recovered row must be present",
+  );
+
+  // Guard still protects genuinely richer history (billed tokens differ).
+  const richer = evt({
+    id: "litellm-daily-richer",
+    agent: "litellm",
+    model: "kimi-k3",
+    estimated: true,
+    inputTokens: 2_419_000_162,
+    outputTokens: 6_795_583,
+    cacheReadTokens: 0,
+    totalTokens: 2_419_000_162 + 6_795_583,
+    estimatedCost: 900,
+    timestamp: DAY,
+  });
+  const kept = enforceMonotonicAgentDays([recovered], [richer]);
+  assert.ok(
+    kept.some((e) => e.id === "litellm-daily-richer"),
+    "a genuinely richer billed day must still win",
+  );
+});
+
+test("cacheReported survives the scan-cache round-trip", async () => {
+  // Regression: sanitizeEvents rebuilt every row from a field allowlist and
+  // dropped `cacheReported`, so after the first save/load the dashboard saw no
+  // cache for ANY agent and rendered CACHE $ as "—" — even though the parser had
+  // set the flag. The flag has to survive persistence, not just the parse.
+  const root = path.join(process.cwd(), ".test-scan-cache-cacherep-" + Date.now());
+  const prev = process.env.XLAB_TOKEN_DATA_DIR;
+  process.env.XLAB_TOKEN_DATA_DIR = root;
+  try {
+    await mkdir(root, { recursive: true });
+    await saveScanCache(
+      [
+        evt({
+          id: "litellm-reported",
+          agent: "litellm",
+          model: "claude-opus-5.5",
+          cacheReadTokens: 95_872,
+          timestamp: "2026-10-08T01:00:00.000Z",
+          cacheReported: true,
+        }),
+        evt({
+          id: "litellm-silent",
+          agent: "litellm",
+          model: "claude-opus-5.5",
+          cacheReadTokens: 0,
+          timestamp: "2026-10-08T02:00:00.000Z",
+        }),
+      ],
+      { mode: "full" },
+    );
+
+    const loaded = await loadScanCache();
+    const reported = loaded.find((e) => e.id === "litellm-reported")!;
+    const silent = loaded.find((e) => e.id === "litellm-silent")!;
+    assert.equal(reported.cacheReported, true, "reported flag must persist");
+    assert.equal(
+      silent.cacheReported,
+      undefined,
+      "a row that said nothing about cache must stay unset",
+    );
+  } finally {
+    if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
+    else process.env.XLAB_TOKEN_DATA_DIR = prev;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("pruneStaleSourceEvents drops prev rows a fresh scan re-parsed", async () => {
   const { pruneStaleSourceEvents } = await import("../src/backup.js");
   // Regression: a parser change split one session row into per-minute rows, so the
