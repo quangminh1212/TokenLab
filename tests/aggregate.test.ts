@@ -159,6 +159,41 @@ test("peak RPM beats the mean when traffic is bursty (the whole point of the cha
   assert.notEqual(r.rpm, r.meanRpm);
 });
 
+test("activeMinutes counts only minutes that actually carried requests", () => {
+  // 24h window with activity packed into two clusters: 3 calls in minute 09:00
+  // and 1 call in minute 21:30. The other 1438 minutes are idle and must NOT
+  // count — "one busy minute = one full minute of use" is the whole rule.
+  const events: UsageEvent[] = [
+    { ...sample[0]!, id: "m1a", timestamp: "2026-07-28T09:00:05.000Z", requestCount: 1, estimated: false },
+    { ...sample[0]!, id: "m1b", timestamp: "2026-07-28T09:00:35.000Z", requestCount: 1, estimated: false },
+    { ...sample[0]!, id: "m1c", timestamp: "2026-07-28T09:00:59.000Z", requestCount: 1, estimated: false },
+    { ...sample[0]!, id: "m2", timestamp: "2026-07-28T21:30:00.000Z", requestCount: 1, estimated: false },
+  ];
+  const r = computeActiveUsageRpm(events);
+  // 3 calls share one calendar minute → they contribute 1 active minute, not 3
+  assert.equal(r.activeMinutes, 2);
+  assert.equal(r.requests, 4);
+  // 2 active minutes of 1440 in the day is the point: the card must not imply
+  // the machine was busy all day just because requests span the whole day.
+  assert.ok(r.activeMinutes < 1440);
+  assert.equal(r.rpm, 3); // busiest minute = the 09:00 burst
+});
+
+test("a daily rollup row inflates activeMinutes by exactly one minute", () => {
+  // Rollups carry a whole day's request count under ONE timestamp. They are
+  // excluded from the peak (fake 4692 req/min), but for an "active time" card
+  // they still add one real minute bucket. Pinned so the card's semantics stay
+  // visible if that ever changes.
+  const events: UsageEvent[] = [
+    { ...sample[0]!, id: "live", timestamp: "2026-07-28T09:00:10.000Z", requestCount: 1, estimated: false },
+    { ...sample[0]!, id: "rollup", timestamp: "2026-07-28T23:59:00.000Z", requestCount: 4692, estimated: true },
+  ];
+  const r = computeActiveUsageRpm(events);
+  assert.equal(r.activeMinutes, 2);
+  assert.equal(r.rpm, 1); // rollup never drives the peak
+  assert.equal(r.requests, 4693); // but it does inflate the request total
+});
+
 test("computeLiveRequestRate uses sliding-window mean (RPM = N×60/T)", () => {
   const now = Date.parse("2026-07-27T12:00:00.000Z");
   const events: UsageEvent[] = [

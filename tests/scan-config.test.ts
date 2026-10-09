@@ -48,13 +48,13 @@ after(async () => {
 });
 
 describe("scan config", () => {
-  it("defaults to a 5-minute light cadence and a 6-hour full cadence", async () => {
+  it("defaults to a 1-hour light cadence and a 1-hour full cadence", async () => {
     const cfg = await loadConfig();
     assert.equal(cfg.scan?.intervalMinutes, DEFAULT_SCAN_INTERVAL_MINUTES);
     assert.equal(cfg.scan?.fullIntervalMinutes, DEFAULT_FULL_SCAN_INTERVAL_MINUTES);
     assert.equal(cfg.scan?.periodicEnabled, true);
-    assert.equal(scanIntervalMinutes(), 5);
-    assert.equal(fullScanIntervalMinutes(), 360);
+    assert.equal(scanIntervalMinutes(), 60);
+    assert.equal(fullScanIntervalMinutes(), 60);
     assert.equal(scanPeriodicEnabled(), true);
   });
 
