@@ -76,6 +76,7 @@ function pushFromObject(events: UsageEvent[], row: unknown, file: string, idx: n
   );
   const cacheRead = num(usage.cache_read_tokens ?? usage.cacheReadTokens ?? usage.cacheRead);
   const cacheWrite = num(usage.cache_write_tokens ?? usage.cacheWriteTokens ?? usage.cacheWrite);
+  const cacheReported = Object.keys(usage).some((key) => /cach/i.test(key));
 
   if (input + output + cacheRead + cacheWrite <= 0) return;
 
@@ -99,6 +100,7 @@ function pushFromObject(events: UsageEvent[], row: unknown, file: string, idx: n
       outputTokens: output,
       cacheReadTokens: cacheRead,
       cacheWriteTokens: cacheWrite,
+      ...(cacheReported ? { cacheReported: true } : {}),
       workspace: typeof r.workspace === "string" ? r.workspace : null,
       sourcePath: file,
     }),

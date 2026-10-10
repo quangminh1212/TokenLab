@@ -138,6 +138,13 @@ async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
       const cacheReadTokens = num(r.cache_read_tokens ?? r.cache_read_input_tokens);
       const cacheWriteTokens = num(r.cache_write_tokens ?? r.cache_creation_input_tokens);
       if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) continue;
+      // Did the row carry a cache key at all? A present-but-zero value is a
+      // measurement; an absent one is silence the dashboard must not colour in.
+      const cacheReported =
+        r.cache_read_tokens != null ||
+        r.cache_read_input_tokens != null ||
+        r.cache_write_tokens != null ||
+        r.cache_creation_input_tokens != null;
       events.push(
         applyPricing({
           id: stableId("hermes", file, String(idx), String(inputTokens), String(outputTokens)),
@@ -150,6 +157,7 @@ async function parseHermesJsonFile(file: string): Promise<UsageEvent[]> {
           cacheWriteTokens,
           workspace: typeof r.cwd === "string" ? r.cwd : null,
           sourcePath: file,
+          ...(cacheReported ? { cacheReported: true } : {}),
         }),
       );
       continue;
@@ -325,6 +333,13 @@ function gapFillSessionsOverSmu(
 
       const apiCalls = Math.max(0, num(row.api_call_count) - u.reqs);
       const cost = pickHermesCost(row);
+      // The gap is a session total minus the json rows already counted; whether
+      // it "reports cache" is inherited from the session row that carried it.
+      const cacheReported =
+        row.cache_read_tokens != null ||
+        row.cache_read_input_tokens != null ||
+        row.cache_write_tokens != null ||
+        row.cache_creation_input_tokens != null;
       gaps.push(
         applyPricing({
           id: stableId("hermes", dbPath, "gap", sid, String(dIn), String(dOut), String(dCr)),
@@ -341,6 +356,7 @@ function gapFillSessionsOverSmu(
           ...(apiCalls > 0 ? { requestCount: Math.floor(apiCalls) } : {}),
           // Don't apply full session cost to a partial gap
           ...(cost != null && u.input + u.output === 0 ? { routerCost: cost } : {}),
+          ...(cacheReported ? { cacheReported: true } : {}),
         }),
       );
     }
@@ -467,6 +483,9 @@ function readSessionModelUsage(
               cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
               requestCount: tokenPiece.requestCount ?? 0,
               timestamp: part.timestamp,
+              // Cache presence rides on the source buckets, not the apportioned
+              // token fields — splitUsageRow only carries the four token counts.
+              ...(buckets.cacheReported ? { cacheReported: true } : {}),
               // ... and of its cost, passed as the router-reported cost so
               // applyPricing does not re-price the whole session onto every row.
               ...(cost != null && estimatedCost != null
@@ -563,12 +582,16 @@ function readSessionsTable(
 
       const startCol = pick("started_at", "first_seen", "created_at", "start_time");
       const endCol = pick("ended_at", "last_seen", "updated_at", "last_activity_at");
+      // The session table exposed cache columns ⇒ these rows measure cache, even
+      // when the values are 0. Absent columns mean the provider never mentioned it.
+      const cacheReported = crCol != null || cwCol != null;
       const base = {
         id: stableId("hermes", dbPath, sid, String(inputTokens), String(outputTokens)),
         agent: "hermes" as const,
         model,
         workspace,
         sourcePath: dbPath,
+        ...(cacheReported ? { cacheReported: true } : {}),
       };
 
       // Same session-summary shape as above: split the aggregate call count over
@@ -671,6 +694,7 @@ function tokenBucketsFromHermesRow(row: Record<string, unknown>): {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  cacheReported?: boolean;
 } | null {
   const inputTokens = num(
     row.input_tokens ?? row.total_input_tokens ?? row.prompt_tokens ?? row.inputTokens,
@@ -678,26 +702,36 @@ function tokenBucketsFromHermesRow(row: Record<string, unknown>): {
   let outputTokens = num(
     row.output_tokens ?? row.total_output_tokens ?? row.completion_tokens ?? row.outputTokens,
   );
-  const cacheReadTokens = num(
-    row.cache_read_tokens ??
-      row.cache_read_input_tokens ??
-      row.cacheReadTokens ??
-      row.cached_tokens ??
-      row.cachedTokens ??
-      row.cached_content_token_count,
-  );
-  const cacheWriteTokens = num(
-    row.cache_write_tokens ??
-      row.cache_creation_input_tokens ??
-      row.cacheWriteTokens ??
-      row.cache_creation_tokens,
-  );
+  const cacheReadKeys = [
+    "cache_read_tokens",
+    "cache_read_input_tokens",
+    "cacheReadTokens",
+    "cached_tokens",
+    "cachedTokens",
+    "cached_content_token_count",
+  ] as const;
+  const cacheWriteKeys = [
+    "cache_write_tokens",
+    "cache_creation_input_tokens",
+    "cacheWriteTokens",
+    "cache_creation_tokens",
+  ] as const;
+  const cacheReadTokens = num(cacheReadKeys.map((k) => row[k]).find((v) => v != null));
+  const cacheWriteTokens = num(cacheWriteKeys.map((k) => row[k]).find((v) => v != null));
+  // Presence, not magnitude: a row carrying any cache key measured cache, even 0.
+  const cacheReported = [...cacheReadKeys, ...cacheWriteKeys].some((k) => row[k] != null);
   // Policy: thừa hơn thiếu — Hermes stores reasoning separately; always bill it as output.
   const reasoning = num(row.reasoning_tokens ?? row.reasoningTokens);
   if (reasoning > 0) outputTokens += reasoning;
 
   if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0) return null;
-  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    ...(cacheReported ? { cacheReported: true } : {}),
+  };
 }
 
 /** Prefer actual_cost_usd, then estimated_cost_usd when positive. */

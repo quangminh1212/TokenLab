@@ -31,6 +31,8 @@ type OpenCodeSessionRollup = {
   reasoningTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** Whether the session table actually carried cache columns. */
+  cacheReported?: boolean;
 };
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -196,6 +198,10 @@ function parseOpenCodeRecord(
       workspace,
       sourcePath,
       ...(estimated ? { estimated: true } : {}),
+      // Carry the extractor's cache-presence verdict; the synthesized
+      // total-only fallback above never sets it, which is correct — that row
+      // said nothing about cache.
+      ...(buckets.cacheReported ? { cacheReported: true } : {}),
     }),
   };
 }
@@ -294,6 +300,11 @@ async function parseOpenCodeDatabase(dbPath: string, index: EventIndex): Promise
               reasoningTokens: num(session.reasoning_tokens),
               cacheReadTokens: num(session.cache_read_tokens),
               cacheWriteTokens: num(session.cache_write_tokens),
+              // The session_v2 table exposed cache columns ⇒ its rollup measured
+              // cache (even 0); absent columns mean OpenCode never stored it.
+              cacheReported:
+                sessionColumns.has("tokens_cache_read") ||
+                sessionColumns.has("tokens_cache_write"),
             });
           }
         }
@@ -499,6 +510,7 @@ async function parseOpenCodeDatabase(dbPath: string, index: EventIndex): Promise
               workspace: rollup.directory,
               sourcePath: dbPath,
               estimated: true,
+              ...(rollup.cacheReported ? { cacheReported: true } : {}),
             }),
           },
           4,

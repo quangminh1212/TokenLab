@@ -296,6 +296,15 @@ export async function parseRouterUsage(
 }
 
 /**
+ * Source tag for rows synthesized from a daily rollup (`usage-daily.json`,
+ * `db.json` `usageData.dailySummary`, sqlite daily tables) as opposed to a
+ * per-request history export. The two carry MUTUALLY EXCLUSIVE cache conventions
+ * (see `rowToEvent`), and this tag is the only in-band discriminator — the real
+ * file path cannot tell them apart, since a mirror's `db.json` holds both.
+ */
+const ROLLUP_SOURCE = "daily-rollup";
+
+/**
  * Request-first reconciliation:
  *  - Multi-request history for a day → keep individual RQs (never one 5M+ model blob)
  *  - Sparse/missing history → daily rollup (byModel or whole-day) for totals
@@ -355,7 +364,7 @@ function reconcileEventsAndDaily(
 
     // No history at all for this day → the daily rollup is all we have.
     if (!daily) continue;
-    out.push(...expandOneDay(dateKey, daily.day, agent, daily.source, []));
+    out.push(...expandOneDay(dateKey, daily.day, agent, ROLLUP_SOURCE, []));
   }
 
   return out;
@@ -1227,9 +1236,35 @@ function rowToEvent(
    * aggregate rows in this mirror carry no cache field at all and were billed at the
    * plain input rate (verified: claude-fable-5 cost = 10*prompt + 50*out on every
    * billed row), so splitting them would invent a discount LiteLLM never charged.
+   *
+   * CRITICAL — the subset invariant holds for PER-REQUEST rows only.
+   *
+   * `usage-daily.json` / `dailySummary` rollup rows publish `promptTokens` and
+   * `cachedTokens` as two ALREADY-SEPARATE buckets (`expandOneDay` forwards
+   * `promptTokens: inputTokens, cachedTokens: cacheReadTokens`), not as a total and a
+   * subset. Measured on the live mirror: 22 of 73 days carry `cachedTokens >
+   * promptTokens` (for example 2026-07-29: prompt 228,698,527 / cached 361,695,488),
+   * which is arithmetically impossible if cache were a slice of the prompt.
+   *
+   * Subtracting there collapsed the input column — the mirror's 9.03B rollup prompt
+   * tokens were reported as 5.12B and the day-level cache volume was double-counted
+   * against it. So the split is applied only when the row PROVES the inclusive shape:
+   * `source` must NOT be the daily-rollup tag, AND the arithmetic identity
+   * `promptTokens >= cachedTokens` must hold. When a row is ambiguous we do NOT
+   * subtract: leaving `inputTokens` whole can only over-count, and over-counting is
+   * required here, while guessing wrong on a rollup row silently destroys 43% of the
+   * input column.
    */
   let effectiveInputTokens = inputTokens;
-  if (agent === "litellm" && cacheReadTokens > 0) {
+  const isRollupRow = source.startsWith(ROLLUP_SOURCE);
+  if (
+    agent === "litellm" &&
+    cacheReadTokens > 0 &&
+    !isRollupRow &&
+    // Ambiguity guard: a cache count exceeding the prompt count cannot be a subset
+    // of it, so the inclusive reading is disproven — never subtract.
+    inputTokens >= cacheReadTokens
+  ) {
     const billedCacheRead = Math.min(cacheReadTokens, inputTokens);
     effectiveInputTokens = inputTokens - billedCacheRead;
   }

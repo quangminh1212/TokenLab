@@ -193,6 +193,9 @@ test("parseOpenCode falls back to the legacy SQLite message table", async () => 
     assert.equal(events[0]!.cacheReadTokens, 30);
     assert.equal(events[0]!.cacheWriteTokens, 5);
     assert.equal(events[0]!.totalTokens, 185);
+    // The row carried a cache object, so it measured cache — the dashboard must
+    // show a real number rather than the "—" it rendered while this flag was unset.
+    assert.equal(events[0]!.cacheReported, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

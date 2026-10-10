@@ -267,6 +267,7 @@ async function parseGrokSession(dir: string): Promise<UsageEvent[]> {
               cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
               requestCount: tokenPiece.requestCount ?? 0,
               timestamp: part.timestamp,
+              ...(tokenBuckets.cacheReported ? { cacheReported: true } : {}),
               ...(routerCost != null && estimatedCost != null
                 ? { routerCost: estimatedCost }
                 : {}),
@@ -465,6 +466,7 @@ async function readGrokUsageSnapshot(
           cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
           requestCount: tokenPiece.requestCount ?? 0,
           timestamp: part.timestamp,
+          ...(tokenBuckets.cacheReported ? { cacheReported: true } : {}),
           ...(routerCost != null && estimatedCost != null
             ? { routerCost: estimatedCost }
             : {}),
@@ -577,6 +579,7 @@ async function parseGrokSessionMeta(
               cacheReadTokens: tokenPiece.cacheReadTokens ?? 0,
               cacheWriteTokens: tokenPiece.cacheWriteTokens ?? 0,
               requestCount: tokenPiece.requestCount ?? 0,
+              ...(tokenBuckets.cacheReported ? { cacheReported: true } : {}),
               ...(routerCost != null && estimatedCost != null
                 ? { routerCost: estimatedCost }
                 : {}),
@@ -911,6 +914,7 @@ async function parseUpdatesUsage(
           outputTokens: outEst,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: 0,
+          ...(cacheRead > 0 ? { cacheReported: true } : {}),
           workspace: ctx.workspace,
           sourcePath: updatesPath,
           estimated: true,
@@ -943,6 +947,7 @@ async function parseUpdatesUsage(
           outputTokens: outEst,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: 0,
+          ...(cacheRead > 0 ? { cacheReported: true } : {}),
           workspace: ctx.workspace,
           sourcePath: updatesPath,
           estimated: true,
@@ -963,6 +968,7 @@ async function parseUpdatesUsage(
         outputTokens: 0,
         cacheReadTokens: cacheRead,
         cacheWriteTokens: 0,
+        ...(cacheRead > 0 ? { cacheReported: true } : {}),
         workspace: ctx.workspace,
         sourcePath: updatesPath,
         estimated: true,
@@ -990,6 +996,12 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
   routerCost?: number;
   /** Grok session/model-call count when the source provides it. */
   requestCount?: number;
+  /**
+   * Whether this usage object carried any cache key. Read off the raw keys, not
+   * the parsed value, so "grok reported cache: 0" is distinguishable from
+   * "grok never mentioned cache" for the dashboard's CACHE $ column.
+   */
+  cacheReported?: boolean;
 } | null {
   const fullInput = num(
     usage.inputTokens ?? usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokens,
@@ -1045,6 +1057,11 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
   const ticks = num(usage.costUsdTicks ?? usage.cost_usd_ticks);
   const routerCost = ticks > 0 ? ticks / 1e10 : undefined;
   const calls = num(usage.modelCalls ?? usage.model_calls ?? usage.apiCalls ?? usage.api_calls);
+  // Presence of a cache key (read or write), regardless of magnitude.
+  const cacheReported =
+    Object.keys(usage).some((k) => /cach/i.test(k)) ||
+    cacheRead > 0 ||
+    cacheWrite > 0;
 
   return {
     inputTokens: uncached,
@@ -1053,6 +1070,7 @@ function bucketsFromUsage(usage: Record<string, unknown>): {
     cacheWriteTokens: cacheWrite,
     ...(routerCost != null ? { routerCost } : {}),
     ...(calls > 0 ? { requestCount: Math.floor(calls) } : {}),
+    ...(cacheReported ? { cacheReported: true } : {}),
   };
 }
 

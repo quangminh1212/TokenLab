@@ -44,6 +44,11 @@ export async function parseGemini(roots: string[]): Promise<UsageEvent[]> {
         // Gemini often includes cache in input — avoid double charge when possible
         if (cacheRead > 0 && input >= cacheRead) input = input - cacheRead;
         if (input + output + cacheRead <= 0) continue;
+        // Presence of a cache alias (even 0) is a measurement of cache.
+        const cacheReported =
+          usage.cached_content_token_count != null ||
+          usage.cacheReadTokens != null ||
+          usage.cached != null;
 
         const model = (typeof m.model === "string" && m.model) || null;
         const ts =
@@ -63,6 +68,7 @@ export async function parseGemini(roots: string[]): Promise<UsageEvent[]> {
             cacheWriteTokens: 0,
             workspace: null,
             sourcePath: file,
+            ...(cacheReported ? { cacheReported: true } : {}),
           }),
         );
       }

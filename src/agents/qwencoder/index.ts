@@ -145,6 +145,9 @@ async function parseUsageDaily(file: string): Promise<UsageEvent[]> {
             workspace: null,
             sourcePath: file,
             estimated: true,
+            ...(m.cacheReadTokens != null || m.cache_read_tokens != null
+              ? { cacheReported: true }
+              : {}),
             ...(reqs > 0 ? { requestCount: Math.floor(reqs) } : {}),
             ...(num(m.cost ?? m.estimatedCost) > 0
               ? { routerCost: num(m.cost ?? m.estimatedCost) }
@@ -220,6 +223,9 @@ async function parseModelsApi(file: string): Promise<UsageEvent[]> {
         workspace: null,
         sourcePath: file,
         estimated: true,
+        ...(m.cacheReadTokens != null || m.cache_read_tokens != null
+          ? { cacheReported: true }
+          : {}),
         ...(reqs > 0 ? { requestCount: Math.floor(reqs) } : {}),
       }),
     );

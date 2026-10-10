@@ -14,6 +14,8 @@ test("extractTokenBuckets reads anthropic-style usage", () => {
     outputTokens: 5,
     cacheReadTokens: 2,
     cacheWriteTokens: 1,
+    // The row carried cache keys, so the extractor measured cache.
+    cacheReported: true,
   });
 });
 
@@ -25,6 +27,32 @@ test("extractTokenBuckets reads nested usage", () => {
 
 test("extractModel prefers modelId", () => {
   assert.equal(extractModel({ modelId: "grok-4.5" }), "grok-4.5");
+});
+
+test("cacheReported distinguishes a measured zero from a silent cache field", () => {
+  // A cache key present with value 0 is a MEASUREMENT: the provider told us
+  // cache was zero. The dashboard renders that as a real $0.00, not "—".
+  const measuredZero = extractTokenBuckets({
+    input_tokens: 100,
+    output_tokens: 20,
+    cached_tokens: 0,
+  });
+  assert.equal(measuredZero?.cacheReadTokens, 0);
+  assert.equal(measuredZero?.cacheReported, true);
+
+  // No cache key at all is SILENCE: the provider never mentioned cache, so the
+  // column must stay "—" rather than implying it measured nothing.
+  const silent = extractTokenBuckets({ input_tokens: 100, output_tokens: 20 });
+  assert.equal(silent?.cacheReadTokens, 0);
+  assert.equal(silent?.cacheReported, undefined);
+
+  // A nonzero cache read is reported regardless of the key spelling used.
+  const nonzero = extractTokenBuckets({
+    input_tokens: 100,
+    output_tokens: 20,
+    cache_read_tokens: 60,
+  });
+  assert.equal(nonzero?.cacheReported, true);
 });
 
 test("extractTokenBuckets reads Devin-style metadata.metrics", () => {
@@ -76,6 +104,7 @@ test("extractTokenBuckets reads Orca full-input cache fields", () => {
     cacheReadTokens: 800,
     cacheWriteTokens: 50,
     inputIncludesCache: true,
+    cacheReported: true,
   });
 });
 
@@ -108,6 +137,7 @@ test("extractTokenBuckets reads Codex cached_input_tokens fields", () => {
     cacheReadTokens: 800,
     cacheWriteTokens: 120,
     inputIncludesCache: true,
+    cacheReported: true,
   });
 });
 

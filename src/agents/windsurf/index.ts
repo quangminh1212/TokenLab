@@ -356,6 +356,10 @@ async function parseCascadeSessions(root: string, seen: Set<string>): Promise<Us
     const outputTokens = hasReal ? real!.outputTokens : Math.max(1, totalEst - inputTokens);
     const cacheReadTokens = hasReal ? real!.cacheReadTokens : 0;
     const model = (hasReal ? real!.model : real?.model) || "windsurf-cascade";
+    // Only the decrypted-trajectory branch measures cache; the size heuristic
+    // below it never saw a cache number and must stay silent.
+    const cacheReported =
+      hasReal && (real!.cacheReported || real!.cacheReadTokens > 0);
 
     // One event per trajectory file — id must not change when tokens grow mid-session.
     events.push(
@@ -371,6 +375,7 @@ async function parseCascadeSessions(root: string, seen: Set<string>): Promise<Us
         workspace: null,
         sourcePath: file,
         estimated: !hasReal,
+        ...(cacheReported ? { cacheReported: true } : {}),
       }),
     );
   }
@@ -458,26 +463,30 @@ export function extractCascadeUsage(plaintext: Buffer): {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  /** True when a cache label was present (even at 0), so the number is measured. */
+  cacheReported: boolean;
 } {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + Math.round(b), 0);
   // First matching label family only (avoid double-summing variants)
-  const pick = (...labels: string[]) => {
+  const pickVals = (...labels: string[]) => {
     for (const label of labels) {
       const vals = extractLabeledFloats(plaintext, label);
-      if (vals.length > 0) return sum(vals);
+      if (vals.length > 0) return vals;
     }
-    return 0;
+    return null;
   };
+  const cacheVals = pickVals(
+    "Cached input tokens",
+    "Cached tokens",
+    "Cache read tokens",
+    "cached input tokens",
+  );
   return {
     model: extractDominantModel(plaintext),
-    inputTokens: pick("Input tokens", "input tokens", "Prompt tokens"),
-    outputTokens: pick("Output tokens", "output tokens", "Completion tokens"),
-    cacheReadTokens: pick(
-      "Cached input tokens",
-      "Cached tokens",
-      "Cache read tokens",
-      "cached input tokens",
-    ),
+    inputTokens: sum(pickVals("Input tokens", "input tokens", "Prompt tokens") ?? []),
+    outputTokens: sum(pickVals("Output tokens", "output tokens", "Completion tokens") ?? []),
+    cacheReadTokens: sum(cacheVals ?? []),
+    cacheReported: cacheVals != null,
   };
 }
 
@@ -489,6 +498,7 @@ async function tryParseEncryptedTrajectory(
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  cacheReported: boolean;
 } | null> {
   try {
     const raw = await readFile(file);
@@ -500,6 +510,7 @@ async function tryParseEncryptedTrajectory(
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       cacheReadTokens: usage.cacheReadTokens,
+      cacheReported: usage.cacheReported,
     };
   } catch {
     return null;

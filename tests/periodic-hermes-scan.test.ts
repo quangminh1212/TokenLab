@@ -235,6 +235,39 @@ test("light delta keeps router history and prefers the richer same id", () => {
   assert.equal(applied.events.find((event) => event.id === "same")?.inputTokens, 8);
 });
 
+test("light delta upgrades an unchanged cache row to the measured variant", () => {
+  const prev = [
+    lightEvent({
+      id: "same-cache",
+      agent: "9router",
+      timestamp: "2026-10-08T00:00:01.000Z",
+      sourcePath: "db",
+      inputTokens: 100,
+      outputTokens: 10,
+      cacheReadTokens: 900,
+    }),
+  ];
+  const fresh = new Map<string, UsageEvent[]>([
+    [
+      "9router",
+      [
+        lightEvent({
+          id: "same-cache",
+          agent: "9router",
+          timestamp: "2026-10-08T00:00:01.000Z",
+          sourcePath: "db",
+          inputTokens: 100,
+          outputTokens: 10,
+          cacheReadTokens: 900,
+          cacheReported: true,
+        }),
+      ],
+    ],
+  ]);
+  const applied = applyPeriodicLightDelta(prev, null, fresh);
+  assert.equal(applied.events[0]?.cacheReported, true);
+});
+
 test("light delta drops a same-machine gist rollup covered by the fresh row", () => {
   const prev = [
     lightEvent({

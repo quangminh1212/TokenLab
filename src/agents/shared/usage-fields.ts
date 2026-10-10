@@ -7,6 +7,27 @@ export interface TokenBuckets {
   cacheWriteTokens: number;
   /** Some providers report prompt/input as a full value that already includes cache reads. */
   inputIncludesCache?: boolean;
+  /**
+   * True when the source usage object actually carried a cache field (read or
+   * write), even when its value is 0. Distinct from `cacheReadTokens > 0`: a row
+   * that reports cache and a row that says nothing about caching both land at 0
+   * tokens, and the dashboard's CACHE $ column needs to tell them apart.
+   */
+  cacheReported?: boolean;
+}
+
+/**
+ * True when `obj` carries any cache-related key (read or write), regardless of
+ * value. Used to distinguish "the provider told us cache was 0" from "the
+ * provider said nothing about caching" — both yield 0 tokens but only the first
+ * is a measurement the CACHE $ column may render as $0.00 instead of "—".
+ */
+function hasCacheField(obj: Record<string, unknown> | null): boolean {
+  if (!obj) return false;
+  for (const key of Object.keys(obj)) {
+    if (/cach/i.test(key)) return true;
+  }
+  return false;
 }
 
 /** Extract token buckets from heterogeneous vendor usage objects. */
@@ -159,12 +180,23 @@ export function extractTokenBuckets(usage: unknown): TokenBuckets | null {
     promptDetails?.cached_input_tokens != null ||
     promptDetails?.cachedInputTokens != null ||
     cacheReadDetails != null;
+  // Presence, not magnitude: a source that emitted a cache key (even 0) or whose
+  // read landed under a details object is a measurement of cache; a source with
+  // no cache key at all is silence.
+  const cacheReported =
+    hasCacheField(nested) ||
+    hasCacheField(promptDetails) ||
+    hasCacheField(cacheReadDetails) ||
+    hasCacheField(cacheCreationDetails) ||
+    cacheReadWithDetails > 0 ||
+    cacheWriteTokens > 0;
   return {
     inputTokens,
     outputTokens,
     cacheReadTokens: cacheReadWithDetails,
     cacheWriteTokens,
     ...(inputIncludesCache ? { inputIncludesCache: true } : {}),
+    ...(cacheReported ? { cacheReported: true } : {}),
   };
 }
 

@@ -477,6 +477,13 @@ export function preferRicherEvent(prev: UsageEvent, next: UsageEvent): UsageEven
   if (nextCache > prevCache) return next;
   if (prevCache > nextCache) return prev;
 
+  // A later parser pass can learn that the provider explicitly reported cache
+  // without changing the token totals (including an explicit cache=0). Keep
+  // that provenance marker when the usage envelope is otherwise identical so
+  // a warm scan cache cannot hide measured cache behind an older unmarked row.
+  if (next.cacheReported && !prev.cacheReported) return next;
+  if (prev.cacheReported && !next.cacheReported) return prev;
+
   if ((Number(next.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0)) return next;
   return prev;
 }
@@ -1229,6 +1236,8 @@ export function enforceMonotonicAgentDays(
      * billed envelope and won on `req` (its extra `unattributed` remainder row).
      */
     cacheRead: number;
+    /** Number of rows whose source explicitly reported cache fields. */
+    cacheReported: number;
   };
   /** Cost of a row's non-cache tokens, so cache inflation is not a tiebreaker. */
   const billedCostOf = (e: UsageEvent): number => {
@@ -1256,7 +1265,17 @@ export function enforceMonotonicAgentDays(
         : `${scope}|${agent}|__noday__|${e.id}`;
       let b = map.get(key);
       if (!b) {
-        b = { events: [], tok: 0, cost: 0, billedCost: 0, req: 0, live: 0, estOutPos: 0, cacheRead: 0 };
+        b = {
+          events: [],
+          tok: 0,
+          cost: 0,
+          billedCost: 0,
+          req: 0,
+          live: 0,
+          estOutPos: 0,
+          cacheRead: 0,
+          cacheReported: 0,
+        };
         map.set(key, b);
       }
       b.events.push({ ...e, agent });
@@ -1264,6 +1283,7 @@ export function enforceMonotonicAgentDays(
       b.cost += Number(e.estimatedCost) || 0;
       b.billedCost += billedCostOf(e);
       b.cacheRead += Number(e.cacheReadTokens) || 0;
+      if (e.cacheReported) b.cacheReported += 1;
       const rc = e.requestCount;
       b.req += typeof rc === "number" && rc > 0 ? Math.floor(rc) : 1;
       if (!e.estimated) b.live += 1;
@@ -1320,6 +1340,12 @@ export function enforceMonotonicAgentDays(
     // (its overlapping byModel views mint an extra `unattributed` remainder row).
     // Runs before the request rules for exactly that reason.
     if (a.cacheRead !== b.cacheRead) return a.cacheRead > b.cacheRead ? a : b;
+    // A parser can recover cache provenance without changing token totals. Keep
+    // the snapshot with more measured rows so a high-water save cannot restore
+    // an older unmarked day and hide the CACHE $ column again.
+    if (a.cacheReported !== b.cacheReported) {
+      return a.cacheReported > b.cacheReported ? a : b;
+    }
 
     // Same envelope: prefer multi-RQ live detail over pure daily (local Today / RECENT).
     if (bLive >= 20 && aEst > 0 && aLive === 0 && b.req >= a.req * 0.75) return b;
@@ -1344,7 +1370,25 @@ export function enforceMonotonicAgentDays(
   for (const key of keys) {
     const p = prevMap.get(key);
     const n = nextMap.get(key);
-    if (p && n) out.push(...better(p, n).events);
+    if (p && n) {
+      const winner = better(p, n);
+      const loser = winner === p ? n : p;
+      // The high-water guard may keep a richer old day while a fresh parser
+      // only improves cache provenance on a few same-id rows. Carry those
+      // markers onto the retained rows without sacrificing the extra usage.
+      const reportedById = new Set(
+        loser.events
+          .filter((event) => event.cacheReported)
+          .map((event) => event.id),
+      );
+      out.push(
+        ...winner.events.map((event) =>
+          !event.cacheReported && reportedById.has(event.id)
+            ? { ...event, cacheReported: true }
+            : event,
+        ),
+      );
+    }
     else if (n) out.push(...n.events);
     else if (p) out.push(...p.events);
   }
@@ -2071,6 +2115,14 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
     const cacheWriteTokens = Number(e.cacheWriteTokens) || 0;
     // XLab Router → RouterLab (canonical agent id)
     const agent = normalizeAgentId(String(e.agent));
+    // Older Devin scan-cache rows predate the cache provenance field. Devin's
+    // parser only obtains non-zero cache buckets from explicit usage fields, so
+    // recover the marker for those persisted rows even when its source database
+    // is no longer present for a fresh rescan.
+    const legacyDevinCacheReported =
+      e.cacheReported == null &&
+      agent === "devin" &&
+      (cacheReadTokens > 0 || cacheWriteTokens > 0);
     const requestCountRaw = Number(e.requestCount);
     const requestCount =
       Number.isFinite(requestCountRaw) && requestCountRaw > 0
@@ -2103,7 +2155,9 @@ function sanitizeEvents(raw: unknown): UsageEvent[] | undefined {
       // Must survive the round-trip: without it a reloaded cache reports no
       // cache for any provider, so the dashboard's CACHE $ fell back to "—"
       // after the first save/load even for agents that do report cache.
-      ...(e.cacheReported === true ? { cacheReported: true } : {}),
+      ...(e.cacheReported === true || legacyDevinCacheReported
+        ? { cacheReported: true }
+        : {}),
       ...(typeof e.machineScope === "string" && e.machineScope.trim()
         ? { machineScope: e.machineScope.trim() }
         : {}),
