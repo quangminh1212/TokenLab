@@ -28,7 +28,10 @@ const routerLightStamp = new Map<string, string>();
 async function stampOne(file: string, parts: string[]): Promise<void> {
   try {
     const st = await stat(file);
-    parts.push(`${file}|${st.size}`);
+    // VPS mirror syncs can rewrite a file without changing its byte length.
+    // Include mtime so those updates trigger the light parser instead of
+    // returning an empty batch and leaving the old scan-cache in place.
+    parts.push(`${file}|${st.size}|${st.mtimeMs}`);
   } catch {
     /* absent */
   }
