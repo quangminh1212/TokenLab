@@ -683,6 +683,94 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("adds identical request rows from separate mirror roots", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const first = await mkdtemp(path.join(tmpdir(), "xlab-router-mirror-a-"));
+    const second = await mkdtemp(path.join(tmpdir(), "xlab-router-mirror-b-"));
+    try {
+      const row = {
+        id: "mirror-native-1",
+        timestamp: "2026-07-26T10:00:00.000Z",
+        provider: "xai",
+        model: "grok-4.5",
+        promptTokens: 1000,
+        completionTokens: 20,
+        cost: 0.01,
+        tokens: { prompt_tokens: 1000, completion_tokens: 20, cached_tokens: 800 },
+      };
+      for (const dir of [first, second]) {
+        await writeFile(
+          path.join(dir, "request-details.jsonl"),
+          JSON.stringify(row) + "\n",
+          "utf8",
+        );
+      }
+      const events = await parseRouterUsage([first, second], "routerlab");
+      assert.equal(events.length, 2);
+      assert.equal(
+        events.reduce((sum, e) => sum + e.inputTokens + e.outputTokens, 0),
+        2 * (1000 + 20),
+      );
+      assert.equal(
+        events.reduce((sum, e) => sum + e.cacheReadTokens, 0),
+        2 * 800,
+      );
+      const collapsed = collapseRouterDailyEvents(events);
+      assert.equal(collapsed.length, 2);
+    } finally {
+      await rm(first, { recursive: true, force: true });
+      await rm(second, { recursive: true, force: true });
+    }
+  });
+
+  it("adds identical daily rollups from separate mirror roots", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const first = await mkdtemp(path.join(tmpdir(), "xlab-router-daily-mirror-a-"));
+    const second = await mkdtemp(path.join(tmpdir(), "xlab-router-daily-mirror-b-"));
+    try {
+      const daily = {
+        "2026-07-26": {
+          requests: 1,
+          promptTokens: 1000,
+          completionTokens: 20,
+          cachedTokens: 800,
+          cost: 0.01,
+          byModel: {
+            "grok-4.5|xai": {
+              requests: 1,
+              promptTokens: 1000,
+              completionTokens: 20,
+              cachedTokens: 800,
+              cost: 0.01,
+              rawModel: "grok-4.5",
+              provider: "xai",
+            },
+          },
+        },
+      };
+      for (const dir of [first, second]) {
+        await writeFile(
+          path.join(dir, "usage-daily.json"),
+          JSON.stringify(daily),
+          "utf8",
+        );
+      }
+      const events = await parseRouterUsage([first, second], "routerlab");
+      const collapsed = collapseRouterDailyEvents(events);
+      assert.equal(events.length, 2);
+      assert.equal(collapsed.length, 2);
+      assert.equal(
+        collapsed.reduce((sum, e) => sum + e.totalTokens, 0),
+        2 * (1000 + 20 + 800),
+      );
+    } finally {
+      await rm(first, { recursive: true, force: true });
+      await rm(second, { recursive: true, force: true });
+    }
+  });
+
   it("keeps distinct native requests that share a second and token shape", async () => {
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");

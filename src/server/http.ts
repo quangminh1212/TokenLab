@@ -25,6 +25,7 @@ import {
   collapseRouterDailyEvents,
   collapseSourcePathRollups,
   dropLegacyCodexProxyAttributions,
+  dropLegacyRouterMirrorRows,
   enforceMonotonicAgentDays,
   loadImportedEvents,
   loadScanCache,
@@ -891,7 +892,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
        * bug that kept serving a stale 3135 req/min row through full rescans.
        */
       const monotonicBaseline = (scanned: UsageEvent[]): UsageEvent[] =>
-        pruneStaleSourceEvents(previousForMonotonic(), scanned);
+        pruneStaleSourceEvents(
+          dropLegacyRouterMirrorRows(previousForMonotonic(), scanned),
+          scanned,
+        );
 
       const rebuild = (finalize = false): void => {
         const unchangedPrev = full

@@ -15,6 +15,7 @@ import {
   mergeLocalPreferOverGistRollups,
   mergeMultiMachineGistRollups,
   collapseRouterDailyEvents,
+  dropLegacyRouterMirrorRows,
   enforceMonotonicAgentDays,
   reconcileScanCacheHighWater,
   loadScanCache,
@@ -50,6 +51,61 @@ function evt(partial: Partial<UsageEvent> & { id: string }): UsageEvent {
     ...partial,
   };
 }
+
+test("dropLegacyRouterMirrorRows replaces old local single-root cache", () => {
+  const oldLocal = evt({
+    id: "legacy-router",
+    agent: "routerlab",
+    sourcePath: "daily-rollup",
+    inputTokens: 100,
+    totalTokens: 100,
+  });
+  const foreign = evt({
+    id: "foreign-router",
+    agent: "routerlab",
+    machineScope: "foreign-import",
+    sourcePath: "daily-rollup",
+    inputTokens: 200,
+    totalTokens: 200,
+  });
+  const other = evt({ id: "other-agent", agent: "hermes" });
+  const fresh = [
+    evt({
+      id: "fresh-primary",
+      agent: "routerlab",
+      sourcePath: "daily-rollup|primary",
+    }),
+    evt({
+      id: "fresh-mirror",
+      agent: "routerlab",
+      sourcePath: "daily-rollup|mirror-a",
+    }),
+  ];
+  const kept = dropLegacyRouterMirrorRows(
+    [oldLocal, foreign, other],
+    fresh,
+  );
+  assert.deepEqual(
+    kept.map((e) => e.id).sort(),
+    ["foreign-router", "other-agent"],
+  );
+  const current = evt({
+    id: "current-mirror",
+    agent: "routerlab",
+    sourcePath: "request-details.jsonl#mirror-root=mirror-a",
+    inputTokens: 300,
+    totalTokens: 300,
+  });
+  const afterMigration = dropLegacyRouterMirrorRows(
+    [oldLocal, current],
+    fresh,
+  );
+  assert.deepEqual(
+    afterMigration.map((e) => e.id).sort(),
+    ["current-mirror", "legacy-router"],
+    "an additive cache is not re-migrated on every rescan",
+  );
+});
 
 test("collapseRouterDailyEvents keeps richest estimated row per day+model+workspace", () => {
   const low = evt({
