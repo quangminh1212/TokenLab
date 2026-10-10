@@ -5,6 +5,7 @@ import { mkdtemp as mkTmp, writeFile as wrFile, rm as rmDir } from "node:fs/prom
 import { tmpdir as tmpOs } from "node:os";
 import { pathExists } from "../src/util.js";
 import { parseRouterUsage } from "../src/agents/shared/router-usage.js";
+import { collapseRouterDailyEvents } from "../src/backup.js";
 import { nineRouterRoots } from "../src/agents/9router/index.js";
 import { xlabRouterRoots } from "../src/agents/xlabrouter/index.js";
 import { liteLlmRoots } from "../src/agents/litellm/index.js";
@@ -214,9 +215,8 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "routerlab");
-      // History is the single source for any day it covers, even a sparse one:
-      // no daily rollup is added on top. Days with no history at all fall back
-      // to their dailySummary row.
+      // Days with no history fall back to dailySummary. Sparse history keeps
+      // both views so the downstream collapse can gap-fill the missing floor.
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-28")));
       assert.ok(events.some((e) => e.timestamp.startsWith("2026-06-29")));
       const d28 = events.find((e) => e.timestamp.startsWith("2026-06-28"));
@@ -225,11 +225,24 @@ describe("router usage parsers", () => {
       // 06-29 has a real request row → that row is kept verbatim, and the
       // dailySummary entry for the same day must NOT be added as well.
       const d29 = events.filter((e) => e.timestamp.startsWith("2026-06-29"));
-      assert.equal(d29.length, 1, `expected exactly the history row, got ${d29.length}`);
-      assert.equal(d29[0]?.inputTokens, 10, "history tokens must be kept as-is");
+      assert.ok(d29.length >= 2, `expected history plus daily floor, got ${d29.length}`);
       assert.ok(
-        !d29.some((e) => e.estimated && e.inputTokens === 90000),
-        "the dailySummary rollup for a history-covered day must not also be emitted",
+        d29.some((e) => !e.estimated && e.inputTokens === 10),
+        "history tokens must be kept as-is",
+      );
+      assert.ok(
+        d29.some((e) => e.estimated && e.inputTokens === 90000),
+        "the dailySummary floor must remain available for gap filling",
+      );
+      const collapsed = collapseRouterDailyEvents(events);
+      const collapsedDay = collapsed.filter((e) => e.timestamp.startsWith("2026-06-29"));
+      assert.equal(
+        collapsedDay.reduce(
+          (n, e) => n + e.inputTokens + e.outputTokens + e.cacheReadTokens + e.cacheWriteTokens,
+          0,
+        ),
+        92000,
+        "partial history must be reconciled to the daily token floor",
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -284,10 +297,9 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("history wins for a day it covers, so no daily rollup is added on top", async () => {
-    // History and daily rollups are two views of one day. Adding the rollup on
-    // top of the requests double counted whole days on the live mirror (2.004x).
-    // The rule now: if a day has any request rows, they ARE the day.
+  it("gap-fills a partial request window from the daily rollup", async () => {
+    // Router request exports are bounded windows. A 30-row sample must not hide
+    // the remaining 5 requests and 50,500 tokens reported by the day summary.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-gapfill-"));
@@ -349,17 +361,21 @@ describe("router usage parsers", () => {
       // Only the real request rows survive — the daily rollup for the same day
       // must NOT also be emitted, and neither must the models that appear only
       // in the unused rollup.
-      const models = new Set(events.map((e) => e.model));
-      assert.deepEqual([...models], ["gpt-5.6-sol"]);
-      assert.equal(events.length, 30);
-      assert.ok(events.every((e) => !e.estimated), "request rows are not estimated");
-      const reqSum = events.reduce(
+      const collapsed = collapseRouterDailyEvents(events);
+      const requests = collapsed.filter((e) => !e.estimated);
+      const models = new Set(collapsed.map((e) => e.model));
+      assert.ok(models.has("gpt-5.6-sol"));
+      assert.ok(models.has("qwen3.7-max"));
+      assert.ok(models.has("minimax-m3"));
+      assert.equal(requests.length, 30);
+      assert.ok(requests.every((e) => !e.estimated), "request rows are not estimated");
+      const reqSum = collapsed.reduce(
         (a, e) => a + (typeof e.requestCount === "number" && e.requestCount > 0 ? e.requestCount : 1),
         0,
       );
-      assert.equal(reqSum, 30);
-      const tok = events.reduce((a, e) => a + (e.inputTokens || 0) + (e.outputTokens || 0), 0);
-      assert.equal(tok, 30 * 10_100);
+      assert.equal(reqSum, 35);
+      const tok = collapsed.reduce((a, e) => a + (e.inputTokens || 0) + (e.outputTokens || 0), 0);
+      assert.equal(tok, 353_500);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -535,11 +551,12 @@ describe("router usage parsers", () => {
       // History covers this day, so it IS the day — no rollup is synthesised.
       // That is strictly safer for the leak being guarded here: a synthetic
       // rollup stamped at dateKey noon would land in the previous local day.
+      assert.equal(events.filter((e) => !e.estimated).length, 7);
       assert.ok(
-        events.every((e) => !e.estimated),
-        "a history-covered day must not also produce a daily rollup",
+        events.some((e) => e.estimated),
+        "a partial history window must retain the daily floor",
       );
-      assert.equal(events.length, 7);
+      assert.equal(events.length, 8);
       for (const e of events) {
         assert.equal(e.timestamp.slice(0, 10), "2026-07-27");
       }
@@ -557,10 +574,9 @@ describe("router usage parsers", () => {
     }
   });
 
-  it("keeps a history-covered day instead of replacing it with dailySummary", async () => {
-    // A day with real request rows is taken as-is, even when dailySummary
-    // reports more (here 99 req vs the 25 rows the mirror holds). Mixing the two
-    // views is what produced 2.004x days on the live LiteLLM mirror.
+  it("gap-fills a short history window from dailySummary", async () => {
+    // The mirror holds 25 request rows for a 99-request day. Keep those rows
+    // for recent detail and retain the daily floor for all-time totals.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-split-"));
@@ -603,12 +619,17 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "routerlab");
-      assert.equal(events.length, 25, "the 25 request rows must be kept as-is");
-      assert.ok(events.every((e) => !e.estimated), "no synthesised rollup alongside real rows");
-      assert.ok(events.every((e) => e.model === "grok-4.5"));
-      const inTok = events.reduce((a, e) => a + (e.inputTokens || 0), 0);
+      assert.equal(events.filter((e) => !e.estimated).length, 25);
+      assert.ok(events.some((e) => e.estimated), "daily floor must be retained");
+      const collapsed = collapseRouterDailyEvents(events);
+      assert.equal(
+        collapsed.reduce((a, e) => a + (e.requestCount || 1), 0),
+        99,
+        "collapsed rows must reconcile to daily request count",
+      );
+      const inTok = collapsed.reduce((a, e) => a + (e.inputTokens || 0), 0);
       const expectedIn = history.reduce((a, r) => a + r.promptTokens, 0);
-      assert.equal(inTok, expectedIn);
+      assert.ok(inTok >= expectedIn, "gap fill must not lose history input tokens");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -714,11 +735,14 @@ describe("router usage parsers", () => {
         "utf8",
       );
       const events = await parseRouterUsage([dir], "litellm");
-      assert.equal(events.length, 1, "history row is kept, no rollup alongside it");
-      assert.equal(events[0]!.inputTokens, 100_000);
-      assert.equal(events[0]!.outputTokens, 200);
-      // Cache is exactly what history reported (nothing here), never daily's.
-      assert.equal(events[0]!.cacheReadTokens, 0);
+      const history = events.find((e) => !e.estimated)!;
+      const daily = events.find((e) => e.estimated)!;
+      assert.ok(history, "history row is kept");
+      assert.ok(daily, "daily floor is retained when history omits cache");
+      assert.equal(history.inputTokens, 100_000);
+      assert.equal(history.outputTokens, 200);
+      assert.equal(history.cacheReadTokens, 0);
+      assert.equal(daily.cacheReadTokens, 80_000);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1401,6 +1425,119 @@ describe("router usage parsers", () => {
       assert.equal(
         rows.reduce((a, e) => a + e.cacheReadTokens, 0),
         200_000 + 300_000,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps additive providers when they normalize to the same model", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-provider-floor-"));
+    try {
+      const DAY = "2026-06-19";
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: 1_100,
+            promptTokens: 101_500_000,
+            completionTokens: 110_000,
+            byModel: {
+              "gpt-5.5|chat-provider": {
+                requests: 1_000,
+                promptTokens: 100_000_000,
+                completionTokens: 100_000,
+                rawModel: "gpt-5.5",
+                provider: "chat-provider",
+              },
+              // Same normalized model, but another router connection. These
+              // tokens are additive and must not be treated as an alias.
+              "gpt-5.5|responses-provider": {
+                requests: 100,
+                promptTokens: 1_500_000,
+                completionTokens: 10_000,
+                rawModel: "gpt-5.5",
+                provider: "responses-provider",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "9router");
+      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+      assert.equal(rows.filter((e) => e.model === "gpt-5.5").length, 2);
+      assert.equal(
+        rows.reduce((sum, e) => sum + e.inputTokens + e.outputTokens, 0),
+        101_610_000,
+        "same-model rows from different providers must remain additive",
+      );
+      assert.equal(
+        rows.reduce((sum, e) => sum + (e.requestCount || 1), 0),
+        1_100,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let an explicit zero cache field hide a billed daily floor", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cache-floor-"));
+    try {
+      const DAY = "2026-07-20";
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        JSON.stringify({
+          id: "history-zero-cache",
+          timestamp: `${DAY}T10:00:00.000Z`,
+          model: "gpt-5.6-sol",
+          provider: "openai",
+          promptTokens: 100_000,
+          completionTokens: 200,
+          cachedTokens: 0,
+          cost: 1,
+          tokens: {
+            prompt_tokens: 100_000,
+            completion_tokens: 200,
+            cached_tokens: 0,
+          },
+        }) + "\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: 1,
+            promptTokens: 100_000,
+            completionTokens: 200,
+            cachedTokens: 80_000,
+            byModel: {
+              "gpt-5.6-sol|openai": {
+                requests: 1,
+                promptTokens: 100_000,
+                completionTokens: 200,
+                cachedTokens: 80_000,
+                rawModel: "gpt-5.6-sol",
+                provider: "openai",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+      assert.ok(rows.some((e) => e.estimated), "daily cache floor must remain visible");
+      assert.equal(
+        rows.reduce((sum, e) => sum + e.cacheReadTokens, 0),
+        80_000,
       );
     } finally {
       await rm(dir, { recursive: true, force: true });

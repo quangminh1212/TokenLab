@@ -8,7 +8,8 @@ import { normalizeModelName, num, pathExists, readText, stableId } from "../../u
  *
  * Preference (request-first for RECENT EVENTS, daily as gap-fill):
  *  1. Per-request history (jsonl / usageHistory / request-details) when multi-RQ sample exists
- *  2. usage-daily / usageDaily / dailySummary byModel when history is missing or too sparse
+ *  2. usage-daily / usageDaily / dailySummary byModel as the all-time floor when
+ *     history is missing or only a partial window
  *
  * Why: daily byModel collapses an entire day into one row per model (e.g. 99× grok-4.5
  * → a single 5.2M-token "event"). RECENT EVENTS must show real individual requests.
@@ -350,15 +351,75 @@ function reconcileEventsAndDaily(
     const dayEvents = eventsByDay.get(dateKey) || [];
     const daily = mergedDaily.get(dateKey);
 
-    // History is the single source for a day it covers. Daily rollups exist in
-    // the same mirror exports (db.json carries usageData.dailySummary AND
-    // usageData.history; usage-daily.json is a third copy), so combining them
-    // counted a fully-covered day twice — 2.047x input / 2.045x requests on
-    // 2026-10-07, where history alone already matched day.requests exactly.
-    // Cost stays local: rows are priced by applyPricing from the rate table,
-    // never from the router's own `cost` field.
+    // Router exports commonly contain a bounded request window
+    // (request-details/usage-history) plus an all-time daily summary. Keep the
+    // daily floor only when the request window is materially short; a complete
+    // request export must stay request-only so direct parser consumers do not
+    // see duplicate rows. The final collapse still chooses daily authority or
+    // gap-fills a partial window. Cost stays local: rows are priced by
+    // applyPricing from the rate table, never from the router's own `cost`.
     if (dayEvents.length > 0) {
       out.push(...dayEvents);
+      if (daily) {
+        const dailyEvents = expandOneDay(
+          dateKey,
+          daily.day,
+          agent,
+          ROLLUP_SOURCE,
+          dayEvents,
+        );
+        const tokenWeight = (e: UsageEvent): number =>
+          typeof e.totalTokens === "number" && Number.isFinite(e.totalTokens)
+            ? e.totalTokens
+            : e.inputTokens +
+              e.outputTokens +
+              e.cacheReadTokens +
+              e.cacheWriteTokens;
+        const requestCount = (e: UsageEvent): number =>
+          typeof e.requestCount === "number" && e.requestCount > 0
+            ? Math.floor(e.requestCount)
+            : 1;
+        const historyTokens = dayEvents.reduce((n, e) => n + tokenWeight(e), 0);
+        const dailyTokens = dailyEvents.reduce((n, e) => n + tokenWeight(e), 0);
+        // LiteLLM history stores cache reads inside prompt_tokens and the
+        // parser splits them into input + cacheReadTokens. Daily rollups store
+        // prompt and cache as separate buckets. Compare the prompt account in
+        // the same convention before deciding that history covers the day.
+        const historyPromptAndOutput = dayEvents.reduce(
+          (n, e) =>
+            n +
+            e.inputTokens +
+            e.outputTokens +
+            (agent === "litellm" ? e.cacheReadTokens : 0),
+          0,
+        );
+        const dailyPromptAndOutput = dailyEvents.reduce(
+          (n, e) => n + e.inputTokens + e.outputTokens,
+          0,
+        );
+        const historyCacheTokens = dayEvents.reduce(
+          (n, e) => n + e.cacheReadTokens + e.cacheWriteTokens,
+          0,
+        );
+        const dailyCacheTokens = dailyEvents.reduce(
+          (n, e) => n + e.cacheReadTokens + e.cacheWriteTokens,
+          0,
+        );
+        const historyRequests = dayEvents.reduce((n, e) => n + requestCount(e), 0);
+        const dailyRequests = dailyEvents.reduce((n, e) => n + requestCount(e), 0);
+        const requestCoverage =
+          dailyRequests > 0 && historyRequests >= dailyRequests * 0.95;
+        const billedCoverage =
+          dailyPromptAndOutput <= 0 ||
+          historyPromptAndOutput >= dailyPromptAndOutput * 0.98;
+        const cacheCoverage =
+          dailyCacheTokens <= 0 || historyCacheTokens >= dailyCacheTokens * 0.98;
+        const historyCoversDaily =
+          dailyEvents.length === 0 ||
+          (requestCoverage && billedCoverage && cacheCoverage) ||
+          (dailyRequests <= 0 && historyTokens >= dailyTokens * 0.98);
+        if (!historyCoversDaily) out.push(...dailyEvents);
+      }
       continue;
     }
 
@@ -396,12 +457,14 @@ interface DailyModelTotals {
  *
  * Both rows describe the whole day; their SUM is 945.5M / 8959 (~2x day), while
  * the LARGER one alone is within 0.1% of the day. Same shape on 10-04 and 10-06.
- * Keying by `rawModel` and taking the largest row therefore reconstructs a day,
- * which summing either by raw key or by rawModel could not.
+ * Keying by provider plus normalized `rawModel` takes the largest overlapping
+ * alias within one provider while retaining additive rows from other providers.
+ * This reconstructs a day without summing duplicate views or dropping a second
+ * connection that happens to use the same public model name.
  *
- * Identity is `rawModel` (provider-native id). The display name must NOT be the
- * identity: normalization maps `claude-fable-5` and `Claude-Fable` to different
- * strings for one model, and two keys can also share one display label.
+ * The display name must NOT be the identity: normalization maps
+ * `claude-fable-5` and `Claude-Fable` to different strings for one model, and
+ * two keys can also share one display label.
  */
 function groupDailyByModel(
   agent: AgentId,
@@ -417,7 +480,16 @@ function groupDailyByModel(
     const m = mraw as Record<string, unknown>;
     const model = routerModelFromRecord(agent, m, modelKey.split("|")[0] || modelKey) || "mixed";
     const rawModel = typeof m.rawModel === "string" && m.rawModel ? m.rawModel : model;
-    const key = normalizeModelName(rawModel) || rawModel;
+    const provider =
+      typeof m.provider === "string" && m.provider.trim()
+        ? m.provider.trim()
+        : modelKey.includes("|")
+          ? modelKey.slice(modelKey.indexOf("|") + 1).trim()
+          : rawModel.includes("/")
+            ? rawModel.slice(0, rawModel.indexOf("/")).trim()
+            : "";
+    const normalized = normalizeModelName(rawModel) || rawModel;
+    const key = `${provider.toLowerCase()}|${normalized}`;
 
     const row = {
       requests: num(m.requests),
@@ -426,7 +498,7 @@ function groupDailyByModel(
       cachedTokens: num(m.cachedTokens ?? m.cached_tokens ?? m.cacheReadTokens),
       cost: num(m.cost),
       rawModel,
-      provider: typeof m.provider === "string" ? m.provider : undefined,
+      provider: typeof m.provider === "string" ? m.provider : provider || undefined,
       display: model,
     };
 
@@ -883,7 +955,12 @@ function expandOneDay(
       const remOut = Math.max(0, dayOutput - coveredOut);
       const remCache = Math.max(0, dayCache - modelCache);
       // Nothing material left over → byModel is the whole day.
-      if (coveredTok >= dayTok * 0.98 && coveredTok <= dayTok * 1.02) return out;
+      const materialRemainder =
+        remIn > 100_000 ||
+        remOut > 100_000 ||
+        remCache > 100_000 ||
+        remReq > 10;
+      if (!materialRemainder && Math.abs(coveredTok - dayTok) <= 100_000) return out;
       /*
        * Cache is NOT additive across the overlapping byModel views.
        *

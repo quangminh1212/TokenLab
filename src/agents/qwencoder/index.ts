@@ -386,17 +386,49 @@ async function parseDashboardScrape(file: string): Promise<UsageEvent[]> {
     );
   }
 
-  // If models empty but totals present
-  if (events.length === 0 && d.totals && typeof d.totals === "object") {
+  // Preserve account usage that is not assigned to a model row.
+  if (d.totals && typeof d.totals === "object") {
     const t = d.totals as Record<string, unknown>;
-    const tokens = num(t.tokensUsed ?? t.totalTokens ?? t.tokens);
-    const reqs = num(t.requests ?? t.successRequests);
-    if (tokens > 0) {
+    const totalTokens = Math.max(
+      num(t.tokensUsed ?? t.totalTokens ?? t.tokens),
+      num(t.tokens30d),
+    );
+    const totalRequests = Math.max(
+      num(t.requests ?? t.totalRequests),
+      num(t.successRequests),
+    );
+    const modelTokens = events.reduce(
+      (sum, e) =>
+        sum +
+        e.inputTokens +
+        e.outputTokens +
+        e.cacheReadTokens +
+        e.cacheWriteTokens,
+      0,
+    );
+    const modelRequests = events.reduce(
+      (sum, e) =>
+        sum +
+        (typeof e.requestCount === "number" && e.requestCount > 0
+          ? Math.floor(e.requestCount)
+          : 1),
+      0,
+    );
+    const tokens = Math.max(0, totalTokens - modelTokens);
+    const reqs = Math.max(0, totalRequests - modelRequests);
+    if (tokens > 0 || reqs > 0 || events.length === 0) {
       events.push(
         applyPricing({
-          id: stableId("qwencoder", file, "scrape-total", String(tokens), scrapedAt.slice(0, 10)),
+          id: stableId(
+            "qwencoder",
+            file,
+            "scrape-total",
+            String(totalTokens),
+            String(totalRequests),
+            scrapedAt.slice(0, 10),
+          ),
           agent: "qwencoder",
-          model: "qwencoder",
+          model: "unattributed",
           timestamp: scrapedAt,
           inputTokens: tokens,
           outputTokens: 0,

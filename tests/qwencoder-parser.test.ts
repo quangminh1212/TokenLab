@@ -22,13 +22,16 @@ test("parseQwenCoder reads dashboard-scrape models", async () => {
       "utf8",
     );
     const events = await parseQwenCoder([root]);
-    assert.equal(events.length, 2);
+    assert.equal(events.length, 3);
     assert.equal(events[0]!.agent, "qwencoder");
     const q = events.find((e) => e.model === "qwen3.7-max")!;
     assert.equal(q.inputTokens, 1_505_400_000);
     assert.equal(q.requestCount, 17861);
     const totalIn = events.reduce((s, e) => s + e.inputTokens, 0);
-    assert.equal(totalIn, 1_505_400_000 + 453_600_000);
+    assert.equal(totalIn, 2_394_300_000);
+    const remainder = events.find((e) => e.model === "unattributed")!;
+    assert.equal(remainder.inputTokens, 435_300_000);
+    assert.equal(remainder.requestCount, 17_082);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
