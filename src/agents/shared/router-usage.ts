@@ -3,6 +3,11 @@ import { applyPricing } from "../../pricing.js";
 import type { AgentId, UsageEvent } from "../../types.js";
 import { normalizeModelName, num, pathExists, readText, stableId } from "../../util.js";
 
+// Request exports can contain several real calls in the same second with the
+// same model and token counts. Keep the native request id long enough for the
+// history de-duplicator to distinguish those calls from mirrored copies.
+const ROUTER_NATIVE_IDS = new WeakMap<UsageEvent, string>();
+
 /**
  * Shared parser for 9router / routerlab (ex xlabrouter) / litellm local data.
  *
@@ -97,10 +102,13 @@ export async function parseRouterUsage(
 ): Promise<UsageEvent[]> {
   const eventLevel: UsageEvent[] = [];
   const seenIds = new Set<string>();
-  // Content fingerprint (ignore source path / native id / cache details) so twin
-  // exports (db.json history + request-details.jsonl, multi-root mirrors) merge.
+  // Content fingerprint deliberately ignores cache details so a twin with a
+  // richer cache field replaces its sparse copy. Native ids are handled as a
+  // second identity below: different ids are real same-second calls, while the
+  // same id across db.json/request-details/mirror roots is one call.
   // Second-precision timestamp absorbs 1ms drift between mirror copies.
   const contentIndex = new Map<string, number>();
+  const nativeIndex = new Map<string, number>();
   const dailyMaps: Array<{ source: string; daily: Record<string, unknown> }> = [];
   let loadedRequestHistoryFromRoot: string | null = null;
 
@@ -126,7 +134,20 @@ export async function parseRouterUsage(
     for (const e of batch) {
       if (seenIds.has(e.id)) continue;
       const fp = contentFingerprint(e);
-      const prevIdx = contentIndex.get(fp);
+      const nativeId = ROUTER_NATIVE_IDS.get(e) || "";
+      const nativeKey = nativeId
+        ? [e.agent, e.workspace || "", e.model || "", nativeId].join("|")
+        : "";
+      let prevIdx = nativeKey ? nativeIndex.get(nativeKey) : undefined;
+      if (prevIdx == null) {
+        const contentIdx = contentIndex.get(fp);
+        if (contentIdx != null) {
+          const existingNativeId = ROUTER_NATIVE_IDS.get(eventLevel[contentIdx]!) || "";
+          // An anonymous export row is a mirror twin of a native row. Two
+          // different native ids with the same content are separate requests.
+          if (!nativeId || !existingNativeId) prevIdx = contentIdx;
+        }
+      }
       if (prevIdx != null) {
         const prev = eventLevel[prevIdx];
         if (prev) {
@@ -137,11 +158,13 @@ export async function parseRouterUsage(
               tokenWeight(e) >= tokenWeight(prev));
           if (preferNext) eventLevel[prevIdx] = e;
         }
+        if (nativeKey) nativeIndex.set(nativeKey, prevIdx);
         seenIds.add(e.id);
         continue;
       }
       seenIds.add(e.id);
-      contentIndex.set(fp, eventLevel.length);
+      if (!contentIndex.has(fp)) contentIndex.set(fp, eventLevel.length);
+      if (nativeKey) nativeIndex.set(nativeKey, eventLevel.length);
       eventLevel.push(e);
     }
   };
@@ -1433,6 +1456,8 @@ function rowToEvent(
     cacheReported: hasCacheField,
     routerCost: hasRouterCostField && routerCostRaw > 0 ? routerCostRaw : null,
   });
+
+  if (r.id != null) ROUTER_NATIVE_IDS.set(event, String(r.id));
 
   // keep endpoint lightly in workspace when useful
   if (endpoint && !event.workspace) {

@@ -683,6 +683,40 @@ describe("router usage parsers", () => {
     }
   });
 
+  it("keeps distinct native requests that share a second and token shape", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-same-second-"));
+    try {
+      const row = {
+        timestamp: "2026-08-17T02:24:14.000Z",
+        provider: "openai-compatible-chat",
+        model: "glm-5.2",
+        promptTokens: 991,
+        completionTokens: 623,
+        cost: 0.01,
+        tokens: { prompt_tokens: 991, completion_tokens: 623 },
+      };
+      await writeFile(
+        path.join(dir, "request-details.jsonl"),
+        [
+          JSON.stringify({ id: "native-a", ...row }),
+          JSON.stringify({ id: "native-b", ...row }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "9router");
+      assert.equal(events.length, 2);
+      assert.equal(
+        events.reduce((sum, e) => sum + e.totalTokens, 0),
+        2 * (991 + 623),
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps history cache as reported, without merging daily cachedTokens", async () => {
     // Trade-off made deliberately: history is the single source for a day it
     // covers, so a cache count that only dailySummary knows is NOT merged in.
