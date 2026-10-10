@@ -790,6 +790,9 @@ html.dark {
   font-weight: 400;
   opacity: 0.7;
 }
+.recent-cache {
+  color: var(--accent);
+}
 .recent-when {
   font-size: 0.68rem;
   font-weight: 500;

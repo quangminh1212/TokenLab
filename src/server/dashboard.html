@@ -346,7 +346,7 @@
       '9router': '9Router',
       litellm: 'LiteLLM',
       'claude-code': 'Claude Code',
-      codex: 'OpenAI Codex (App)',
+      codex: 'OpenAI Codex',
       cursor: 'Cursor',
       windsurf: 'Windsurf',
       grok: 'Grok (xAI)',
@@ -629,14 +629,15 @@
           ${events.map((e) => {
             const model = normalizeModelName(e.model) || agentLabel(e.agent) || '\u2014';
             const agent = e.agent && e.model ? agentLabel(e.agent) : '';
+            const cached = (Number(e.cacheReadTokens) || 0) + (Number(e.cacheWriteTokens) || 0);
             return `<li class="recent-item">
               <div class="recent-item-main">
                 <span class="recent-model" title="${escapeHtml(model)}">${escapeHtml(model)}</span>
                 ${agent ? `<span class="recent-agent">${escapeHtml(agent)}</span>` : ''}
               </div>
               <div class="recent-item-meta">
-                <span class="recent-tokens" title="input / output">
-                  <span>${fmt(e.inputTokens)}</span><span class="recent-sep">/</span><span>${fmt(e.outputTokens)}</span>
+                <span class="recent-tokens" title="fresh input / cached input / output">
+                  <span>${fmt(e.inputTokens)}</span><span class="recent-sep">/</span><span class="recent-cache">${fmt(cached)}</span><span class="recent-sep">/</span><span>${fmt(e.outputTokens)}</span>
                 </span>
                 <time class="recent-when" datetime="${escapeHtml(e.timestamp || '')}">${timeAgo(e.timestamp)}</time>
               </div>
