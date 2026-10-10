@@ -279,6 +279,38 @@ test("collapseRouterDailyEvents keeps multi-RQ detail AND daily floor (no total 
   assert.ok(tok >= 5_020_000, "day total must stay at/above daily floor 5.02M");
 });
 
+test("collapseRouterDailyEvents is idempotent after gap filling", () => {
+  const daily = evt({
+    id: "daily-idempotent",
+    agent: "9router",
+    model: "grok-4.5",
+    estimated: true,
+    inputTokens: 5_000_000,
+    outputTokens: 20_000,
+    totalTokens: 5_020_000,
+    requestCount: 99,
+    timestamp: "2026-07-26T12:00:00.000Z",
+  });
+  const requests = Array.from({ length: 25 }, (_, i) =>
+    evt({
+      id: `idempotent-rq-${i}`,
+      agent: "9router",
+      model: "grok-4.5",
+      estimated: false,
+      inputTokens: 100_000,
+      outputTokens: 800,
+      totalTokens: 100_800,
+      timestamp: `2026-07-26T10:${String(i).padStart(2, "0")}:00.000Z`,
+    }),
+  );
+  const first = collapseRouterDailyEvents([daily, ...requests]);
+  const second = collapseRouterDailyEvents(first);
+  const total = (rows: UsageEvent[]) =>
+    rows.reduce((sum, event) => sum + (event.totalTokens || 0), 0);
+  assert.equal(total(second), total(first));
+  assert.equal(second.filter((event) => !event.estimated).length, 25);
+});
+
 test("collapseRouterDailyEvents never shrinks when partial history reappears", () => {
   const daily = evt({
     id: "daily-9r",
@@ -393,6 +425,40 @@ test("reconcileScanCacheHighWater keeps the persisted richer day in RAM", () => 
     reconciled.some((event) => event.id === "persisted-high-water"),
     "the richer persisted row must remain available to the live dashboard",
   );
+});
+
+test("enforceMonotonicAgentDays keeps a fuller router daily floor over a short history tail", () => {
+  const day = "2026-07-26T12:00:00.000Z";
+  const tail = Array.from({ length: 5 }, (_, i) =>
+    evt({
+      id: `router-tail-${i}`,
+      agent: "routerlab",
+      model: "gpt-5.6-sol",
+      timestamp: day,
+      inputTokens: 80_000,
+      outputTokens: 1_000,
+      totalTokens: 81_000,
+      estimated: false,
+    }),
+  );
+  const daily = evt({
+    id: "router-daily-full",
+    agent: "routerlab",
+    model: "gpt-5.6-sol",
+    timestamp: day,
+    inputTokens: 130_830_102,
+    outputTokens: 844_310,
+    totalTokens: 131_674_412,
+    estimated: true,
+    requestCount: 2_805,
+  });
+  const merged = enforceMonotonicAgentDays(tail, [daily]);
+  assert.equal(
+    merged.reduce((sum, event) => sum + (event.totalTokens || 0), 0),
+    131_674_412,
+    "a full daily envelope must replace a short persisted request tail",
+  );
+  assert.ok(merged.some((event) => event.id === "router-daily-full"));
 });
 
 test("enforceMonotonicAgentDays keeps a router cache recovery instead of reverting it", async () => {

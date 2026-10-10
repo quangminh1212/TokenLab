@@ -912,6 +912,17 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       out.push(...requests);
       continue;
     }
+    // Gap-fill rows are already the exact remainder of the daily floor. A
+    // second reconciliation pass must keep the request detail plus that
+    // remainder; treating the remainder as a fresh authoritative daily would
+    // drop all live rows on the next save/rescan.
+    if (
+      dailies.length > 0 &&
+      dailies.every((e) => String(e.id).startsWith("gapfill:"))
+    ) {
+      out.push(...requests, ...dailies);
+      continue;
+    }
     if (requests.length === 0) {
       // Drop redundant "mixed" day blob when model-specific rollups already cover the day.
       out.push(...dedupeMixedDailyRollups(dailies));
@@ -1302,6 +1313,23 @@ export function enforceMonotonicAgentDays(
     const bLive = b.live;
     const aEst = a.events.length - aLive;
     const bEst = b.events.length - bLive;
+
+    // A bounded router history can have more live rows while describing only a
+    // small fraction of the all-time daily envelope. Compare the token floor
+    // before the live-row preference for router days; otherwise a persisted
+    // five-request tail beats a fresh 2,805-request daily snapshot and the
+    // scan appears to lose usage on every full rescan.
+    const isRouterAgent = (e: UsageEvent): boolean =>
+      e.agent === "litellm" ||
+      e.agent === "9router" ||
+      e.agent === "routerlab" ||
+      e.agent === "xlabrouter";
+    const bothRouterDays =
+      a.events.some(isRouterAgent) && b.events.some(isRouterAgent);
+    if (bothRouterDays) {
+      if (a.tok > b.tok * 1.001) return a;
+      if (b.tok > a.tok * 1.001) return b;
+    }
 
     // Prefer day side with real usage / meaningful residual output over pure out=0 ghosts
     // (ghost peak sum used to win envelope and restore 21× out=0 after light merge cleaned them).
