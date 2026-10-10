@@ -5,8 +5,13 @@ import { normalizeModelName, num, pathExists, readText, stableId } from "../../u
 
 // Request exports can contain several real calls in the same second with the
 // same model and token counts. Keep the native request id long enough for the
-// history de-duplicator to distinguish those calls from mirrored copies.
+// per-root reconciler to distinguish those calls from same-root file twins.
 const ROUTER_NATIVE_IDS = new WeakMap<UsageEvent, string>();
+// Mirror roots are intentionally additive. This scope follows each event
+// through the scan cache so later collapse/high-water passes cannot merge a
+// second mirror back into the first one.
+const ROUTER_ROOT_SCOPES = new WeakMap<UsageEvent, string>();
+const ROUTER_MIRROR_MARKER = "#mirror-root=";
 
 /**
  * Shared parser for 9router / routerlab (ex xlabrouter) / litellm local data.
@@ -21,9 +26,9 @@ const ROUTER_NATIVE_IDS = new WeakMap<UsageEvent, string>();
  * Daily rollups remain the fallback so days without history still contribute totals.
  */
 /**
- * Order roots so the VPS mirror (tokenlab/mirrors/{agent}) is scanned first,
- * and we can stop loading per-request history after the first rich root to
- * avoid multi-folder twin inflation (routerlab + xlabrouter + Dev\\VPS\\...).
+ * Order roots so the preferred VPS mirror (tokenlab/mirrors/{agent}) is
+ * scanned first. Its historical ids remain stable; every additional mirror
+ * root receives its own additive scope.
  */
 function prioritizeRouterRoots(roots: string[], agent: AgentId): string[] {
   const score = (r: string): number => {
@@ -53,6 +58,16 @@ function prioritizeRouterRoots(roots: string[], agent: AgentId): string[] {
     return 10;
   };
   return [...roots].sort((a, b) => score(b) - score(a));
+}
+
+function scopeRouterEvent(event: UsageEvent, rootScope: string): UsageEvent {
+  ROUTER_ROOT_SCOPES.set(event, rootScope);
+  if (rootScope === "primary") return event;
+  event.id = stableId("router-mirror-event", rootScope, event.id);
+  if (!event.sourcePath.includes(ROUTER_MIRROR_MARKER)) {
+    event.sourcePath = `${event.sourcePath}${ROUTER_MIRROR_MARKER}${rootScope}`;
+  }
+  return event;
 }
 
 /**
@@ -102,15 +117,17 @@ export async function parseRouterUsage(
 ): Promise<UsageEvent[]> {
   const eventLevel: UsageEvent[] = [];
   const seenIds = new Set<string>();
-  // Content fingerprint deliberately ignores cache details so a twin with a
-  // richer cache field replaces its sparse copy. Native ids are handled as a
-  // second identity below: different ids are real same-second calls, while the
-  // same id across db.json/request-details/mirror roots is one call.
-  // Second-precision timestamp absorbs 1ms drift between mirror copies.
+  // Content fingerprint deliberately ignores cache details so a same-root twin
+  // with a richer cache field replaces its sparse copy. The root scope is part
+  // of every index: separate mirror roots are additive, even when their rows
+  // are byte-identical.
   const contentIndex = new Map<string, number>();
   const nativeIndex = new Map<string, number>();
-  const dailyMaps: Array<{ source: string; daily: Record<string, unknown> }> = [];
-  let loadedRequestHistoryFromRoot: string | null = null;
+  const dailyMaps: Array<{
+    source: string;
+    daily: Record<string, unknown>;
+    scope: string;
+  }> = [];
 
   const contentFingerprint = (e: UsageEvent): string => {
     const ts = (e.timestamp || "").slice(0, 19); // YYYY-MM-DDTHH:mm:ss
@@ -130,21 +147,22 @@ export async function parseRouterUsage(
     (Number(e.cacheReadTokens) || 0) +
     (Number(e.cacheWriteTokens) || 0);
 
-  const pushEvents = (batch: UsageEvent[]) => {
+  const pushEvents = (batch: UsageEvent[], rootScope: string) => {
     for (const e of batch) {
-      if (seenIds.has(e.id)) continue;
+      const scopedId = `${rootScope}|${e.id}`;
+      if (seenIds.has(scopedId)) continue;
       const fp = contentFingerprint(e);
       const nativeId = ROUTER_NATIVE_IDS.get(e) || "";
       const nativeKey = nativeId
-        ? [e.agent, e.workspace || "", e.model || "", nativeId].join("|")
+        ? [rootScope, e.agent, e.workspace || "", e.model || "", nativeId].join("|")
         : "";
       let prevIdx = nativeKey ? nativeIndex.get(nativeKey) : undefined;
       if (prevIdx == null) {
-        const contentIdx = contentIndex.get(fp);
+        const contentIdx = contentIndex.get(`${rootScope}|${fp}`);
         if (contentIdx != null) {
           const existingNativeId = ROUTER_NATIVE_IDS.get(eventLevel[contentIdx]!) || "";
-          // An anonymous export row is a mirror twin of a native row. Two
-          // different native ids with the same content are separate requests.
+          // Within one root, an anonymous export row is a file twin of a native
+          // row. Different roots never reach this index and remain additive.
           if (!nativeId || !existingNativeId) prevIdx = contentIdx;
         }
       }
@@ -156,25 +174,34 @@ export async function parseRouterUsage(
             tokenWeight(e) > tokenWeight(prev) ||
             ((Number(e.estimatedCost) || 0) > (Number(prev.estimatedCost) || 0) &&
               tokenWeight(e) >= tokenWeight(prev));
-          if (preferNext) eventLevel[prevIdx] = e;
+          if (preferNext) eventLevel[prevIdx] = scopeRouterEvent(e, rootScope);
         }
         if (nativeKey) nativeIndex.set(nativeKey, prevIdx);
-        seenIds.add(e.id);
+        seenIds.add(scopedId);
         continue;
       }
-      seenIds.add(e.id);
-      if (!contentIndex.has(fp)) contentIndex.set(fp, eventLevel.length);
+      seenIds.add(scopedId);
+      if (!contentIndex.has(`${rootScope}|${fp}`)) {
+        contentIndex.set(`${rootScope}|${fp}`, eventLevel.length);
+      }
       if (nativeKey) nativeIndex.set(nativeKey, eventLevel.length);
-      eventLevel.push(e);
+      eventLevel.push(scopeRouterEvent(e, rootScope));
     }
   };
 
-  // Prefer a single VPS-mirror root first for router agents so twin copies
-  // (routerlab + xlabrouter + AppData) do not inflate request-level history.
   const orderedRoots = prioritizeRouterRoots(roots, agent);
 
+  let rootOrdinal = 0;
   for (const root of orderedRoots) {
     if (!(await pathExists(root))) continue;
+    const rootScope =
+      rootOrdinal++ === 0
+        ? "primary"
+        : stableId("router-mirror-root", root.replace(/\\/g, "/").toLowerCase());
+
+    const addDaily = (source: string, daily: Record<string, unknown>) => {
+      dailyMaps.push({ source, daily, scope: rootScope });
+    };
 
     let hasDailyForRoot = false;
 
@@ -184,7 +211,7 @@ export async function parseRouterUsage(
       if (!(await pathExists(dbPath))) continue;
       const daily = await parseSqliteDaily(dbPath);
       if (daily) {
-        dailyMaps.push({ source: dbPath + "#usageDaily", daily });
+        addDaily(dbPath + "#usageDaily", daily);
         hasDailyForRoot = true;
       }
     }
@@ -200,21 +227,21 @@ export async function parseRouterUsage(
     {
       const daily = dailyFromUsageJson(usageParsed);
       if (daily) {
-        dailyMaps.push({ source: usagePath, daily });
+        addDaily(usagePath, daily);
         hasDailyForRoot = true;
       }
     }
     {
       const daily = dailyFromDbJson(dbJsonParsed);
       if (daily) {
-        dailyMaps.push({ source: dbJsonPath, daily });
+        addDaily(dbJsonPath, daily);
         hasDailyForRoot = true;
       }
     }
     {
       const daily = dailyFromUsageJson(usageDataParsed);
       if (daily) {
-        dailyMaps.push({ source: usageDataPath, daily });
+        addDaily(usageDataPath, daily);
         hasDailyForRoot = true;
       }
     }
@@ -223,20 +250,15 @@ export async function parseRouterUsage(
     if (await pathExists(dailyPath)) {
       const daily = await readDailySummaryStandalone(dailyPath);
       if (daily) {
-        dailyMaps.push({ source: dailyPath, daily });
+        addDaily(dailyPath, daily);
         hasDailyForRoot = true;
       }
     }
 
     // --- B) Per-request history (preferred for RECENT EVENTS) ---
-    // Load request-level rows from the first rich root only — twin mirrors
-    // (routerlab + xlabrouter) previously inflated same-day totals vs VPS dashboard.
-    const loadHistoryHere =
-      !loadedRequestHistoryFromRoot ||
-      loadedRequestHistoryFromRoot === root;
-
-    if (loadHistoryHere) {
-      let gotHistory = false;
+    // Read every root. Mirror copies are an explicit additive source now;
+    // only duplicate representations inside this same root are reconciled.
+    {
       for (const dbRel of ["db/data.sqlite", "data.sqlite", "db.sqlite"]) {
         const dbPath = path.join(root, dbRel);
         if (!(await pathExists(dbPath))) continue;
@@ -247,8 +269,7 @@ export async function parseRouterUsage(
           options.recentOnly ? 1_000 : hasDailyForRoot ? 5_000 : 20_000,
         );
         if (rows.length) {
-          pushEvents(rows);
-          gotHistory = true;
+          pushEvents(rows, rootScope);
         }
       }
 
@@ -256,22 +277,19 @@ export async function parseRouterUsage(
       {
         const rows = historyFromUsageJson(usageParsed, agent, usagePath);
         if (rows.length) {
-          pushEvents(rows);
-          gotHistory = true;
+          pushEvents(rows, rootScope);
         }
       }
       {
         const rows = historyFromDbJson(dbJsonParsed, agent, dbJsonPath);
         if (rows.length) {
-          pushEvents(rows);
-          gotHistory = true;
+          pushEvents(rows, rootScope);
         }
       }
       {
         const rows = historyFromUsageJson(usageDataParsed, agent, usageDataPath);
         if (rows.length) {
-          pushEvents(rows);
-          gotHistory = true;
+          pushEvents(rows, rootScope);
         }
       }
 
@@ -298,21 +316,19 @@ export async function parseRouterUsage(
                   agent,
                   options.recentOnly ? 512 * 1024 : 2 * 1024 * 1024,
                 ),
+                rootScope,
               );
             } else {
-              pushEvents(await parseHistoryExport(p, agent));
+              pushEvents(await parseHistoryExport(p, agent), rootScope);
             }
           } catch {
-            pushEvents(await parseHistoryExport(p, agent));
+            pushEvents(await parseHistoryExport(p, agent), rootScope);
           }
         } else {
-          pushEvents(await parseHistoryExport(p, agent));
+          pushEvents(await parseHistoryExport(p, agent), rootScope);
         }
-        gotHistory = true;
         break;
       }
-
-      if (gotHistory) loadedRequestHistoryFromRoot = root;
     }
   }
 
@@ -328,6 +344,21 @@ export async function parseRouterUsage(
  */
 const ROLLUP_SOURCE = "daily-rollup";
 
+function dailyRollupId(
+  agent: AgentId,
+  source: string,
+  dateKey: string,
+  modelKey: string,
+): string {
+  const prefix = `${ROLLUP_SOURCE}|`;
+  const scope = source.startsWith(prefix) ? source.slice(prefix.length) : "primary";
+  // Keep the primary mirror's historical ids stable so the next scan replaces
+  // its old cache rows instead of retaining a second copy of the same root.
+  return scope === "primary"
+    ? stableId(agent, "daily-rollup", dateKey, modelKey)
+    : stableId(agent, "daily-rollup", scope, dateKey, modelKey);
+}
+
 /**
  * Request-first reconciliation:
  *  - Multi-request history for a day → keep individual RQs (never one 5M+ model blob)
@@ -335,21 +366,30 @@ const ROLLUP_SOURCE = "daily-rollup";
  */
 function reconcileEventsAndDaily(
   eventLevel: UsageEvent[],
-  dailyMaps: Array<{ source: string; daily: Record<string, unknown> }>,
+  dailyMaps: Array<{
+    source: string;
+    daily: Record<string, unknown>;
+    scope: string;
+  }>,
   agent: AgentId,
 ): UsageEvent[] {
-  // Merge all daily maps (richer request count wins)
-  const mergedDaily = new Map<string, { source: string; day: Record<string, unknown> }>();
-  for (const { source, daily } of dailyMaps) {
+  // Merge daily representations within each root (richer request count wins).
+  // The root scope is part of the key so mirror copies remain additive.
+  const mergedDaily = new Map<
+    string,
+    { source: string; day: Record<string, unknown>; scope: string }
+  >();
+  for (const { source, daily, scope } of dailyMaps) {
     for (const [dateKey, raw] of Object.entries(daily)) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
       if (!raw || typeof raw !== "object") continue;
       const day = raw as Record<string, unknown>;
-      const prev = mergedDaily.get(dateKey);
+      const scopedDay = `${scope}|${dateKey}`;
+      const prev = mergedDaily.get(scopedDay);
       const prevReq = prev ? num(prev.day.requests) : -1;
       const nextReq = num(day.requests);
       if (!prev || nextReq >= prevReq) {
-        mergedDaily.set(dateKey, { source, day });
+        mergedDaily.set(scopedDay, { source, day, scope });
       }
     }
   }
@@ -362,17 +402,23 @@ function reconcileEventsAndDaily(
       noDay.push(e);
       continue;
     }
-    const list = eventsByDay.get(day) || [];
+    const scope = ROUTER_ROOT_SCOPES.get(e) || "primary";
+    const scopedDay = `${scope}|${day}`;
+    const list = eventsByDay.get(scopedDay) || [];
     list.push(e);
-    eventsByDay.set(day, list);
+    eventsByDay.set(scopedDay, list);
   }
 
   const out: UsageEvent[] = [...noDay];
   const allDays = new Set<string>([...eventsByDay.keys(), ...mergedDaily.keys()]);
 
-  for (const dateKey of [...allDays].sort()) {
-    const dayEvents = eventsByDay.get(dateKey) || [];
-    const daily = mergedDaily.get(dateKey);
+  for (const scopedDay of [...allDays].sort()) {
+    const separator = scopedDay.indexOf("|");
+    const scope = separator >= 0 ? scopedDay.slice(0, separator) : "primary";
+    const dateKey = separator >= 0 ? scopedDay.slice(separator + 1) : scopedDay;
+    const dayEvents = eventsByDay.get(scopedDay) || [];
+    const daily = mergedDaily.get(scopedDay);
+    const rollupSource = `${ROLLUP_SOURCE}|${scope}`;
 
     // Router exports commonly contain a bounded request window
     // (request-details/usage-history) plus an all-time daily summary. Keep the
@@ -388,7 +434,7 @@ function reconcileEventsAndDaily(
           dateKey,
           daily.day,
           agent,
-          ROLLUP_SOURCE,
+          rollupSource,
           dayEvents,
         );
         const tokenWeight = (e: UsageEvent): number =>
@@ -448,7 +494,7 @@ function reconcileEventsAndDaily(
 
     // No history at all for this day → the daily rollup is all we have.
     if (!daily) continue;
-    out.push(...expandOneDay(dateKey, daily.day, agent, ROLLUP_SOURCE, []));
+    out.push(...expandOneDay(dateKey, daily.day, agent, rollupSource, []));
   }
 
   return out;
@@ -953,7 +999,7 @@ function expandOneDay(
       if (e) {
         // Stable id across rollup growth — token counts must NOT be in the hash
         // or each mid-day update creates a new row and all-time totals explode.
-        e.id = stableId(agent, "daily-rollup", dateKey, modelKey);
+        e.id = dailyRollupId(agent, source, dateKey, modelKey);
         e.estimated = true;
         e.requestCount = modelRequests > 0 ? modelRequests : 1;
         out.push(e);
@@ -1052,7 +1098,7 @@ function expandOneDay(
     `daily-${dateKey}`,
   );
   if (!e) return [];
-  e.id = stableId(agent, "daily-rollup", dateKey, "all");
+  e.id = dailyRollupId(agent, source, dateKey, "all");
   e.estimated = true;
   e.requestCount = dayRequests > 0 ? dayRequests : 1;
   return [e];
@@ -1100,7 +1146,7 @@ function remainderRow(
     `daily-${dateKey}-unattributed`,
   );
   if (!e) return null;
-  e.id = stableId(agent, "daily-rollup", dateKey, "unattributed");
+  e.id = dailyRollupId(agent, source, dateKey, "unattributed");
   e.estimated = true;
   e.requestCount = requests > 0 ? requests : 1;
   return e;
@@ -1432,7 +1478,8 @@ function rowToEvent(
   const requestCountRaw = num(r.requests ?? r.requestCount ?? r.request_count);
   const requestCount = requestCountRaw > 0 ? Math.floor(requestCountRaw) : 1;
 
-  // id omits source path so the same VPS row mirrored into two folders is not double-counted
+  // Root scope is applied after row creation: primary ids stay compatible with
+  // the old cache, while additional mirror roots receive scoped ids.
   const event = applyPricing({
     id: stableId(
       agent,

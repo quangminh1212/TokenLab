@@ -727,6 +727,66 @@ export function collapseSourcePathRollups(events: UsageEvent[]): UsageEvent[] {
 }
 
 /**
+ * Router mirror roots are additive. Parser events carry either a daily-rollup
+ * scope or a request source marker; keep that scope in every router collapse
+ * key so a second mirror is never treated as a richer replacement for the
+ * first one.
+ */
+function routerMirrorScope(event: UsageEvent): string {
+  const source =
+    typeof event.sourcePath === "string"
+      ? event.sourcePath.replace(/\\/g, "/")
+      : "";
+  const marker = source.indexOf("#mirror-root=");
+  if (marker >= 0) return source.slice(marker + "#mirror-root=".length);
+  const dailyPrefix = "daily-rollup|";
+  if (source.startsWith(dailyPrefix)) {
+    return source.slice(dailyPrefix.length) || "primary";
+  }
+  return "primary";
+}
+
+const ROUTER_USAGE_AGENTS = new Set(["9router", "xlabrouter", "routerlab", "litellm"]);
+
+/**
+ * Migrate a pre-additive local scan cache once the parser starts returning
+ * scoped mirror rows. The old cache represented only the preferred root; keep
+ * foreign/imported machine rows, but let the fresh local parse rebuild every
+ * router root exactly once.
+ */
+export function dropLegacyRouterMirrorRows(
+  previous: UsageEvent[],
+  fresh: UsageEvent[],
+): UsageEvent[] {
+  // Once one additive scan has persisted scoped rows, the migration is done.
+  // Do not re-drop the primary-root rows on every later scan: a bounded or
+  // temporarily unavailable mirror must never make usage shrink.
+  const alreadyAdditive = (previous || []).some((event) => {
+    const agent = normalizeAgentId(event?.agent);
+    if (!ROUTER_USAGE_AGENTS.has(agent)) return false;
+    const source = typeof event.sourcePath === "string" ? event.sourcePath : "";
+    return source.includes("#mirror-root=") || source.startsWith("daily-rollup|");
+  });
+  if (alreadyAdditive) return previous || [];
+  const additiveAgents = new Set<string>();
+  for (const event of fresh || []) {
+    const agent = normalizeAgentId(event?.agent);
+    if (
+      ROUTER_USAGE_AGENTS.has(agent) &&
+      routerMirrorScope(event) !== "primary"
+    ) {
+      additiveAgents.add(agent);
+    }
+  }
+  if (additiveAgents.size === 0) return previous || [];
+  return (previous || []).filter((event) => {
+    const agent = normalizeAgentId(event?.agent);
+    if (!additiveAgents.has(agent)) return true;
+    return usageMachineScope(event) !== LOCAL_MACHINE_SCOPE;
+  });
+}
+
+/**
  * When keeping individual request rows for RECENT EVENTS but the history window
  * is incomplete vs daily rollups, emit estimated remainder rows so day totals
  * never fall below the daily floor (usage only grows / never oscillates down).
@@ -875,7 +935,7 @@ export function collapseRouterDailyEvents(events: UsageEvent[]): UsageEvent[] {
       nonRouter.push(e);
       continue;
     }
-    const key = `${usageMachineScope(e)}|${e.agent}|${day}`;
+    const key = `${usageMachineScope(e)}|${e.agent}|${routerMirrorScope(e)}|${day}`;
     let bucket = byAgentDay.get(key);
     if (!bucket) {
       bucket = { dailies: [], requests: [] };
@@ -1437,8 +1497,12 @@ export function reconcileScanCacheHighWater(
   next: UsageEvent[],
 ): UsageEvent[] {
   if (!existing?.length) return next || [];
-  const merged = enforceMonotonicAgentDays(
+  const baseline = dropLegacyRouterMirrorRows(
     dropPreviousAgentSourceEvents(existing, next, "claude-code"),
+    next || [],
+  );
+  const merged = enforceMonotonicAgentDays(
+    baseline,
     next || [],
   );
   return collapseExactUsageDuplicates(
@@ -1455,8 +1519,8 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
   const best = new Map<string, UsageEvent>();
   for (const e of events) {
     if (!e || typeof e.id !== "string") continue;
-    // Router twin exports / multi-root mirrors share content but differ by
-    // sourcePath, cache fields, or 1ms timestamps — collapse on second+model+IO.
+    // Collapse exact same-root router twins; the mirror scope in the key keeps
+    // separate roots additive even when rows are byte-identical.
     const isRouter =
       e.agent === "9router" ||
       e.agent === "xlabrouter" ||
@@ -1466,6 +1530,7 @@ export function collapseExactUsageDuplicates(events: UsageEvent[]): UsageEvent[]
       ? [
           usageMachineScope(e),
           e.agent,
+          routerMirrorScope(e),
           (e.timestamp || "").slice(0, 19),
           e.model || "",
           e.inputTokens || 0,
