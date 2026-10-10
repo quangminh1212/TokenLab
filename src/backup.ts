@@ -1397,6 +1397,28 @@ export function enforceMonotonicAgentDays(
 }
 
 /**
+ * Reconcile a freshly scanned cache with the persisted high-water snapshot.
+ *
+ * Full saves already use this rule before writing to disk. Keeping it as a
+ * shared helper lets the live server apply the exact same reconciliation to
+ * its in-memory cache, so a thinner parser pass cannot make the dashboard
+ * undercount until the next restart.
+ */
+export function reconcileScanCacheHighWater(
+  existing: UsageEvent[],
+  next: UsageEvent[],
+): UsageEvent[] {
+  if (!existing?.length) return next || [];
+  const merged = enforceMonotonicAgentDays(
+    dropPreviousAgentSourceEvents(existing, next, "claude-code"),
+    next || [],
+  );
+  return collapseExactUsageDuplicates(
+    collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
+  );
+}
+
+/**
  * Drop byte-identical clones (same agent/time/tokens/source, different id).
  * Common after Devin sqlite + jsonl both ingested the same message_nodes row.
  */
@@ -1744,13 +1766,7 @@ export async function saveScanCache(
       try {
         const existing = dropLegacyCodexProxyAttributions(await loadScanCacheMainOnly());
         if (existing.length > 0) {
-          const merged = enforceMonotonicAgentDays(
-            dropPreviousAgentSourceEvents(existing, clean, "claude-code"),
-            clean,
-          );
-          clean = collapseExactUsageDuplicates(
-            collapseSourcePathRollups(collapseRouterDailyEvents(merged)),
-          );
+          clean = reconcileScanCacheHighWater(existing, clean);
         }
       } catch (err) {
         logError(

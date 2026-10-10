@@ -28,6 +28,7 @@ import {
   enforceMonotonicAgentDays,
   loadImportedEvents,
   loadScanCache,
+  loadScanCacheMainOnly,
   dropPreviousAgentSourceEvents,
   dropPreviousAgentSessionEvents,
   getMachineId,
@@ -38,6 +39,7 @@ import {
   pruneStaleSourceEvents,
   mergeEventsByIdPreferRicher,
   mergeLocalPreferOverGistRollups,
+  reconcileScanCacheHighWater,
   migrateLegacyDataDir,
   restoreBackup,
   saveImportedEvents,
@@ -1097,6 +1099,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         // Full passes collapse/authoritatively replace once. Light passes only
         // merge the hot-agent snapshot and defer the expensive full save.
         rebuild(full);
+        if (full) {
+          // saveScanCache applies the persisted high-water guard while writing.
+          // Reconcile the same snapshot into RAM before publishing completion;
+          // otherwise the disk has the fuller usage but /api/stats still serves
+          // the thinner parser result until the next restart.
+          try {
+            const existing = await loadScanCacheMainOnly();
+            if (existing.length > 0) {
+              const reconciled = reconcileScanCacheHighWater(existing, cache);
+              setCache(sortEventsByTime(reconciled).events, { sorted: true });
+            }
+          } catch (err) {
+            slog(
+              "[tokenlab] in-memory high-water reconciliation failed:",
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
         bumpScan(full ? "complete-full" : "complete");
         scheduleSaveScanCache(full ? "full" : "quick");
         if (full) {
