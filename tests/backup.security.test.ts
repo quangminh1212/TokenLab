@@ -16,6 +16,7 @@ import {
   mergeMultiMachineGistRollups,
   collapseRouterDailyEvents,
   enforceMonotonicAgentDays,
+  reconcileScanCacheHighWater,
   loadScanCache,
   loadScanCacheMainOnly,
   restoreBackup,
@@ -358,6 +359,39 @@ test("enforceMonotonicAgentDays keeps richer previous day", async () => {
   assert.ok(
     merged.some((e) => (e.totalTokens || 0) >= 5_000_000),
     "rich day row present",
+  );
+});
+
+test("reconcileScanCacheHighWater keeps the persisted richer day in RAM", () => {
+  const persisted = evt({
+    id: "persisted-high-water",
+    agent: "codex",
+    model: "gpt-5",
+    timestamp: "2026-10-09T01:00:00.000Z",
+    inputTokens: 500,
+    outputTokens: 50,
+    totalTokens: 550,
+  });
+  const thinner = evt({
+    id: "fresh-thinner",
+    agent: "codex",
+    model: "gpt-5",
+    timestamp: "2026-10-09T02:00:00.000Z",
+    inputTokens: 100,
+    outputTokens: 10,
+    totalTokens: 110,
+  });
+
+  const reconciled = reconcileScanCacheHighWater([persisted], [thinner]);
+
+  assert.equal(
+    reconciled.reduce((sum, event) => sum + (event.totalTokens || 0), 0),
+    550,
+    "a thinner parser pass must not lower the persisted daily high-water",
+  );
+  assert.ok(
+    reconciled.some((event) => event.id === "persisted-high-water"),
+    "the richer persisted row must remain available to the live dashboard",
   );
 });
 
