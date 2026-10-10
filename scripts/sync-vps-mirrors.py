@@ -24,7 +24,12 @@ import paramiko
 
 HOST = "36.50.26.247"
 USER = "root"
-PASSWORD = "a7xe$zZ#NM@2yP8X"
+# Use the existing bnix SSH key by default. A password is accepted only when
+# supplied explicitly by the environment; credentials must not live in source.
+SSH_KEY = os.path.expanduser(
+    os.environ.get("TOKENLAB_VPS_SSH_KEY", "~/.ssh/id_ed25519_bnix")
+)
+PASSWORD = os.environ.get("TOKENLAB_VPS_PASSWORD")
 
 # A local TokenLab timeout can disconnect SSH while the remote command keeps
 # running. Serialize the remote export and bound its lifetime so retries do
@@ -33,7 +38,7 @@ REMOTE_EXPORT_LOCK = "/tmp/xlab_export_mirror.lock"
 REMOTE_EXPORT_TIMEOUT_SECONDS = 120
 
 EXPORT_PY = r'''
-import json, os, sqlite3, shutil
+import json, os, sqlite3, shutil, time
 from pathlib import Path
 
 def export_sqlite_daily(db_path: str, out_path: str) -> int:
@@ -429,6 +434,20 @@ else:
     print("MISS_ROUTERLAB_DB")
 
 # --- LiteLLM (Postgres spend logs → same mirror shape as 9router) ---
+# LiteLLM/Postgres is the expensive part of this export. TokenLab invokes the
+# mirror every minute, while a full SpendLogs scan can take longer than a
+# minute on the small VPS. Keep the other mirrors live but refresh LiteLLM at
+# most once every five minutes; existing temp files remain authoritative in
+# between refreshes.
+_litellm_marker = Path("/tmp/xlab-mirror-litellm-last-success")
+try:
+    _litellm_recent = time.time() - _litellm_marker.stat().st_mtime < 300
+except OSError:
+    _litellm_recent = False
+if _litellm_recent:
+    print("SKIP_LITELLM_SPEND fresh_marker")
+    raise SystemExit(0)
+
 def _psql(sql: str) -> str:
     import subprocess
     p = subprocess.run(
@@ -843,6 +862,7 @@ if daily_ll or hist_rows:
     print("COPIED litellm slim db.json")
 else:
     print("MISS_LITELLM_SPEND")
+_litellm_marker.write_text(str(time.time()), encoding="utf-8")
 '''
 
 
@@ -875,7 +895,23 @@ def main() -> int:
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(HOST, username=USER, password=PASSWORD, timeout=30, allow_agent=False, look_for_keys=False)
+    connect_kwargs = {
+        "hostname": HOST,
+        "username": USER,
+        "timeout": 30,
+        "allow_agent": True,
+        "look_for_keys": True,
+    }
+    if PASSWORD:
+        connect_kwargs["password"] = PASSWORD
+    elif os.path.isfile(SSH_KEY):
+        connect_kwargs["key_filename"] = SSH_KEY
+    else:
+        raise RuntimeError(
+            "No VPS credential configured; set TOKENLAB_VPS_SSH_KEY or "
+            "TOKENLAB_VPS_PASSWORD"
+        )
+    client.connect(**connect_kwargs)
     sftp = client.open_sftp()
 
     with sftp.file("/tmp/xlab_export_mirror.py", "w") as rf:
