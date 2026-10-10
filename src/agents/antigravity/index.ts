@@ -304,6 +304,19 @@ export async function parseAntigravityProxyDb(dbPath: string): Promise<UsageEven
         if (cacheReadTokens > 0 && inputTokens >= cacheReadTokens && !buckets) {
           inputTokens = Math.max(0, inputTokens - cacheReadTokens);
         }
+        // Cache is "reported" when the shared extractor saw a cache key, or when
+        // the row itself carried a cache alias (even a zero value).
+        const cacheReported =
+          buckets?.cacheReported === true ||
+          row.cached_tokens != null ||
+          row.cache_read_tokens != null ||
+          row.cache_read_input_tokens != null ||
+          row.cacheReadTokens != null ||
+          row.cachedTokens != null ||
+          row.cached_content_token_count != null ||
+          row.cache_write_tokens != null ||
+          row.cache_creation_input_tokens != null ||
+          row.cacheWriteTokens != null;
         const routerCost = num(row.cost);
         if (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens <= 0 && routerCost <= 0) {
           continue;
@@ -338,6 +351,7 @@ export async function parseAntigravityProxyDb(dbPath: string): Promise<UsageEven
             sourcePath: dbPath,
             requestCount: 1,
             routerCost: routerCost > 0 ? routerCost : null,
+            ...(cacheReported ? { cacheReported: true } : {}),
           }),
         );
       }

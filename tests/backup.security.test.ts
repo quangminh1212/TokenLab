@@ -475,6 +475,13 @@ test("cacheReported survives the scan-cache round-trip", async () => {
           cacheReadTokens: 0,
           timestamp: "2026-10-08T02:00:00.000Z",
         }),
+        evt({
+          id: "devin-legacy-cache",
+          agent: "devin",
+          model: "adaptive",
+          cacheReadTokens: 547,
+          timestamp: "2026-10-08T03:00:00.000Z",
+        }),
       ],
       { mode: "full" },
     );
@@ -487,6 +494,11 @@ test("cacheReported survives the scan-cache round-trip", async () => {
       silent.cacheReported,
       undefined,
       "a row that said nothing about cache must stay unset",
+    );
+    assert.equal(
+      loaded.find((e) => e.id === "devin-legacy-cache")?.cacheReported,
+      true,
+      "legacy Devin cache tokens carry measured provenance",
     );
   } finally {
     if (prev === undefined) delete process.env.XLAB_TOKEN_DATA_DIR;
@@ -605,6 +617,84 @@ test("preferRicherEvent fills null model even when default cost is higher", () =
   const kept = preferRicherEvent(stale, fresh);
   assert.equal(kept.model, "glm-5-2");
   assert.equal(kept.estimatedCost, 0.2);
+});
+
+test("preferRicherEvent keeps cache provenance when token totals are unchanged", () => {
+  const stale = evt({
+    id: "same-cache",
+    agent: "codex",
+    inputTokens: 100,
+    outputTokens: 10,
+    cacheReadTokens: 900,
+    totalTokens: 1_010,
+    cacheReported: undefined,
+  });
+  const fresh = evt({
+    id: "same-cache",
+    agent: "codex",
+    inputTokens: 100,
+    outputTokens: 10,
+    cacheReadTokens: 900,
+    totalTokens: 1_010,
+    cacheReported: true,
+  });
+  assert.equal(preferRicherEvent(stale, fresh), fresh);
+  assert.equal(preferRicherEvent(fresh, stale), fresh);
+});
+
+test("enforceMonotonicAgentDays keeps cache provenance on an equal envelope", () => {
+  const stale = evt({
+    id: "stale-cache-day",
+    agent: "opencode",
+    model: "XLab",
+    timestamp: "2026-10-09T01:00:00.000Z",
+    inputTokens: 100,
+    outputTokens: 10,
+    cacheReadTokens: 900,
+    totalTokens: 1_010,
+    cacheReported: undefined,
+  });
+  const fresh = evt({
+    id: "fresh-cache-day",
+    agent: "opencode",
+    model: "XLab",
+    timestamp: "2026-10-09T02:00:00.000Z",
+    inputTokens: 100,
+    outputTokens: 10,
+    cacheReadTokens: 900,
+    totalTokens: 1_010,
+    cacheReported: true,
+  });
+  const merged = enforceMonotonicAgentDays([stale], [fresh]);
+  assert.deepEqual(merged, [fresh]);
+});
+
+test("enforceMonotonicAgentDays upgrades same-id cache markers on a richer day", () => {
+  const stale = evt({
+    id: "same-cache-richer-day",
+    agent: "windsurf",
+    model: "swe-1-6",
+    timestamp: "2026-10-09T01:00:00.000Z",
+    inputTokens: 2_000,
+    outputTokens: 100,
+    cacheReadTokens: 900,
+    totalTokens: 3_000,
+    cacheReported: undefined,
+  });
+  const fresh = evt({
+    id: "same-cache-richer-day",
+    agent: "windsurf",
+    model: "swe-1-6",
+    timestamp: "2026-10-09T01:00:00.000Z",
+    inputTokens: 1_000,
+    outputTokens: 100,
+    cacheReadTokens: 900,
+    totalTokens: 2_000,
+    cacheReported: true,
+  });
+  const merged = enforceMonotonicAgentDays([stale], [fresh]);
+  assert.equal(merged[0]?.totalTokens, 3_000);
+  assert.equal(merged[0]?.cacheReported, true);
 });
 
 test("mergeEventsByIdPreferRicher upgrades null-model cache rows", () => {

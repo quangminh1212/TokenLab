@@ -100,6 +100,9 @@ describe("parseCodex", () => {
       assert.equal(e.outputTokens, 2);
       assert.equal(e.routerCost ?? null, null);
       assert.equal(String(e.sourcePath).includes("←"), false);
+      // A chars/4 content estimate never saw a cache field, so it must stay
+      // silent rather than claim a measured cache of zero.
+      assert.equal(e.cacheReported, undefined);
     } finally {
       if (prev === undefined) delete process.env.TOKENLAB_DATA_DIR;
       else process.env.TOKENLAB_DATA_DIR = prev;
@@ -341,6 +344,14 @@ describe("parseCodex", () => {
           cacheWrite: events[0]!.cacheWriteTokens,
         },
         { input: 200, output: 25, cacheRead: 800, cacheWrite: 120 },
+      );
+      // Codex rows carry cache fields, so they must claim cache was measured —
+      // otherwise the dashboard rendered the CACHE $ column as "—" even though
+      // the row was billed for cache (68 B of cache-read tokens went unlabelled).
+      assert.equal(
+        events[0]!.cacheReported,
+        true,
+        "a codex row with cache fields must report cache, not look unscanned",
       );
     } finally {
       delete process.env.TOKENLAB_DATA_DIR;

@@ -641,6 +641,12 @@ type CodexTokenBuckets = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /**
+   * Whether the source row actually carried a cache field. Preserved through the
+   * cumulative-counter delta above so a codex row that reports cache keeps
+   * claiming it, instead of the dashboard's CACHE $ column reading "—".
+   */
+  cacheReported?: boolean;
 };
 
 /**
@@ -659,6 +665,7 @@ function codexBuckets(usage: unknown): CodexTokenBuckets | null {
     outputTokens: Math.max(0, buckets.outputTokens),
     cacheReadTokens: Math.max(0, buckets.cacheReadTokens),
     cacheWriteTokens: Math.max(0, buckets.cacheWriteTokens),
+    ...(buckets.cacheReported ? { cacheReported: true } : {}),
   };
 }
 
@@ -943,6 +950,7 @@ function parseJsonlRows(
         cacheWriteTokens,
         workspace,
         sourcePath: file,
+        ...(buckets.cacheReported ? { cacheReported: true } : {}),
       }),
     );
   }

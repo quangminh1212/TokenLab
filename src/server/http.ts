@@ -774,6 +774,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       event.requestCount ?? "",
       event.estimatedCost ?? "",
       event.model ?? "",
+      event.cacheReported ? "reported" : "",
     ].join(":");
   }
 

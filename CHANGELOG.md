@@ -41,6 +41,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is exactly additive per request, matching LiteLLM's own
   `generic_cost_per_token` decomposition
   (`(prompt − cacheRead − cacheWrite) × input + cacheRead × cacheReadRate + write × writeRate`).
+- **Daily rollups no longer have their cache subtracted from their prompt.**
+  A LiteLLM day rollup (`usage-daily.json` / `dailySummary` / sqlite daily
+  tables) publishes `promptTokens` and `cachedTokens` as two ALREADY-SEPARATE
+  buckets, unlike a per-request history row where the cache hit is a subset of
+  the prompt. The blanket `input = prompt − cached` split was applied to both, so
+  the mirror's 9.03 B rollup prompt tokens were reported as 5.12 B and the
+  day-level cache was double-counted. The mirror itself disproves the subset
+  reading — 22 of its 73 day blocks carry `cachedTokens > promptTokens` (for
+  example 2026-07-29: prompt 228,698,527 / cached 361,695,488). The split is now
+  applied only when the row *proves* the inclusive shape: `source` must not be
+  the daily-rollup tag and `promptTokens >= cachedTokens` must hold. Ambiguous
+  rows are left un-subtracted, because over-counting is acceptable here while
+  wrongly discarding 43 % of the input column is not.
+- **Every agent that carries cache tokens now reports them to the CACHE $
+  column.** `containsCacheField` was only set by three parsers (LiteLLM, Claude
+  Code, DSH), so agents that emit cache-read tokens without declaring the cache
+  field — Codex (68.1 B), Roo (4.5 B), Devin (2.4 B), Cline (1.3 B), Claude
+  (157 M), and others — rendered "— " in the dashboard even though they were
+  billed for cache. `extractTokenBuckets` now reports whether the source usage
+  object actually carried a cache key (read or write, even a measured zero), and
+  each parser propagates that verdict. A row that measured `cache = 0` shows a
+  real `$0.00`; a source that never mentioned caching still shows "—".
+  Full-scan high-water merges also carry the marker onto retained richer rows,
+  so a warm cache cannot restore an older unmarked cache entry.
 
 ### Added
 - **`cacheBilledTokens` / `cacheFreeTokens`** on every stats bucket, so
@@ -50,6 +74,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   looking like a missing scan.
 - `docs/litellm-cache-accounting.md` — LiteLLM's exact cache-token and cost
   formula with verbatim source citations, and the mirror's field semantics.
+- **Rollup-cache regression tests.** Three new `router-usage` tests pin the
+  day-rollup cache split: a rollup whose `cachedTokens > promptTokens` must keep
+  its prompt un-abridged, a byModel-with-remainder day must reconcile both
+  columns by addition, and a covered rollup row must not have its cache carved
+  out. A `usage-fields` test pins that a measured `cache = 0` reports cache while
+  an absent cache field stays silent, and `codex` / `opencode` / `hermes` parser
+  tests assert the flag is set on cache-bearing rows and left unset on
+  content-only estimates.
 - **Configurable scan frequency** — Settings → **Scanning** lets you set the
   background scan cadence (1/2/5/10/15/30/60 min), the full all-agent rescan
   interval (1/3/6/12/24 h), and toggle background scanning entirely. Stored as

@@ -252,6 +252,9 @@ test("parseHermes falls back to sessions when SMU empty", async () => {
     // output 200 + reasoning 80 (over-count policy)
     assert.equal(events[0]!.outputTokens, 280);
     assert.equal(events[0]!.cacheReadTokens, 1000);
+    // The row carried cache_read_tokens, so the CACHE $ column must show a real
+    // number instead of the "—" it rendered while the flag went unset.
+    assert.equal(events[0]!.cacheReported, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

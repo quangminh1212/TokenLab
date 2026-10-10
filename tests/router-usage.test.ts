@@ -1232,17 +1232,18 @@ describe("router usage parsers", () => {
     // Real LiteLLM mirror, 2026-07-31. The VPS UI export emits ONE model view
     // twice — a provider-native key and a bare key, byte-identical — and both
     // carry `rawModel: "openai/Kimi-k3"`, which is the model's IDENTITY. The
-    // day-level `cachedTokens` is the sum over requests (LiteLLM has no period
-    // divisor), so it equals what the model rows carry: the duplicate key is the
-    // only double-count and must be dropped, never the cache.
+    // duplicate key is the only double-count and must be dropped.
     //
     //   day          in=1310221946 out=7806517 cache=2176363904 req=22797 cost=1000.37
     //   kimi-k3      in=1209500081 out=6795583 cache=1088118336 req=20782 cost=467.01
     //   openai/…     in=1209500081 out=6795583 cache=1088118336 req=20782 cost=467.01
     //
-    // Deduping by rawModel collapses the twin so 1,088,118,336 lands once. The
-    // previous behaviour also zeroed the remainder's cache and kept only HALF the
-    // day's cache; that under-count is what this test now guards against.
+    // A daily rollup carries prompt and cache as SEPARATE buckets (unlike a
+    // per-request history row, where cache is a subset of prompt): the day prompt
+    // is the sum of the model prompts plus the remainder's, the day cache likewise.
+    // Note the day cache (2.18B) EXCEEDS the day prompt (1.31B) — arithmetically
+    // impossible if cache were a subset, so no subtraction may be applied here.
+    // Both columns must reconcile by addition, and neither may be zeroed.
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-cache-rem-"));
@@ -1314,22 +1315,31 @@ describe("router usage parsers", () => {
       for (const m of ["Kimi-k3", "qwen3.7-max"]) {
         assert.equal(rows.filter((e) => e.model === m).length, 1, `${m} must not be duplicated`);
       }
-      // Prompt tokens reconcile with the day by ADDITION, cache-inclusive
-      // (LiteLLM convention: prompt_tokens includes cached_tokens). The day's own
-      // prompt field is a partial read of a rolling export, so the rows can exceed
-      // it; what must hold is that no token is counted twice or dropped.
+      // Prompt and cache are ALREADY-SEPARATE buckets in a daily rollup, so each
+      // reconciles with the day field by ADDITION and nothing is counted twice.
+      // The day prompt is the sum of the model rows plus the remainder, and the
+      // day cache likewise — that is the point of the assertion.
+      assert.equal(
+        rows.reduce((a, e) => a + e.inputTokens, 0),
+        1_310_221_946,
+        "rollup input column must equal the day prompt, unabridged",
+      );
       assert.equal(
         rows.reduce((a, e) => a + e.inputTokens + e.cacheReadTokens, 0),
-        2_398_403_898,
+        1_310_221_946 + 2_176_363_904,
       );
       assert.equal(rows.reduce((a, e) => a + e.outputTokens, 0), 7_806_517);
-      // The uncached account is the prompt account minus exactly one copy of cache.
-      assert.equal(rows.reduce((a, e) => a + e.inputTokens, 0), 222_039_994);
+      // The old reading (`input = prompt − cache`) collapsed input to a fragment
+      // and folded cache into the input column. Guard that it cannot come back:
+      // the day prompt is 1.31B while the day cache is 2.18B, so an input column
+      // smaller than the cache column would mean the subset rule leaked in.
       assert.equal(
-        rows.reduce((a, e) => a + e.inputTokens + e.cacheReadTokens, 0) -
-          rows.reduce((a, e) => a + e.cacheReadTokens, 0),
-        222_039_994,
+        rows.reduce((a, e) => a + e.cacheReadTokens, 0),
+        2_176_363_904,
       );
+      // Note the day cache EXCEEDS the day prompt in this fixture, which is
+      // precisely what disproves the subset reading — so no input-vs-cache
+      // ordering is asserted here; the equalities above are the guard.
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1373,20 +1383,183 @@ describe("router usage parsers", () => {
       const rows = events.filter((e) => e.timestamp.startsWith(DAY));
       const remainder = rows.find((e) => e.model === "unattributed");
       assert.ok(remainder, "a genuine uncovered remainder must still be emitted");
-      // Day prompt 1,000,000 − model prompt 400,000 = 600,000, of which the
-      // remainder's own cache hit (500,000 − 200,000 = 300,000) is already inside.
-      assert.equal(remainder.inputTokens, 500_000);
+      // Rollup buckets are independent: the remainder carries the day prompt the
+      // named models did not claim (1,000,000 − 400,000) and the day cache they
+      // did not claim (500,000 − 200,000), with no subset relationship between
+      // the two — neither is folded into the other.
+      assert.equal(remainder.inputTokens, 600_000);
       assert.equal(remainder.cacheReadTokens, 300_000, "its cache belongs to it");
-      assert.equal(remainder.inputTokens + remainder.cacheReadTokens, 800_000);
       assert.equal(rows.reduce((a, e) => a + e.cacheReadTokens, 0), 500_000);
-      assert.equal(rows.reduce((a, e) => a + e.inputTokens, 0), 700_000);
+      assert.equal(rows.reduce((a, e) => a + e.inputTokens, 0), 1_000_000);
       assert.equal(rows.reduce((a, e) => a + e.outputTokens, 0), 10_000);
-      // Same identity as above: prompt account − cache copy === uncached account.
+      // Every day token is accounted exactly once: prompt by the input column,
+      // cache by the cache column.
       assert.equal(
-        rows.reduce((a, e) => a + e.inputTokens + e.cacheReadTokens, 0) -
-          rows.reduce((a, e) => a + e.cacheReadTokens, 0),
         rows.reduce((a, e) => a + e.inputTokens, 0),
+        400_000 + 600_000,
       );
+      assert.equal(
+        rows.reduce((a, e) => a + e.cacheReadTokens, 0),
+        200_000 + 300_000,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not subtract rollup cache from rollup prompt tokens", async () => {
+    // LiteLLM uses two mutually exclusive conventions, and the source tag is the
+    // only discriminator:
+    //   * per-request usage-history.jsonl : cachedTokens is a cache-HIT subset of
+    //     promptTokens, so input = prompt − cached (see the case above).
+    //   * daily rollup usage-daily.json   : promptTokens is input-ONLY and
+    //     cachedTokens is cache-ONLY — two independent buckets, NOT a subset.
+    //
+    // The rollup reading is proven by the live mirror: 22 of its 73 day blocks
+    // report cachedTokens > promptTokens (2026-07-29: prompt 228,698,527 vs
+    // cached 361,695,488), which is arithmetically impossible if cache were a
+    // subset. Subtracting there collapsed the reported input column by 43%
+    // (9.03B rollup prompt reported as 5.12B) and double-counted day-level cache.
+    // Ambiguous rows are deliberately left un-subtracted: over-counting is
+    // acceptable, wrongly discarding 43% of the input column is not.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-rollup-cache-"));
+    try {
+      const DAY = "2026-07-29";
+      const DAY_PROMPT = 228_698_527;
+      const DAY_CACHE = 361_695_488;
+      const MODEL_PROMPT = 100_000_000;
+      const MODEL_CACHE = 361_695_488;
+      const MODEL_OUTPUT = 786_042;
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: 2662,
+            promptTokens: DAY_PROMPT,
+            completionTokens: MODEL_OUTPUT,
+            cachedTokens: DAY_CACHE,
+            cost: 216.67307592,
+            byModel: {
+              "anthropic/claude-fable-5|Claude-Fable": {
+                requests: 2600,
+                promptTokens: MODEL_PROMPT,
+                completionTokens: MODEL_OUTPUT,
+                cachedTokens: MODEL_CACHE,
+                cost: 216.67307592,
+                model_group: "anthropic/claude-fable-5",
+                rawModel: "Claude-Fable/Claude-Fable",
+                provider: "Claude-Fable",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+      assert.ok(rows.length > 0, "rollup day must produce events");
+
+      const covered = rows.find((e) => e.model !== "unattributed");
+      assert.ok(covered, "the byModel row is emitted");
+      // The rollup prompt account survives intact — no cache subtraction.
+      assert.equal(covered.inputTokens, MODEL_PROMPT);
+      assert.equal(covered.cacheReadTokens, MODEL_CACHE);
+      assert.equal(covered.outputTokens, MODEL_OUTPUT);
+
+      // Day prompt 228,698,527 − model prompt 100,000,000 = 128,698,527 left
+      // over. The remainder's cache is the day cache minus the model's, which is
+      // zero here because the model row already carries the whole day's cache.
+      const remainder = rows.find((e) => e.model === "unattributed");
+      if (remainder) {
+        assert.equal(remainder.inputTokens, DAY_PROMPT - MODEL_PROMPT);
+        assert.equal(remainder.cacheReadTokens, 0);
+      }
+
+      // Bucket-level invariants: input is NOT collapsed toward
+      // prompt − cache and cache is counted exactly once.
+      const inputSum = rows.reduce((a, e) => a + e.inputTokens, 0);
+      const cacheSum = rows.reduce((a, e) => a + e.cacheReadTokens, 0);
+      assert.equal(inputSum, DAY_PROMPT, "rollup input column keeps the full prompt");
+      assert.equal(cacheSum, DAY_CACHE, "rollup cache counted exactly once");
+      // Discriminator for the old bug: a subset reading would have set the covered
+      // row's input to MODEL_PROMPT − MODEL_CACHE (here 100,000,000 − 361,695,488
+      // → clamped to 0) and the day input would have collapsed to just the
+      // remainder. Guard the row itself, not a day-vs-cache comparison — the day
+      // cache legitimately EXCEEDS the day prompt in this fixture, which is
+      // exactly why the subset rule is disproven.
+      assert.ok(
+        covered.inputTokens > 0,
+        "a cache-exceeding prompt must never be zeroed by subtraction",
+      );
+      assert.notEqual(covered.inputTokens, 0);
+      // Over-counting bias: never report less prompt volume than the day total.
+      assert.ok(inputSum >= DAY_PROMPT);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps history subset semantics while rollup stays uncleaned", async () => {
+    // Same day from both conventions at once — the discriminator must be the
+    // source tag, not the agent. History rows keep prompt = input + cached;
+    // rollup rows must not have their cache subtracted.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(path.join(tmpdir(), "xlab-router-two-conv-"));
+    try {
+      const DAY = "2026-08-01";
+      await writeFile(
+        path.join(dir, "usage-history.jsonl"),
+        JSON.stringify({
+          id: "s1",
+          timestamp: `${DAY}T09:00:00.000Z`,
+          model: "anthropic/Claude-Fable-5.5",
+          promptTokens: 119_173,
+          completionTokens: 500,
+          cachedTokens: 117_632,
+          cost: 0.009764,
+        }) + "\n",
+        "utf8",
+      );
+      // History covers this day, so this rollup is a gap-fill that must not
+      // reach the output at all — but the parsing it drives must still be safe.
+      await writeFile(
+        path.join(dir, "usage-daily.json"),
+        JSON.stringify({
+          [DAY]: {
+            requests: 1,
+            promptTokens: 119_173,
+            completionTokens: 500,
+            cachedTokens: 117_632,
+            cost: 0.009764,
+            byModel: {
+              "anthropic/Claude-Fable-5.5|Claude-Fable": {
+                requests: 1,
+                promptTokens: 119_173,
+                completionTokens: 500,
+                cachedTokens: 117_632,
+                cost: 0.009764,
+                rawModel: "Claude-Fable/Claude-Fable-5.5",
+                provider: "Claude-Fable",
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const events = await parseRouterUsage([dir], "litellm");
+      const rows = events.filter((e) => e.timestamp.startsWith(DAY));
+      assert.equal(rows.length, 1, "history wins for its day; no rollup added");
+      const [row] = rows;
+      assert.ok(row);
+      // History semantics are unchanged by the rollup fix.
+      assert.equal(row.inputTokens + row.cacheReadTokens, 119_173);
+      assert.equal(row.inputTokens, 119_173 - 117_632);
+      assert.equal(row.cacheReadTokens, 117_632);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
