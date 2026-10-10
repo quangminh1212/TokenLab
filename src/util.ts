@@ -31,7 +31,7 @@ export function agentDisplayName(agent: string | null | undefined): string {
     litellm: "LiteLLM",
     "claude-code": "Claude Code",
     dsh: "DeepSeek Harness",
-    codex: "OpenAI Codex (App)",
+    codex: "OpenAI Codex",
     cursor: "Cursor",
     windsurf: "Windsurf",
     grok: "Grok (xAI)",

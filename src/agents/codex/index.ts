@@ -1143,7 +1143,7 @@ function pickString(obj: unknown, keys: string[]): string | null {
 
 export const agent: AgentModule = {
   id: "codex",
-  label: "OpenAI Codex (App)",
+  label: "OpenAI Codex",
   roots() {
     const { home, appData, localApp, xdgData, xdgConfig, path, expandHome } = pathEnv();
     return unique([
