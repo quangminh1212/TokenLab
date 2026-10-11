@@ -56,6 +56,7 @@ import {
   scanIntervalMinutes,
   scanPeriodicEnabled,
   setCustomRates,
+  setScanCacheRatesVersion,
   configPath,
 } from "../config.js";
 import {
@@ -64,7 +65,7 @@ import {
   getOpenRouterModelsSync,
   loadOpenRouterCacheFromDisk,
 } from "../openrouter-models.js";
-import { BUNDLED_RATES, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
+import { BUNDLED_RATES, RATES_VERSION, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
 import { computeFlagReport, resolveFlagThresholds, type FlagThresholds } from "../flag-report.js";
 import { replayThroughGuard, resolveRateSpec } from "../rate-guard.js";
 import { writeHeartbeat } from "../process-guard.js";
@@ -586,6 +587,25 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     }, delay);
     scanCacheSaveTimer.unref?.();
   };
+  // Bundled rates changed since the cache was last priced? Reprice once so that
+  // agents without a real router cost (dsh, claude-code, ...) do not keep an
+  // estimatedCost computed from an older rate table. Real router-reported costs
+  // (litellm, hermes, routerlab) are preserved by repriceEvents itself.
+  try {
+    const storedVersion = getConfigSync().scanCacheRatesVersion ?? 0;
+    if (storedVersion !== RATES_VERSION) {
+      const before = cache.reduce((sum, e) => sum + (e.estimatedCost ?? 0), 0);
+      repriceCache(true);
+      const after = cache.reduce((sum, e) => sum + (e.estimatedCost ?? 0), 0);
+      console.log(
+        `[tokenlab] rates v${storedVersion} -> v${RATES_VERSION}: repriced ${cache.length} events ($${before.toFixed(2)} -> $${after.toFixed(2)})`,
+      );
+      scheduleSaveScanCache("full");
+      await setScanCacheRatesVersion(RATES_VERSION);
+    }
+  } catch (err) {
+    console.warn("[tokenlab] rates reprice skipped:", (err as Error).message);
+  }
   /** Shared promise so concurrent /api/scan waits for the in-flight scan (not empty cache). */
   let scanPromise: Promise<number> | null = null;
   /** Last background light scan requested by the Recent requests feed. */
@@ -1800,6 +1820,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const cfg = await setCustomRates(normalized, replace);
       // Force table reprice so new rates apply immediately to all events
       repriceCache(true);
+      await setScanCacheRatesVersion(RATES_VERSION);
       bumpPricing(live ? "live" : "save");
       const totals = aggregate(cache, "agent", "cost", null, null).totals;
       return json(res, 200, {
@@ -1952,6 +1973,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         } else {
           repriceCache(result.config.pricing?.preferRouterCost === false);
         }
+        await setScanCacheRatesVersion(RATES_VERSION);
         bumpPricing("restore");
         return json(res, 200, {
           ok: true,
@@ -2062,6 +2084,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       lastPeriodicFullScanAt = scanPeriodicEnabled() ? Date.now() : lastPeriodicFullScanAt;
       // Reprice when preferRouterCost flips
       repriceCache(next.pricing?.preferRouterCost === false);
+      await setScanCacheRatesVersion(RATES_VERSION);
       bumpPricing("config");
       return json(res, 200, {
         ok: true,
