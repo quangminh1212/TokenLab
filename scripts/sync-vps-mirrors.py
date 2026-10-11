@@ -41,8 +41,17 @@ PASSWORD = os.environ.get("TOKENLAB_VPS_PASSWORD")
 # A local TokenLab timeout can disconnect SSH while the remote command keeps
 # running. Serialize the remote export and bound its lifetime so retries do
 # not pile up expensive full-table Postgres scans.
+#
+# The bound has to clear the honest worst case: a full export measures ~175s on
+# this host (every spend-log day re-aggregated plus a slim db.json write).  A
+# limit below that does not protect anything -- it converts every run into a
+# timeout, and the mirror stops updating while still looking healthy.  300s
+# leaves room for a slow Postgres and still caps a runaway scan.
 REMOTE_EXPORT_LOCK = "/tmp/xlab_export_mirror.lock"
-REMOTE_EXPORT_TIMEOUT_SECONDS = 120
+REMOTE_EXPORT_TIMEOUT_SECONDS = 300
+# The local SSH read must outlast the remote bound, or the client gives up
+# first and the remote export is orphaned mid-scan.
+REMOTE_EXPORT_CLIENT_TIMEOUT_SECONDS = REMOTE_EXPORT_TIMEOUT_SECONDS + 120
 
 EXPORT_PY = r'''
 import json, os, sqlite3, shutil, time, glob
@@ -942,19 +951,25 @@ def main() -> int:
 
     with sftp.file("/tmp/xlab_export_mirror.py", "w") as rf:
         rf.write(EXPORT_PY)
+    # flock and timeout are separate commands so that flock's own exit status
+    # survives to the report.  The obvious `if ! flock ... timeout ...; then`
+    # form is wrong: `!` inverts a lock-contention exit of 1 into success, the
+    # then-branch is skipped, and the run reports nothing at all -- which is
+    # exactly the silent failure this wrapper exists to expose.
     remote_cmd = (
-        f"if ! flock -n {REMOTE_EXPORT_LOCK} "
+        f"flock -n {REMOTE_EXPORT_LOCK} "
         f"timeout --signal=TERM --kill-after=10s {REMOTE_EXPORT_TIMEOUT_SECONDS}s "
-        "python3 /tmp/xlab_export_mirror.py; then "
+        "python3 /tmp/xlab_export_mirror.py; "
         "rc=$?; "
         'if [ "$rc" = "1" ]; then echo "SKIP_LOCKED another export holds '
         f'{REMOTE_EXPORT_LOCK}"; fi; '
         'if [ "$rc" = "124" ] || [ "$rc" = "137" ]; then echo "TIMEOUT_EXPORT '
         f'after {REMOTE_EXPORT_TIMEOUT_SECONDS}s"; fi; '
-        'echo "EXPORT_EXIT $rc"; '
-        "fi"
+        'echo "EXPORT_EXIT $rc"'
     )
-    _stdin, stdout, stderr = client.exec_command(remote_cmd, timeout=180)
+    _stdin, stdout, stderr = client.exec_command(
+        remote_cmd, timeout=REMOTE_EXPORT_CLIENT_TIMEOUT_SECONDS
+    )
     out = stdout.read().decode("utf-8", "ignore")
     print(out if out.strip() else "EXPORT_NO_OUTPUT (remote printed nothing)")
     err = stderr.read().decode("utf-8", "ignore")
@@ -1030,7 +1045,23 @@ def main() -> int:
 
         return False
 
+    # The producer tells us which agents it actually refreshed, so a skipped
+    # agent's mirror is left exactly as it was.  Re-downloading the previous
+    # run's files would bump their mtimes without changing their contents,
+    # hiding the fact that the mirror has stopped updating.
+    #
+    # The producer prints RouterLab's own name while the TokenLab agent id is
+    # "xlabrouter", hence the map rather than a straight string match.
+    marker_to_agent = {"ROUTERLAB": "xlabrouter", "LITELLM": "litellm"}
+    exported_agents = set()
+    for line in out.splitlines():
+        for marker, agent in marker_to_agent.items():
+            if line.startswith("EXPORTED_" + marker + "_"):
+                exported_agents.add(agent)
+
     for remote, agent, name in remote_files:
+        if agent not in exported_agents:
+            continue
         # mirror roots
         for mirror_root in mirror_roots:
             local = os.path.join(mirror_root, agent, name)
@@ -1042,6 +1073,18 @@ def main() -> int:
         vps = vps_dirs.get(agent)
         if vps and os.path.isdir(vps):
             pull(remote, os.path.join(vps, name))
+
+    # A transfer killed mid-stream leaves its staging file behind and nothing
+    # else ever removes it.  Litter is harmless but the 0-byte version reads
+    # like a real mirror file, so sweep the staging names once per run.
+    for mirror_root in mirror_roots:
+        for _root, _dirs, files in os.walk(mirror_root):
+            for fn in files:
+                if fn.endswith(".part"):
+                    try:
+                        os.remove(os.path.join(_root, fn))
+                    except OSError:
+                        pass
 
     sftp.close()
     client.close()
