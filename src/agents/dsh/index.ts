@@ -216,43 +216,6 @@ async function latestSessionFiles(roots: string[], modifiedAfter?: number): Prom
   return recent.filter((file): file is string => file !== null);
 }
 
-/**
- * DSH sessions report prompt usage in two shapes:
- *
- *  A) cache-aware — `{ inputTokens, outputTokens, cacheReadTokens, totalTokens }`
- *     where `totalTokens = inputTokens + cacheReadTokens + outputTokens`.
- *  B) legacy — `{ inputTokens, outputTokens, totalTokens }` with no cache field,
- *     and the invariant `totalTokens = inputTokens + outputTokens`.
- *
- * Shape B is ~99.5% of recorded rows, so it produced `cacheReadTokens = 0` for
- * almost everything and the dashboard's CACHE $ column read "—".
- *
- * DSH does not record the split in shape B, but the cache-aware rows state the
- * rule outright: **the cache read equals the previous turn's whole prompt.**
- * Verified on 68 consecutive cache-aware turns, where
- * `cacheRead(n) ≈ inputTokens(n-1) + cacheReadTokens(n-1)`.
- *
- * The split below only decides how the SAME prompt total is displayed between
- * Input $ and Cache $. It deliberately does not change the money: this gateway
- * bills `cost = inputPer1M * prompt + outputPer1M * output` (7153/7153 billed
- * LiteLLM rows exact), i.e. a cache read costs the same as fresh input, and the
- * rate table sets `cacheReadPer1M === inputPer1M` so the two parts re-add to the
- * provider's total either way.
- */
-function splitLegacyPromptUsage(
-  promptTokens: number,
-  previousPromptTokens: number | null,
-): { inputTokens: number; cacheReadTokens: number } {
-  const prompt = Math.max(0, promptTokens);
-  if (previousPromptTokens == null || previousPromptTokens <= 0) {
-    // First turn of a session: nothing to re-read from cache yet.
-    return { inputTokens: prompt, cacheReadTokens: 0 };
-  }
-  // A cache read can never exceed the prompt the provider was given.
-  const cacheReadTokens = Math.max(0, Math.min(Math.floor(previousPromptTokens), prompt));
-  return { inputTokens: prompt - cacheReadTokens, cacheReadTokens };
-}
-
 async function parseSessionFile(
   file: string,
   decompress: ((buffer: Buffer) => Buffer) | undefined,
@@ -261,11 +224,6 @@ async function parseSessionFile(
   let workspace: string | null = null;
   let currentModel: string | null = null;
   let lineNumber = 0;
-  /**
-   * Whole prompt (fresh + cache) of the previous assistant turn in this session.
-   * Used to reconstruct the cache read for legacy rows — see splitLegacyPromptUsage.
-   */
-  let previousPromptTokens: number | null = null;
 
   for await (const line of readSessionLines(file, decompress)) {
     lineNumber += 1;
@@ -317,14 +275,30 @@ async function parseSessionFile(
     const model = extractModel(source, data) ?? currentModel;
     if (model) currentModel = model;
 
-    // Normalise both shapes into explicit fresh-input + cache-read buckets, then
-    // remember this turn's whole prompt for the next one. Cache is priced at the
-    // input rate, so splitting here preserves the provider's billed total.
+    // DSH records two usage shapes:
+    //
+    //  A) cache-aware — carries an explicit cache field, so the split is measured.
+    //  B) legacy — `{ inputTokens, outputTokens, totalTokens }` with no cache
+    //     field, and the invariant `totalTokens = inputTokens + outputTokens`.
+    //
+    // Shape B is ~99.5% of rows. The previous implementation guessed the cache
+    // read from the previous turn's prompt, on the strength of a correlation
+    // seen in the cache-aware rows. That guess was wrong in a way that showed up
+    // as fiction on the dashboard: because a conversation grows monotonically,
+    // `previousPrompt` ≈ `prompt`, so the subtraction drove `inputTokens` toward
+    // 0 and attributed the entire prompt to cache. It also carried that
+    // "previous prompt" across turns that had no usage at all, inventing a cache
+    // read where no turn preceded it.
+    //
+    // If DSH did not state the cache split, we do not know it. An unknown cache
+    // read is reported as zero and the prompt is counted as fresh input. This
+    // changes no money either way: the rate table sets
+    // `cacheReadPer1M === inputPer1M`, and this gateway bills
+    // `cost = inputPer1M * prompt + outputPer1M * output`.
     const reported = buckets.inputIncludesCache === true || buckets.cacheReadTokens > 0;
     const split: { inputTokens: number; cacheReadTokens: number } = reported
       ? { inputTokens: buckets.inputTokens, cacheReadTokens: buckets.cacheReadTokens }
-      : splitLegacyPromptUsage(buckets.inputTokens, previousPromptTokens);
-    previousPromptTokens = split.inputTokens + split.cacheReadTokens;
+      : { inputTokens: Math.max(0, buckets.inputTokens), cacheReadTokens: 0 };
 
     events.push(
       applyPricing({
