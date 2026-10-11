@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Pull latest 9router + RouterLab (xlabrouter) + LiteLLM usage from VPS into local TokenLab mirrors.
+Pull latest RouterLab (xlabrouter) + LiteLLM usage from VPS into local TokenLab mirrors.
 
-Same pattern as 9router daily export:
-  - 9router: SQLite usageDaily → usage-daily.json (+ db.json)
+Producers:
   - RouterLab (:1212, DATA_DIR=/var/lib/xlabrouter):
       usageData.dailySummary → usage-daily.json
       usageData.history → usage-history.jsonl
@@ -11,9 +10,17 @@ Same pattern as 9router daily export:
       db.json (usage-bearing)
   - LiteLLM (:4000, Postgres litellm):
       LiteLLM_DailyUserSpend + SpendLogs → usage-daily.json / usage-history.jsonl
-      (TokenLab agent id `litellm`, same router-usage parser shape as 9router)
+      (TokenLab agent id `litellm`, same router-usage parser shape as RouterLab)
 
-TokenLab agent ids: `9router` / `xlabrouter` (label: RouterLab) / `litellm`.
+TokenLab agent ids: `xlabrouter` (label: RouterLab) / `litellm`.
+9router is retired: the host no longer runs it, so its local mirrors are kept as
+a frozen historical database rather than a live feed.
+
+The remote producer runs as a script EXECUTED BY THIS PROCESS over SSH (see
+EXPORT_PY).  It is throttled: LiteLLM aggregation is expensive and this is called
+about once a minute.  When the throttle trips it must leave the previous run's
+files in `/tmp` untouched, because this process then uploads a fixed path list —
+a producer that exits without writing anything makes every upload fail.
 """
 from __future__ import annotations
 
@@ -38,10 +45,53 @@ REMOTE_EXPORT_LOCK = "/tmp/xlab_export_mirror.lock"
 REMOTE_EXPORT_TIMEOUT_SECONDS = 120
 
 EXPORT_PY = r'''
-import json, os, sqlite3, shutil, time
+import json, os, sqlite3, shutil, time, glob
 from pathlib import Path
 
+# Artifacts from the previous run linger in /tmp, and the downloader copies
+# every listed path unconditionally. A producer that finds no source this run
+# would therefore republish yesterday's bytes with a fresh mtime, making stale
+# data look live. Clear the outputs up front so "absent" means absent.
+def _clear(*paths):
+    for _p in paths:
+        try:
+            os.remove(_p)
+        except OSError:
+            pass
+
+# LiteLLM is the expensive producer and TokenLab calls this every ~60s, so it is
+# throttled.  This is a "skip the work", NOT a "produce nothing" signal: the
+# caller downloads a fixed list of paths, so a producer that exits without
+# writing makes the downloader fail on every one of them and the mirror stops
+# updating entirely.
+_litellm_marker = Path("/tmp/xlab-mirror-litellm-last-success")
+try:
+    _litellm_marker_age = time.time() - _litellm_marker.stat().st_mtime
+except OSError:
+    _litellm_marker_age = float("inf")
+_litellm_fresh = _litellm_marker_age < 20
+
+# Cleared unconditionally: the files this run does not rewrite must fall through
+# to the "no remote file" path rather than be re-uploaded stale.
+_clear(
+    "/tmp/xlab-mirror-xlabrouter-usage-daily.json",
+    "/tmp/xlab-mirror-xlabrouter-usage-history.jsonl",
+    "/tmp/xlab-mirror-xlabrouter-usageData.json",
+    "/tmp/xlab-mirror-xlabrouter-db.json",
+    "/tmp/xlab-mirror-xlabrouter-request-details.jsonl",
+)
+
+# LiteLLM files are the exception -- see below.  A throttled run must NOT clear
+# them, because it also does not rewrite them; clear them only in the branch that
+# actually produces new ones.
+
 def export_sqlite_daily(db_path: str, out_path: str) -> int:
+    """Read a 9router-shaped SQLite `usageDaily` table into a daily JSON map.
+
+    Kept for RouterLab: its history was imported from 9router snapshots and the
+    same schema still shows up on the host, so this stays useful even though the
+    9router leg itself is retired.
+    """
     if not os.path.isfile(db_path):
         return 0
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -61,44 +111,14 @@ def export_sqlite_daily(db_path: str, out_path: str) -> int:
     Path(out_path).write_text(json.dumps(daily, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     return len(daily)
 
-# --- 9router ---
-n9 = export_sqlite_daily("/root/.9router/db/data.sqlite", "/tmp/xlab-mirror-9router-usage-daily.json")
-print("EXPORTED_9ROUTER_DAYS", n9)
-if os.path.isfile("/root/.9router/db.json"):
-    shutil.copyfile("/root/.9router/db.json", "/tmp/xlab-mirror-9router-db.json")
-    print("COPIED 9router db.json")
+# --- 9router: retired ---
+# TokenLab no longer pulls 9router. The VPS host deleted /root/.9router, so the
+# export had been printing MISS_9ROUTER_SQLITE / MISS_9ROUTER_DBJSON and leaving
+# 0-byte mirrors behind. Those surviving files are kept as a frozen historical
+# database, not a live feed, so there is nothing to sync. The discovery probe and
+# the sqlite export were removed with it; re-add them here if 9router returns.
 
-# Recent per-request history (tail) so TokenLab "today"/RECENT EVENTS see new models
-# without re-downloading the full multi‑MB lifetime jsonl every minute.
-def export_sqlite_history_tail(db_path: str, out_path: str, limit: int = 8000) -> int:
-    if not os.path.isfile(db_path):
-        return 0
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
-    cur = con.cursor()
-    try:
-        rows = cur.execute(
-            """SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint,
-                      promptTokens, completionTokens, cost, status, tokens, meta
-               FROM usageHistory ORDER BY id DESC LIMIT ?""",
-            (int(limit),),
-        ).fetchall()
-    except Exception:
-        con.close()
-        return 0
-    # Write chronological order (oldest → newest) for stable tail merges
-    with open(out_path, "w", encoding="utf-8") as f:
-        for row in reversed(rows):
-            f.write(json.dumps(dict(row), ensure_ascii=False, separators=(",", ":")) + "\n")
-    con.close()
-    return len(rows)
 
-n9h = export_sqlite_history_tail(
-    "/root/.9router/db/data.sqlite",
-    "/tmp/xlab-mirror-9router-usage-history.jsonl",
-    8000,
-)
-print("EXPORTED_9ROUTER_HIST_TAIL", n9h)
 
 # --- RouterLab / xlabrouter (systemd DATA_DIR) ---
 # Live db.json often only keeps a short recent window after wipes/resyncs.
@@ -434,19 +454,8 @@ else:
     print("MISS_ROUTERLAB_DB")
 
 # --- LiteLLM (Postgres spend logs → same mirror shape as 9router) ---
-# LiteLLM/Postgres is the expensive part of this export. TokenLab invokes the
-# mirror every minute, while a full SpendLogs scan can take longer than a
-# minute on the small VPS. Keep the other mirrors live but refresh LiteLLM at
-# most once every five minutes; existing temp files remain authoritative in
-# between refreshes.
-_litellm_marker = Path("/tmp/xlab-mirror-litellm-last-success")
-try:
-    _litellm_recent = time.time() - _litellm_marker.stat().st_mtime < 300
-except OSError:
-    _litellm_recent = False
-if _litellm_recent:
-    print("SKIP_LITELLM_SPEND fresh_marker")
-    raise SystemExit(0)
+# The throttle is applied at the top of this script, before the stale-artifact
+# sweep; by the time we get here we are committed to a fresh LiteLLM export.
 
 def _psql(sql: str) -> str:
     import subprocess
@@ -709,38 +718,46 @@ if raw_daily:
         if not isinstance(bm, dict):
             bm = {}
             day["byModel"] = bm
-        if (day.get("requests") or 0) <= 0:
-            day["requests"] = int(day.get("requests") or 0) + max(0, reqs)
-            day["promptTokens"] = int(day.get("promptTokens") or 0) + max(0, pt)
-            day["completionTokens"] = int(day.get("completionTokens") or 0) + max(0, ct)
-            day["cost"] = float(day.get("cost") or 0) + max(0.0, cost)
-            row = bm.setdefault(mk, {
-                "requests": 0, "promptTokens": 0, "completionTokens": 0,
-                "cachedTokens": 0, "cost": 0.0, "model_group": model,
-                "rawModel": raw_model,
-                "provider": provider or None,
-            })
-            row["requests"] = int(row.get("requests") or 0) + max(0, reqs)
-            row["promptTokens"] = int(row.get("promptTokens") or 0) + max(0, pt)
-            row["completionTokens"] = int(row.get("completionTokens") or 0) + max(0, ct)
-            row["cost"] = float(row.get("cost") or 0) + max(0.0, cost)
         row = bm.setdefault(mk, {
-            "requests": max(0, reqs), "promptTokens": max(0, pt), "completionTokens": max(0, ct),
-            "cachedTokens": 0, "cost": max(0.0, cost), "model_group": model,
+            "requests": 0, "promptTokens": 0, "completionTokens": 0,
+            "cachedTokens": 0, "cost": 0.0, "model_group": model,
             "rawModel": raw_model,
             "provider": provider or None,
         })
+        row["requests"] = int(row.get("requests") or 0) + max(0, reqs)
+        row["promptTokens"] = int(row.get("promptTokens") or 0) + max(0, pt)
+        row["completionTokens"] = int(row.get("completionTokens") or 0) + max(0, ct)
+        row["cost"] = float(row.get("cost") or 0) + max(0.0, cost)
         prev_c = int(row.get("cachedTokens") or 0)
         # Prefer SpendLogs metadata sum; only raise if DailyUserSpend reports more
         row["cachedTokens"] = max(prev_c, max(0, cache_r))
-    for _dk, day in daily_ll.items():
-        if not isinstance(day, dict):
+
+# Day-level totals MUST equal the sum of their byModel rows, otherwise the day
+# row and its own breakdown disagree and TokenLab's period filters ("today")
+# read a bogus frozen value. This runs at module scope rather than inside the
+# `if raw_daily:` block above: DailyUserSpend is a batched rollup that can be
+# empty or mid-rotation, and the SpendLogs-only paths can diverge without it.
+for _dk, day in daily_ll.items():
+    if not isinstance(day, dict):
+        continue
+    bm = day.get("byModel") or {}
+    if not isinstance(bm, dict) or not bm:
+        continue
+    req_sum = pt_sum = ct_sum = cache_sum = 0
+    cost_sum = 0.0
+    for _m in bm.values():
+        if not isinstance(_m, dict):
             continue
-        bm = day.get("byModel") or {}
-        if isinstance(bm, dict) and bm:
-            day["cachedTokens"] = sum(
-                int((m or {}).get("cachedTokens") or 0) for m in bm.values() if isinstance(m, dict)
-            )
+        req_sum += int(_m.get("requests") or 0)
+        pt_sum += int(_m.get("promptTokens") or 0)
+        ct_sum += int(_m.get("completionTokens") or 0)
+        cache_sum += int(_m.get("cachedTokens") or 0)
+        cost_sum += float(_m.get("cost") or 0)
+    day["requests"] = max(int(day.get("requests") or 0), req_sum)
+    day["promptTokens"] = max(int(day.get("promptTokens") or 0), pt_sum)
+    day["completionTokens"] = max(int(day.get("completionTokens") or 0), ct_sum)
+    day["cachedTokens"] = max(int(day.get("cachedTokens") or 0), cache_sum)
+    day["cost"] = max(float(day.get("cost") or 0), cost_sum)
 
 # History: always pull SQL-extracted cache + metadata text (for nested fallback parse)
 hist_rows = []
@@ -830,7 +847,17 @@ if raw_hist:
             "tokens": tok,
         })
 
-if daily_ll or hist_rows:
+if _litellm_fresh:
+    print("SKIP_LITELLM_SPEND fresh_marker age=%.0fs (leaving previous mirror)" % _litellm_marker_age)
+elif daily_ll or hist_rows:
+    # Only now, with fresh data in hand, is it safe to drop the previous run's
+    # files.  Clearing earlier would destroy a good mirror whenever this branch is
+    # not reached (throttled, locked out, timed out, or psql failed).
+    _clear(
+        "/tmp/xlab-mirror-litellm-usage-daily.json",
+        "/tmp/xlab-mirror-litellm-usage-history.jsonl",
+        "/tmp/xlab-mirror-litellm-db.json",
+    )
     Path("/tmp/xlab-mirror-litellm-usage-daily.json").write_text(
         json.dumps(daily_ll, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
@@ -860,9 +887,10 @@ if daily_ll or hist_rows:
         json.dumps(slim, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
     print("COPIED litellm slim db.json")
-else:
+elif not _litellm_fresh:
     print("MISS_LITELLM_SPEND")
-_litellm_marker.write_text(str(time.time()), encoding="utf-8")
+if not _litellm_fresh:
+    _litellm_marker.write_text(str(time.time()), encoding="utf-8")
 '''
 
 
@@ -877,7 +905,6 @@ def main() -> int:
         os.path.join(appdata, "xlab-token", "mirrors"),
     ]
     vps_dirs = {
-        "9router": r"C:\Dev\VPS\my.bnix.one\9router\data",
         "xlabrouter": r"C:\Dev\VPS\my.bnix.one\xlabrouter\data",
         "litellm": r"C:\Dev\VPS\my.bnix.one\litellm\data",
     }
@@ -887,7 +914,6 @@ def main() -> int:
             os.makedirs(d, exist_ok=True)
 
     for mirror_root in mirror_roots:
-        os.makedirs(os.path.join(mirror_root, "9router"), exist_ok=True)
         os.makedirs(os.path.join(mirror_root, "xlabrouter"), exist_ok=True)
         # alias folder name for clarity (same content as xlabrouter)
         os.makedirs(os.path.join(mirror_root, "routerlab"), exist_ok=True)
@@ -917,21 +943,25 @@ def main() -> int:
     with sftp.file("/tmp/xlab_export_mirror.py", "w") as rf:
         rf.write(EXPORT_PY)
     remote_cmd = (
-        f"flock -n {REMOTE_EXPORT_LOCK} "
+        f"if ! flock -n {REMOTE_EXPORT_LOCK} "
         f"timeout --signal=TERM --kill-after=10s {REMOTE_EXPORT_TIMEOUT_SECONDS}s "
-        "python3 /tmp/xlab_export_mirror.py"
+        "python3 /tmp/xlab_export_mirror.py; then "
+        "rc=$?; "
+        'if [ "$rc" = "1" ]; then echo "SKIP_LOCKED another export holds '
+        f'{REMOTE_EXPORT_LOCK}"; fi; '
+        'if [ "$rc" = "124" ] || [ "$rc" = "137" ]; then echo "TIMEOUT_EXPORT '
+        f'after {REMOTE_EXPORT_TIMEOUT_SECONDS}s"; fi; '
+        'echo "EXPORT_EXIT $rc"; '
+        "fi"
     )
     _stdin, stdout, stderr = client.exec_command(remote_cmd, timeout=180)
-    print(stdout.read().decode("utf-8", "ignore"))
+    out = stdout.read().decode("utf-8", "ignore")
+    print(out if out.strip() else "EXPORT_NO_OUTPUT (remote printed nothing)")
     err = stderr.read().decode("utf-8", "ignore")
     if err:
         print("STDERR:", err[:800], file=sys.stderr)
 
     remote_files = [
-        # 9router
-        ("/tmp/xlab-mirror-9router-usage-daily.json", "9router", "usage-daily.json"),
-        ("/tmp/xlab-mirror-9router-db.json", "9router", "db.json"),
-        ("/tmp/xlab-mirror-9router-usage-history.jsonl", "9router", "usage-history.jsonl"),
         # RouterLab (agent id xlabrouter)
         ("/tmp/xlab-mirror-xlabrouter-usage-daily.json", "xlabrouter", "usage-daily.json"),
         ("/tmp/xlab-mirror-xlabrouter-usage-history.jsonl", "xlabrouter", "usage-history.jsonl"),
@@ -944,32 +974,74 @@ def main() -> int:
         ("/tmp/xlab-mirror-litellm-db.json", "litellm", "db.json"),
     ]
 
+    def pull(remote: str, local: str) -> bool:
+        """Copy remote -> local, but never leave a truncated or empty artifact.
+
+        sftp.get() writes to the destination as it streams, so a missing or
+        half-written remote file used to leave a 0-byte local file behind.  The
+        mirror then looked present while holding no data.  Verify the source
+        exists and is non-empty first, and stage through a temp file so a failed
+        transfer cannot clobber a good mirror.
+
+        A size change between stat() and get() means another writer was mid-write
+        (the RouterLab service rewrites these files on its own schedule).  Look at
+        the size once more before giving up, so that case does not silently cost
+        the mirror a refresh cycle.
+        """
+        for attempt in (1, 2):
+            try:
+                st = sftp.stat(remote)
+            except Exception as ex:
+                if attempt == 1:
+                    time.sleep(2)
+                    continue
+                print("SKIP", remote, "->", local, "(no remote file)", ex)
+                return False
+            if st.st_size <= 0:
+                print("SKIP", remote, "->", local, "(remote is 0 bytes)")
+                return False
+
+            tmp = local + ".part"
+            try:
+                sftp.get(remote, tmp)
+            except Exception as ex:
+                print("SKIP", remote, "->", local, ex)
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                return False
+
+            size = os.path.getsize(tmp)
+            if size == st.st_size:
+                os.replace(tmp, local)
+                print("SYNCED", local, "bytes", size)
+                return True
+
+            # Rewritten underneath us; drop the partial and retry once.
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            if attempt == 2:
+                print("SKIP", remote, "->", local, "size mismatch", size, "!=", st.st_size)
+                return False
+            time.sleep(2)
+
+        return False
+
     for remote, agent, name in remote_files:
         # mirror roots
         for mirror_root in mirror_roots:
             local = os.path.join(mirror_root, agent, name)
-            try:
-                sftp.get(remote, local)
-                print("SYNCED", local, "bytes", os.path.getsize(local))
-            except Exception as ex:
-                print("SKIP", remote, "->", local, ex)
+            pull(remote, local)
             # dual-write routerlab alias folder for xlabrouter files
             if agent == "xlabrouter":
-                alias = os.path.join(mirror_root, "routerlab", name)
-                try:
-                    sftp.get(remote, alias)
-                    print("SYNCED", alias, "bytes", os.path.getsize(alias))
-                except Exception as ex:
-                    print("SKIP", remote, "->", alias, ex)
+                pull(remote, os.path.join(mirror_root, "routerlab", name))
         # VPS convenience dirs
         vps = vps_dirs.get(agent)
         if vps and os.path.isdir(vps):
-            local = os.path.join(vps, name)
-            try:
-                sftp.get(remote, local)
-                print("SYNCED", local, "bytes", os.path.getsize(local))
-            except Exception as ex:
-                print("SKIP", remote, "->", local, ex)
+            pull(remote, os.path.join(vps, name))
 
     sftp.close()
     client.close()
