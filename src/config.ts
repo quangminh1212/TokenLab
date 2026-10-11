@@ -19,6 +19,12 @@ export interface XlabTokenConfig {
     customRates?: Record<string, ModelRate>;
   };
   /**
+   * RATES_VERSION the scan cache was last priced with. When it lags the bundled
+   * version, the server reprices the whole cache once on boot. Managed
+   * automatically — do not set by hand.
+   */
+  scanCacheRatesVersion?: number;
+  /**
    * Background scanning cadence. Scanning walks agent logs on disk, so the
    * default is deliberately relaxed (1h) — every-minute passes kept the CPU and
    * disk busy on large Codex/Claude histories.
@@ -283,6 +289,16 @@ export async function saveConfig(next: XlabTokenConfig): Promise<XlabTokenConfig
   await writeFile(p, JSON.stringify(merged, null, 2), "utf8");
   setCachedConfig(merged);
   return merged;
+}
+
+/**
+ * Record the RATES_VERSION the scan cache is now priced with, so the boot-time
+ * reprice runs exactly once per rate-table change.
+ */
+export async function setScanCacheRatesVersion(version: number): Promise<void> {
+  const cfg = await loadConfig();
+  if (cfg.scanCacheRatesVersion === version) return;
+  await saveConfig({ ...cfg, scanCacheRatesVersion: version });
 }
 
 export async function setCustomRates(

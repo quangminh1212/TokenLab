@@ -4,6 +4,17 @@ import { getOpenRouterFetchedAt, lookupOpenRouterRate } from "./openrouter-model
 import { normalizeModelName } from "./util.js";
 
 /**
+ * Version of the bundled rate table below.
+ *
+ * Bump this whenever a rate changes (add / remove / edit a BUNDLED_RATES entry).
+ * The server persists the version it last priced the scan cache with; when the
+ * version differs it reprices the whole cache once, so costs derived from an
+ * older table (agents with no real router cost, e.g. dsh, claude-code) do not
+ * keep a stale `estimatedCost` forever.
+ */
+export const RATES_VERSION = 2;
+
+/**
  * Bundled offline rates (USD per 1M tokens).
  * Prefer official vendor list prices when known (Anthropic / OpenAI / xAI docs, 2026).
  * Models only on OpenRouter still take live OR rates at runtime via lookupOpenRouterRate.
