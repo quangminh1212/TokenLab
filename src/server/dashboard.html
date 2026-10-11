@@ -340,22 +340,68 @@
 
     /** Agent id → display name (XLab Router → RouterLab, etc.) */
     const AGENT_LABELS = {
-      routerlab: 'RouterLab',
-      xlabrouter: 'RouterLab',
-      xlrouter: 'RouterLab',
       '9router': '9Router',
-      litellm: 'LiteLLM',
+      aider: 'Aider',
+      'amazon-q': 'Amazon Q',
+      amp: 'Amp',
+      antigravity: 'Antigravity',
+      blackbox: 'Blackbox AI',
       'claude-code': 'Claude Code',
+      cline: 'Cline',
+      codebuddy: 'CodeBuddy',
+      codebuff: 'Codebuff',
+      codewhale: 'CodeWhale',
       codex: 'OpenAI Codex',
-      cursor: 'Cursor',
-      windsurf: 'Windsurf',
+      commandcode: 'Command Code',
+      'continue': 'Continue.dev',
+      copilot: 'GitHub Copilot',
+      crush: 'Crush',
+      'claude-fable': 'Claude-Fable',
+      devin: 'Devin',
+      droid: 'Factory Droid',
+      dsh: 'DeepSeek Harness',
+      forge: 'Forge',
+      gemini: 'Gemini CLI',
+      gjc: 'Gajae-Code',
+      goose: 'Goose',
       grok: 'Grok (xAI)',
       hermes: 'Hermes Agent',
-      copilot: 'GitHub Copilot',
-      devin: 'Devin',
+      iflow: 'iFlow',
+      jcode: 'Jcode',
+      junie: 'JetBrains Junie',
+      kilocode: 'Kilo Code',
+      kimi: 'Kimi CLI',
+      kiro: 'Kiro',
+      litellm: 'LiteLLM',
+      mimocode: 'MiMo Code',
+      mux: 'Mux',
+      ollama: 'Ollama',
+      openclaw: 'OpenClaw',
       opencode: 'OpenCode',
-      dsh: 'DeepSeek Harness',
-      antigravity: 'Antigravity',
+      opencodereview: 'Open Code Review',
+      pi: 'Pi / Oh My Pi',
+      qoder: 'Qoder',
+      qwen: 'Qwen CLI',
+      qwencoder: 'QwenCoder Cloud',
+      roocode: 'Roo Code',
+      routerlab: 'RouterLab',
+      trae: 'Trae',
+      void: 'Void',
+      warp: 'Warp AI',
+      windsurf: 'Windsurf',
+      workbuddy: 'WorkBuddy',
+      zcode: 'ZCode',
+      zed: 'Zed Agent',
+      // Aliases / legacy ids that still show up in older scan-cache rows
+      'xlab-router': 'RouterLab',
+      xlab_router: 'RouterLab',
+      'kilo-code': 'Kilo Code',
+      'roo-code': 'Roo Code',
+      'continue-dev': 'Continue.dev',
+      'warp-ai': 'Warp AI',
+      'code-whale': 'CodeWhale',
+      anthropic: 'Anthropic',
+      openai: 'OpenAI',
     };
     function agentLabel(id) {
       const k = String(id || '').trim();
@@ -364,7 +410,17 @@
       if (low === 'xlabrouter' || low === 'xlrouter' || low === 'xlab-router' || low === 'xlab_router') {
         return 'RouterLab';
       }
-      return AGENT_LABELS[low] || AGENT_LABELS[k] || k;
+      return AGENT_LABELS[low] || AGENT_LABELS[k] || titleCaseAgent(k);
+    }
+
+    /**
+     * Capitalize the first letter of every word-ish token so an unmapped agent id
+     * (e.g. "claude-fable" → "Claude-Fable") never renders all-lowercase.
+     * Ids that already carry an uppercase letter keep their casing untouched.
+     */
+    function titleCaseAgent(id) {
+      if (/[A-Z]/.test(id)) return id;
+      return id.replace(/[a-z0-9]+/g, (w) => w.replace(/^[a-z]/, (c) => c.toUpperCase()));
     }
 
     function formatGroupKey(key) {
