@@ -2159,14 +2159,23 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     });
 
   /**
-   * Pull remote 9router + RouterLab + LiteLLM usage into local mirrors (like 9router daily).
+   * Pull RouterLab + LiteLLM usage into local mirrors.
    * RouterLab source: VPS :1212 /dashboard/usage → DATA_DIR=/var/lib/xlabrouter
-   * 9router source: VPS :20128 → /root/.9router
    * LiteLLM source: VPS :4000 → Postgres LiteLLM_SpendLogs / DailyUserSpend
    * Coalesced — concurrent calls share one in-flight SSH/export.
-   * Used on boot and every ~1 min so aggregate/dashboard stays near-live.
+   *
+   * The remote export re-aggregates every spend-log day and writes a slim
+   * db.json, which measures ~175s on that host. Calling it on every 60s tick
+   * therefore keeps a full scan permanently in flight and makes most calls lose
+   * the remote lock, so the mirror only advances on whichever call happens to
+   * win. Gate it to `mirrorIntervalMinutes` instead, matching the scan cadence.
    */
   let mirrorSyncPromise: Promise<boolean> | null = null;
+  let lastMirrorSyncAt = 0;
+  const MIRROR_SYNC_INTERVAL_MINUTES = 60;
+  // Must outlast the remote export (~175s) plus transfer time, or the sync is
+  // killed mid-scan and the mirror is left stale while the run looks finished.
+  const MIRROR_SYNC_TIMEOUT_MS = 300_000;
   async function resolveSyncScript(): Promise<string | null> {
     // src/server → ../../scripts ; installer/dist/server → ../../../scripts ; cwd fallback
     const candidates = [
@@ -2179,7 +2188,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     }
     return null;
   }
-  async function syncVpsMirrors(reason: string, timeoutMs = 90_000): Promise<boolean> {
+  async function syncVpsMirrors(
+    reason: string,
+    timeoutMs = MIRROR_SYNC_TIMEOUT_MS,
+  ): Promise<boolean> {
     if (mirrorSyncPromise) return mirrorSyncPromise;
     mirrorSyncPromise = (async () => {
       try {
@@ -2214,6 +2226,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           }, timeoutMs).unref?.();
         });
         if (ok) {
+          lastMirrorSyncAt = Date.now();
           console.log(`[tokenlab] VPS router mirrors synced (${reason})`);
         }
         return ok;
@@ -2229,7 +2242,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   // Boot: serve the warm cache first. A full local scan can take minutes on a
   // machine with large Codex/Claude/Grok histories, so do not compete with the
   // first dashboard paint when a valid scan cache already exists.
-  void syncVpsMirrors("boot", 120_000)
+  void syncVpsMirrors("boot")
     .catch(() => false)
     .finally(() => {
       if (cache.length === 0) {
@@ -2253,10 +2266,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
 
   /**
    * Periodic tick bookkeeping.
-   * Every 60s the tick pulls remote mirrors and checks whether a scan is due;
-   * the scan cadence itself comes from config (`scan.intervalMinutes`, default
-   * 60 min) and the full all-agent cadence from `scan.fullIntervalMinutes`
-   * (default 60 min). Full ticks run `fullIntervalMinutes` after the previous one.
+   * The tick fires every 60s, but the remote mirror pull and the scans are all
+   * throttled by config: mirrors every `MIRROR_SYNC_INTERVAL_MINUTES` (60 min),
+   * scans every `scan.intervalMinutes` (default 60 min) and full all-agent scans
+   * every `scan.fullIntervalMinutes` (default 60 min).
    */
   let lastPeriodicFullScanAt = Date.now();
   const timer = setInterval(() => {
@@ -2265,10 +2278,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const periodicOn = scanPeriodicEnabled();
       const fullDue =
         periodicOn && now - lastPeriodicFullScanAt >= fullScanIntervalMinutes() * 60_000;
-      // Always pull mirrors: remote usage is cheap to fetch and the dashboard
-      // reads it directly. Skipping this when scanning is off would freeze
-      // multi-machine totals.
-      await syncVpsMirrors(fullDue ? "periodic-full" : "periodic", 55_000);
+      // Remote usage is cheap to download but expensive to produce, so pull it
+      // on its own 60-minute cadence rather than on every tick. Always pull
+      // regardless of `periodicOn`: the dashboard reads mirrors directly, and
+      // skipping this when scanning is off would freeze multi-machine totals.
+      const mirrorDue = now - lastMirrorSyncAt >= MIRROR_SYNC_INTERVAL_MINUTES * 60_000;
+      if (mirrorDue) {
+        await syncVpsMirrors(fullDue ? "periodic-full" : "periodic");
+      }
       if (!periodicOn) return;
       // Skip starting another scan if one is already running (rescan coalesces too).
       // A dashboard recent-scan inside the window counts as this tick.
