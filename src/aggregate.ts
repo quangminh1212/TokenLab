@@ -85,7 +85,7 @@ const MODEL_GROUP_ALIASES = new Map<string, string>([
 function modelGroupKey(e: UsageEvent): string {
   const model = normalizeModelForAgent(e.model, e.agent);
   const key = (model || `unknown (${e.agent})`).toLowerCase();
-  return MODEL_GROUP_ALIASES.get(key) || key;
+  return (MODEL_GROUP_ALIASES.get(key) || key).replace(/-/g, " ");
 }
 
 function groupKey(e: UsageEvent, by: GroupBy, tsMs?: number): string {
