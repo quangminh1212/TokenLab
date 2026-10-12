@@ -768,6 +768,7 @@ export function normalizeModelName(model: string | null | undefined): string | n
   if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
   else if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.7";
   else if (lower === "mimo-auto") m = "mimo-v2.5";
+  else if (lower === "model_private_11") m = "big-pickle";
   else if (lower === "vip-kimi") m = "kimi-k3";
   else if (lower === "swe-agent" || lower === "swe agent") m = "swe-1.6";
   else if (lower === "windsurf-cascade") m = "swe-1.6";
