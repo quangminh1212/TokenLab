@@ -350,7 +350,12 @@
       }
       m = m.replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
       m = m.replace(/[-_:|/\s]+free$/i, '');
-      return m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
+      m = m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
+      const lower = m.toLowerCase();
+      if (lower === 'claude-fable') return 'claude-fable-5';
+      if (lower === 'claude-opus') return 'claude-opus-5.5';
+      if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
+      return m;
     }
 
     /** Agent id → display name (XLab Router → RouterLab, etc.) */

@@ -133,16 +133,26 @@
         const last = parts[parts.length - 1] || m;
         if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
       }
-      return m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
+      m = m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
+      const lower = m.toLowerCase();
+      if (lower === 'claude-fable') return 'claude-fable-5';
+      if (lower === 'claude-opus') return 'claude-opus-5.5';
+      if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
+      return m;
     }
 
     function cleanModelDisplayName(model) {
-      return String(model ?? '')
+      const cleaned = String(model ?? '')
         .replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '')
         .replace(/[-_:|/\s]+free$/i, '')
         .replace(/\s+/g, ' ')
         .replace(/^[-_:|]+|[-_:|]+$/g, '')
         .trim();
+      const lower = cleaned.toLowerCase();
+      if (lower === 'claude-fable') return 'claude-fable-5';
+      if (lower === 'claude-opus') return 'claude-opus-5.5';
+      if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
+      return cleaned;
     }
 
     const ICONS = {
