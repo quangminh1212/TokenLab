@@ -352,6 +352,7 @@
       m = m.replace(/[-_:|/\s]+free$/i, '');
       m = m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
       const lower = m.toLowerCase();
+      if (lower === 'deepseek-chat') return 'deepseek-v4-flash';
       if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
       if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.7';
       if (lower === 'mimo-auto') return 'mimo-v2.5';
