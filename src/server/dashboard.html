@@ -184,6 +184,7 @@
       applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     };
 
+    const hiddenModelNames = new Set(['9r-or-openrouter', '9r-xlab']);
     const state = {
       period: 'today',
       groupBy: 'agent',
@@ -858,10 +859,14 @@
       const collator = state.sortBy === 'name'
         ? new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
         : null;
-      const groups = collator
-        ? state.groups.slice().sort((a, b) =>
-            collator.compare(formatGroupKey(a.key), formatGroupKey(b.key)))
+      const visibleGroups = state.groupBy === 'model'
+        ? state.groups.filter((group) =>
+            !hiddenModelNames.has(formatGroupKey(group.key).trim().toLowerCase()))
         : state.groups;
+      const groups = collator
+        ? visibleGroups.slice().sort((a, b) =>
+            collator.compare(formatGroupKey(a.key), formatGroupKey(b.key)))
+        : visibleGroups;
       $('tableValueSortBtn').textContent =
         state.groupBy === 'day' || state.groupBy === 'hour'
           ? 'By date'
