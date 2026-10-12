@@ -75,6 +75,7 @@ import {
   filterByPeriod,
   filterByPeriodSorted,
   filterByPeriodSortedDetailed,
+  normalizeModelForAgent,
   normalizeModelName,
   parseSince,
   pathExists,
@@ -1667,7 +1668,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       const models = [
         ...new Set(
           cache
-            .map((e) => normalizeModelName(e.model) || e.model || "")
+            .map((e) => normalizeModelForAgent(e.model, e.agent) || e.model || "")
             .filter(Boolean) as string[],
         ),
       ];
