@@ -895,9 +895,6 @@
           : cost * (output / totalTok);
 
         const label = formatGroupKey(g.key);
-        const referenceMark = state.groupBy === 'model' && g.estimatedPricing
-          ? ' <small title="Paid reference rate; actual route pricing may differ">ref</small>'
-          : '';
         // Requests per active minute for this group (0 when it has no live rows)
         const rpm = Number(g.rpm) || 0;
         const rpmCell = rpm > 0
@@ -911,7 +908,7 @@
         // same rate as the input column beside it.
         if (costs) {
           return `<tr>
-            <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code>${referenceMark}</td>
+            <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
             <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
             <td class="num muted">${rpmCell}</td>
             <td class="num muted">${moneyBreakdown(inputCost)}</td>
@@ -920,7 +917,7 @@
           </tr>`;
         }
         return `<tr>
-          <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code>${referenceMark}</td>
+          <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
           <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
           <td class="num muted">${rpmCell}</td>
           <td class="num muted">${fmtFull(input + cache)}</td>
