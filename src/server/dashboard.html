@@ -364,6 +364,10 @@
       return m;
     }
 
+    function normalizeModelForAgent(model, agent) {
+      return normalizeModelName(model) || (String(agent || '').trim().toLowerCase() === 'devin' ? 'swe-1.6' : '');
+    }
+
     /** Agent id → display name (XLab Router → RouterLab, etc.) */
     const AGENT_LABELS = {
       '9router': '9Router',
@@ -749,8 +753,9 @@
       $('recentBody').innerHTML = `
         <ul class="recent-list">
           ${events.map((e) => {
-            const model = normalizeModelName(e.model) || agentLabel(e.agent) || '\u2014';
-            const agent = e.agent && e.model ? agentLabel(e.agent) : '';
+            const resolvedModel = normalizeModelForAgent(e.model, e.agent);
+            const model = resolvedModel || agentLabel(e.agent) || '\u2014';
+            const agent = e.agent && resolvedModel ? agentLabel(e.agent) : '';
             const cached = (Number(e.cacheReadTokens) || 0) + (Number(e.cacheWriteTokens) || 0);
             return `<li class="recent-item">
               <div class="recent-item-main">

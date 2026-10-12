@@ -3,7 +3,7 @@ import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
-import { pathExists, stableId } from "../../util.js";
+import { normalizeModelForAgent, pathExists, stableId } from "../../util.js";
 import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
 import { parseGenericJsonl } from "../shared/generic-jsonl.js";
 
@@ -128,10 +128,12 @@ async function parseDevinSqlite(dbPath: string): Promise<UsageEvent[]> {
 
         const sid = String(row.session_id ?? "");
         // Some Devin sessions leave model empty in sessions table (legacy / adaptive routing)
-        const model =
+        const model = normalizeModelForAgent(
           extractModel(msg, msg.metadata, sessionModels.get(sid)) ||
-          sessionModels.get(sid) ||
-          null;
+            sessionModels.get(sid) ||
+            null,
+          "devin",
+        );
         const createdFallback =
           typeof row.created_at === "string"
             ? row.created_at

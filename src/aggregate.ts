@@ -1,6 +1,6 @@
 import type { GroupBy, GroupRow, StatsResult, TokenTotals, UsageEvent } from "./types.js";
 import { priceCostParts, getRateForModel } from "./pricing.js";
-import { normalizeModelName } from "./util.js";
+import { normalizeModelForAgent } from "./util.js";
 
 function emptyTotals(currency = "USD"): TokenTotals {
   return {
@@ -30,7 +30,8 @@ function addWithParts(t: TokenTotals, e: UsageEvent, parts: CostParts): void {
   t.cacheWriteTokens += e.cacheWriteTokens || 0;
   t.totalTokens += e.totalTokens || 0;
   t.estimatedCost += e.estimatedCost ?? 0;
-  if (getRateForModel(e.model).rate.estimated) t.estimatedPricing = true;
+  const model = normalizeModelForAgent(e.model, e.agent);
+  if (getRateForModel(model).rate.estimated) t.estimatedPricing = true;
   t.inputCost = (t.inputCost || 0) + parts.inputCost;
   t.cacheCost = (t.cacheCost || 0) + parts.cacheCost;
   t.outputCost = (t.outputCost || 0) + parts.outputCost;
@@ -40,7 +41,7 @@ function addWithParts(t: TokenTotals, e: UsageEvent, parts: CostParts): void {
   // dashboard needs to say "measured, no discount" instead of looking unscanned.
   const cacheRead = e.cacheReadTokens || 0;
   if (cacheRead > 0) {
-    const { rate } = getRateForModel(e.model);
+    const { rate } = getRateForModel(model);
     const discountsCache =
       rate.cacheReadPer1M != null && rate.cacheReadPer1M < rate.inputPer1M;
     if (discountsCache) t.cacheBilledTokens = (t.cacheBilledTokens || 0) + cacheRead;
@@ -56,7 +57,7 @@ function addWithParts(t: TokenTotals, e: UsageEvent, parts: CostParts): void {
 
 function add(t: TokenTotals, e: UsageEvent): void {
   const parts = priceCostParts(
-    e.model,
+    normalizeModelForAgent(e.model, e.agent),
     e.inputTokens || 0,
     e.outputTokens || 0,
     e.cacheReadTokens || 0,
@@ -70,7 +71,7 @@ function groupKey(e: UsageEvent, by: GroupBy, tsMs?: number): string {
   if (by === "agent") return e.agent;
   if (by === "model") {
     // Strip provider suffixes; always lowercase so kimi-k3 ≡ Kimi-k3
-    const m = normalizeModelName(e.model);
+    const m = normalizeModelForAgent(e.model, e.agent);
     // Label missing model with agent so "unknown" is not a mystery model name
     return (m || `unknown (${e.agent})`).toLowerCase();
   }
@@ -99,7 +100,7 @@ export function aggregate(
     const e = events[i]!;
     // priceCostParts once per event (was 2× — totals + group row)
     const parts = priceCostParts(
-      e.model,
+      normalizeModelForAgent(e.model, e.agent),
       e.inputTokens || 0,
       e.outputTokens || 0,
       e.cacheReadTokens || 0,
@@ -198,7 +199,7 @@ export function precomputeDashboardPeriods(
     const t = useTs ? timestampsMs[i]! : Date.parse(e.timestamp);
     if (!Number.isFinite(t)) continue;
     const parts = priceCostParts(
-      e.model,
+      normalizeModelForAgent(e.model, e.agent),
       e.inputTokens || 0,
       e.outputTokens || 0,
       e.cacheReadTokens || 0,
@@ -206,7 +207,7 @@ export function precomputeDashboardPeriods(
       e.estimatedCost,
     );
     const agentKey = e.agent;
-    const modelKey = (normalizeModelName(e.model) || `unknown (${e.agent})`).toLowerCase();
+    const modelKey = (normalizeModelForAgent(e.model, e.agent) || `unknown (${e.agent})`).toLowerCase();
     const dayKey = new Date(t).toISOString().slice(0, 10);
     const hourKey = `${new Date(t).toISOString().slice(0, 13)}:00`;
 

@@ -785,6 +785,16 @@ export function normalizeModelName(model: string | null | undefined): string | n
   return m || null;
 }
 
+/** Apply an explicit per-agent model fallback when the source omitted the model. */
+export function normalizeModelForAgent(
+  model: string | null | undefined,
+  agent: string | null | undefined,
+): string | null {
+  const normalized = normalizeModelName(model);
+  if (normalized) return normalized;
+  return normalizeAgentId(agent) === "devin" ? "swe-1.6" : null;
+}
+
 export function estimateTokensFromText(text: string): number {
   if (!text) return 0;
   // Rough heuristic: ~4 chars per token for mixed code/English
