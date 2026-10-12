@@ -630,11 +630,17 @@ html.dark {
 .fetch-spin.hidden { display: none; }
 @keyframes u-spin { to { transform: rotate(360deg); } }
 
-/* Overview cards - 3 columns so six cards form two balanced rows */
+/* Overview cards - 3 columns, so six cards form two balanced rows of three.
+   Periods that do not report active time hold five cards, which would leave a
+   hole in the last row; the rule below lets the trailing card fill it instead. */
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
+}
+/* An odd card count leaves the last row short: let the trailing card fill it. */
+.overview-grid .ov-card:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 @media (max-width: 640px) {
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -990,10 +996,6 @@ html.dark {
   .ov-card { padding: 0.7rem 0.75rem; }
   .ov-label { font-size: 0.68rem; }
   .ov-value { font-size: 1.15rem; }
-  /* Est. cost card full width on last row when 5 cards */
-  .overview-grid .ov-card:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
 
   .table-toolbar {
     flex-direction: column;

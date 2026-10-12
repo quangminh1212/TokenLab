@@ -34,7 +34,6 @@
         <a class="nav-link" href="/model">Model</a>
       </nav>
       <div class="top-actions">
-        <span class="meta-chip" id="activeChip" hidden></span>
         <span class="meta-chip" id="phanmemvipChip"></span>
         <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
@@ -496,8 +495,8 @@
       });
     }
 
-    function overviewCard(label, value, tone, hint) {
-      return `<div class="ov-card">
+    function overviewCard(label, value, tone, hint, title) {
+      return `<div class="ov-card"${title ? ` title="${title}"` : ''}>
         <span class="ov-label">${label}</span>
         <span class="ov-value ${tone || ''}">${value}</span>
         ${hint ? `<span class="ov-hint">${hint}</span>` : ''}
@@ -514,10 +513,10 @@
     }
 
     /**
-     * Minutes → compact "1h 30m" / "45m". Under an hour stays in minutes so a
-     * short period never rounds away to "0h" and reads as no usage at all.
+     * Minutes → "2h 30m" / "45m" for the Active-time card. Under an hour stays in
+     * minutes so a short period never rounds away to "0h" and reads as no usage.
      */
-    function fmtActiveTime(mins) {
+    function fmtActiveMins(mins) {
       const m = Math.max(0, Math.round(Number(mins) || 0));
       if (m < 60) return m + 'm';
       const h = Math.floor(m / 60);
@@ -563,14 +562,30 @@
     }
 
     /**
-     * Single writer for the header chips, so the version/scan chip and the
-     * Active-time chip can never drift out of sync across the three code paths
-     * that refresh the header (full load, recent-only refresh, SSE progress).
+     * Minutes of use in the period, as a card label. Active time = every minute
+     * carrying ≥1 request counts as a full minute of use. It comes from
+     * usageRpm.activeMinutes, counted on the server over distinct minute buckets —
+     * the client must never re-derive it from a paged event window.
      *
-     * Active time = every minute in the period carrying ≥1 request counts as a
-     * full minute of use. It comes from usageRpm.activeMinutes, counted on the
-     * server over distinct minute buckets — the client must never re-derive it,
-     * because it only ever sees a paged event window.
+     * Returns null when the period holds no requests: there is no measured active
+     * time then, and rendering "0m" would read as a measurement of zero.
+     */
+    function activeTimeLabel() {
+      // Round BEFORE the >0 test: activeMinutes is always a whole number of minute
+      // buckets, but a fractional value must not slip through as "0m".
+      const m = Math.round(Number(state.usageRpm && state.usageRpm.activeMinutes));
+      if (!Number.isFinite(m) || m <= 0) return null;
+      return { value: fmtActiveMins(m), title: activeTimeTitle(m) };
+    }
+
+    function activeTimeTitle(m) {
+      return `${m} minute${m === 1 ? '' : 's'} with requests in ${periodLabel()} \u2014 any minute containing a request counts in full`;
+    }
+
+    /**
+     * Single writer for the header chip, so the version/scan chip can never drift
+     * out of sync across the three code paths that refresh the header (full load,
+     * recent-only refresh, SSE progress).
      */
     function updateMeta(version) {
       const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
@@ -591,23 +606,6 @@
         pmvChip.textContent = 'PhanmemVIP —';
         pmvChip.title = 'Chưa đồng bộ được số phút PhanmemVIP hôm nay từ LiteLLM. Giới hạn là 17 giờ 50 phút/ngày.';
       }
-
-      const chip = $('activeChip');
-      // Round BEFORE the >0 test: activeMinutes is always a whole number of
-      // minute buckets, but a fractional value must not slip through and render
-      // "Active 0m" — that would read as a measured zero.
-      const m = Math.round(Number(state.usageRpm && state.usageRpm.activeMinutes));
-      if (!Number.isFinite(m) || m <= 0) {
-        // No requests in the period → no measured active time. Hide rather than
-        // render "Active 0m", which would read as a real measurement of zero.
-        chip.hidden = true;
-        chip.textContent = '';
-        chip.removeAttribute('title');
-        return;
-      }
-      chip.hidden = false;
-      chip.textContent = `Active ${fmtActiveTime(m)}`;
-      chip.title = `${m} minute${m === 1 ? '' : 's'} with requests in ${periodLabel()} \u2014 any minute containing a request counts in full`;
     }
 
     async function refreshPhanmemvipUsage() {
@@ -630,7 +628,14 @@
       });
       // Peak metric — no subtitle under RPM
       const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
-      // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout).
+      // Active time occupies the slot the cache card used to hold. It is only
+      // meaningful within a single day, so it appears for the "today" period and
+      // stays away for wider ones, where summing days would mix idle hours in.
+      const active = state.period === 'today' ? activeTimeLabel() : null;
+      const activeCard = active
+        ? overviewCard('Active time', active.value, 'tone-primary', undefined, active.title)
+        : '';
+      // Six cards in a 3-column grid: two balanced rows of three.
       // Cache tokens are deliberately not shown: for every model TokenLab tracks
       // the cached bucket bills at the same rate as fresh input (and is a
       // rounding error next to it), so a separate card only invites the reader to
@@ -641,9 +646,8 @@
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         rpmCard,
         overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing'),
+        activeCard,
       ].join('');
-      // Active time lives in the header chip (see updateMeta): it is a period-wide
-      // figure, so it belongs beside the version chip rather than in a card row.
     }
 
     function timeAgo(iso) {
@@ -1028,7 +1032,8 @@
       state.lastEventCount = eventCount;
 
       if (typeof health.version === 'string' && health.version) state.version = health.version;
-      // Header: version + scan state + Active time (period-wide, so it lives up here)
+      // Header: version + scan state. Active time lives in the overview card row
+      // instead: it is a period-wide figure, and the card grid has room for it.
       updateMeta();
 
       renderOverview(state.totals, state.live);
