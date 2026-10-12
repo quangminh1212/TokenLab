@@ -486,7 +486,7 @@
       const lower = label.toLowerCase();
       const format = (name) => {
         const spaced = String(name).replace(/-/g, ' ');
-        return (spaced.charAt(0).toUpperCase() + spaced.slice(1))
+        return spaced.replace(/(^|\s)([a-z])/g, (_match, prefix, letter) => prefix + letter.toUpperCase())
           .replace(/\bgpt\b/gi, 'GPT');
       };
       if (lower === 'big-pickle') return format('big pickle');
