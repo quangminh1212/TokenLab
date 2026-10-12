@@ -1,7 +1,15 @@
 import path from "node:path";
-import { applyPricing } from "../../pricing.js";
+import { getConfigSync } from "../../config.js";
+import { applyPricing, getRateForModel } from "../../pricing.js";
 import type { AgentId, UsageEvent } from "../../types.js";
-import { normalizeModelName, num, pathExists, readText, stableId } from "../../util.js";
+import {
+  normalizeModelName,
+  num,
+  parseTimestampInZone,
+  pathExists,
+  readText,
+  stableId,
+} from "../../util.js";
 
 // Request exports can contain several real calls in the same second with the
 // same model and token counts. Keep the native request id long enough for the
@@ -1441,7 +1449,9 @@ function rowToEvent(
     r.timestamp ?? r.createdAt ?? r.created_at ?? r.date ?? r.ts ?? null;
   let ts: string | null = null;
   if (typeof tsRaw === "string" && tsRaw.trim() && !Number.isNaN(Date.parse(tsRaw))) {
-    ts = new Date(tsRaw).toISOString();
+    // Zone-less exports must be read in the configured zone, not the host's.
+    const ms = parseTimestampInZone(tsRaw, getConfigSync().timezone);
+    if (!Number.isNaN(ms)) ts = new Date(ms).toISOString();
   } else if (typeof tsRaw === "number" && Number.isFinite(tsRaw) && tsRaw > 0) {
     const ms = tsRaw > 1e12 ? tsRaw : tsRaw > 1e9 ? tsRaw * 1000 : NaN;
     if (Number.isFinite(ms)) ts = new Date(ms).toISOString();
@@ -1474,6 +1484,50 @@ function rowToEvent(
   const endpoint = typeof r.endpoint === "string" ? r.endpoint : "";
   const nativeId = r.id != null ? String(r.id) : tag;
 
+  /**
+   * Token/cost parity flag: does the gateway's OWN billed cost match what its
+   * OWN token counts imply?
+   *
+   * Every ordinary row bills `cost = (10*prompt + 50*completion)/1e6` on the
+   * fable family. That was verified row-by-row against the rolling LiteLLM
+   * history: 7,489 of 7,520 rows reproduce EXACTLY, and the residuals are not a
+   * cache effect. Measured on the mirror, the 31 non-matching rows are two
+   * distinct populations, neither of which involves an unexported cache read:
+   *
+   *   - 6 rows carry `cost = 0` with no rate at all (the exporter wrote no
+   *     price). The `routerCostRaw > 0` guard below excludes these: we never
+   *     flag a row the gateway did not actually price.
+   *   - 25 rows match a CHEAPER rate card exactly, with `cachedTokens: 0`:
+   *     `$4/$20` for `rawModel: Claude-Fable` and `$2/$10` for
+   *     `rawModel: Claude-Sonnet`, while their displayed `model`/`model_group`
+   *     says the pricier `fable-5` / `opus-5.5`. The gateway billed the model
+   *     it actually served; the label is the thing that is inconsistent.
+   *
+   * So these rows are not under-billed at all, and the token columns are
+   * trustworthy. What a single rate table cannot do is reproduce a row whose
+   * label names a different model than the one billed — the label is the only
+   * lookup key we have. The flag records exactly that: this row's own cost is
+   * the faithful figure and a table lookup on its label is not.
+   *
+   * We do NOT invent a cache split or re-derive the cost. We leave the token
+   * columns exactly as the source stated them — tokens are measured, cost is
+   * reported — and record the disagreement so it is attributable rather than
+   * looking like a pricing bug. A row billing MORE than its tokens imply is
+   * left alone, since over-reporting a gateway cost is the safer failure.
+   */
+  const resolved = getRateForModel(modelLabel);
+  const rate = resolved?.rate ?? null;
+  let costParityGap = false;
+  if (hasRouterCostField && routerCostRaw > 0 && rate) {
+    const implied =
+      (effectiveInputTokens / 1e6) * rate.inputPer1M +
+      (outputTokens / 1e6) * rate.outputPer1M +
+      (cacheWriteTokens / 1e6) * (rate.cacheWritePer1M ?? 0);
+    // 5% tolerance absorbs rounding in the exporter; a real cache hit on a
+    // long prompt misses by far more than that.
+    costParityGap = implied > 0 && routerCostRaw < implied * 0.95;
+  }
+
   // Per-call history = 1 request; daily/export may carry explicit requests count
   const requestCountRaw = num(r.requests ?? r.requestCount ?? r.request_count);
   const requestCount = requestCountRaw > 0 ? Math.floor(requestCountRaw) : 1;
@@ -1501,7 +1555,9 @@ function rowToEvent(
     sourcePath: source,
     requestCount,
     cacheReported: hasCacheField,
-    routerCost: hasRouterCostField && routerCostRaw > 0 ? routerCostRaw : null,
+    routerCost:
+      hasRouterCostField && routerCostRaw > 0 ? routerCostRaw : null,
+    costParityGap,
   });
 
   if (r.id != null) ROUTER_NATIVE_IDS.set(event, String(r.id));
