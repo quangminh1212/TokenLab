@@ -337,8 +337,9 @@
         const last = parts[parts.length - 1] || m;
         if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
       }
-      m = m.replace(/\b(?:mintrouter|free)\b/gi, '');
-      return m.replace(/\s+/g, ' ').replace(/[-_:|]{2,}/g, '-').replace(/[-_:|]+$/g, '').trim();
+      m = m.replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
+      m = m.replace(/[-_:|/\s]+free$/i, '');
+      return m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
     }
 
     /** Agent id → display name (XLab Router → RouterLab, etc.) */
@@ -884,7 +885,7 @@
         // same rate as the input column beside it.
         if (costs) {
           return `<tr>
-            <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
+            <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
             <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
             <td class="num muted">${rpmCell}</td>
             <td class="num muted">${money(inputCost)}</td>
@@ -893,7 +894,7 @@
           </tr>`;
         }
         return `<tr>
-          <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
+          <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
           <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
           <td class="num muted">${rpmCell}</td>
           <td class="num muted">${fmtFull(input + cache)}</td>
