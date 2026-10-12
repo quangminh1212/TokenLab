@@ -18,6 +18,7 @@ import {
   detectAgents,
   scanAll,
 } from "../agents/index.js";
+import { liteLlmRoots } from "../agents/litellm/index.js";
 import {
   buildFullBackup,
   buildSettingsBackup,
@@ -86,6 +87,63 @@ function configuredTimeZone(): string {
   // getConfigSync already normalizes UTC→local on non-UTC hosts
   const tz = getConfigSync().timezone;
   return (tz && String(tz).trim()) || "local";
+}
+
+const PHANMEMVIP_DAILY_LIMIT_MINUTES = 17 * 60 + 50;
+
+function vietnamDateKey(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+async function readPhanmemvipUsage(): Promise<{
+  date: string;
+  usedMinutes: number | null;
+  limitMinutes: number;
+  updatedAt: string | null;
+}> {
+  const date = vietnamDateKey();
+  let previousUpdatedAt: string | null = null;
+
+  for (const root of liteLlmRoots()) {
+    try {
+      const raw = JSON.parse(
+        await readFile(path.join(root, "phanmemvip-minute-usage.json"), "utf8"),
+      ) as Record<string, unknown>;
+      const sourceDate = typeof raw.date === "string" ? raw.date : null;
+      const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : null;
+      if (sourceDate !== date) {
+        previousUpdatedAt ??= updatedAt;
+        continue;
+      }
+
+      const rawMinutes = Array.isArray(raw.minutes)
+        ? new Set(raw.minutes.filter((minute): minute is string => typeof minute === "string")).size
+        : Number(raw.usedMinutes);
+      if (!Number.isFinite(rawMinutes) || rawMinutes < 0) continue;
+      return {
+        date,
+        usedMinutes: Math.min(PHANMEMVIP_DAILY_LIMIT_MINUTES, Math.round(rawMinutes)),
+        limitMinutes: PHANMEMVIP_DAILY_LIMIT_MINUTES,
+        updatedAt,
+      };
+    } catch {
+      // Try the next configured LiteLLM data root.
+    }
+  }
+
+  return {
+    date,
+    usedMinutes: null,
+    limitMinutes: PHANMEMVIP_DAILY_LIMIT_MINUTES,
+    updatedAt: previousUpdatedAt,
+  };
 }
 
 /**
@@ -1416,6 +1474,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       return json(res, 200, await getLiveRateCached(mins));
     }
 
+    if (req.method === "GET" && pathname === "/api/phanmemvip-usage") {
+      return json(res, 200, await readPhanmemvipUsage());
+    }
+
     if (req.method === "GET" && pathname === "/api/rate-audit") {
       const since = url.searchParams.get("since");
       const until = url.searchParams.get("until");
@@ -2239,6 +2301,56 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     return mirrorSyncPromise;
   }
 
+  // The PMV counter is one small state file, so refresh it every minute without
+  // rerunning the expensive LiteLLM spend aggregation that feeds the full mirrors.
+  let pmvMirrorSyncPromise: Promise<boolean> | null = null;
+  let lastPmvMirrorSyncAt = 0;
+  const PMV_MIRROR_SYNC_INTERVAL_MS = 60_000;
+  async function syncPhanmemvipUsageMirror(reason: string): Promise<boolean> {
+    if (pmvMirrorSyncPromise) return pmvMirrorSyncPromise;
+    pmvMirrorSyncPromise = (async () => {
+      try {
+        const { spawn } = await import("node:child_process");
+        const script = await resolveSyncScript();
+        if (!script) return false;
+        const ok = await new Promise<boolean>((resolve) => {
+          const python = process.platform === "win32" ? "pythonw.exe" : "python";
+          const child = spawn(python, [script, "--pmv-only"], {
+            stdio: "ignore",
+            windowsHide: true,
+            env: { ...process.env },
+          });
+          let settled = false;
+          const done = (value: boolean) => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+          };
+          child.on("error", () => done(false));
+          child.on("exit", (code) => done(code === 0));
+          setTimeout(() => {
+            try {
+              child.kill();
+            } catch {
+              /* ignore */
+            }
+            done(false);
+          }, 15_000).unref?.();
+        });
+        if (ok) {
+          lastPmvMirrorSyncAt = Date.now();
+          console.log(`[tokenlab] PhanmemVIP usage mirror synced (${reason})`);
+        }
+        return ok;
+      } catch {
+        return false;
+      } finally {
+        pmvMirrorSyncPromise = null;
+      }
+    })();
+    return pmvMirrorSyncPromise;
+  }
+
   // Boot: serve the warm cache first. A full local scan can take minutes on a
   // machine with large Codex/Claude/Grok histories, so do not compete with the
   // first dashboard paint when a valid scan cache already exists.
@@ -2263,6 +2375,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       bootLightScan.unref?.();
       console.log("[tokenlab] warm cache served; deferred full local scan (use Refresh for a full scan)");
     });
+  void syncPhanmemvipUsageMirror("boot");
 
   /**
    * Periodic tick bookkeeping.
@@ -2275,6 +2388,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const timer = setInterval(() => {
     void (async () => {
       const now = Date.now();
+      if (now - lastPmvMirrorSyncAt >= PMV_MIRROR_SYNC_INTERVAL_MS) {
+        void syncPhanmemvipUsageMirror("periodic");
+      }
       const periodicOn = scanPeriodicEnabled();
       const fullDue =
         periodicOn && now - lastPeriodicFullScanAt >= fullScanIntervalMinutes() * 60_000;

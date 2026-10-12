@@ -166,6 +166,15 @@
       border-color: color-mix(in srgb, var(--xlab) 30%, transparent);
     }
     #activeChip[hidden] { display: none; }
+    #phanmemvipChip {
+      color: #92400e;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      background: color-mix(in srgb, #f59e0b 14%, transparent);
+      border-color: color-mix(in srgb, #f59e0b 35%, transparent);
+      max-width: min(52vw, 320px);
+    }
+    html.dark #phanmemvipChip { color: #fbbf24; }
     .icon-btn, .btn {
       appearance: none; border: 1px solid var(--border);
       background: var(--panel); color: var(--text);
@@ -1058,6 +1067,7 @@ html.dark {
 @media (max-width: 400px) {
   #meta { display: none; }
   #activeChip { font-size: 0.72rem; padding: 0.3rem 0.55rem; }
+  #phanmemvipChip { font-size: 0.72rem; padding: 0.3rem 0.55rem; max-width: 52vw; }
   .overview-grid { grid-template-columns: 1fr 1fr; }
   .ov-value { font-size: 1.05rem; }
   .provider-grid { grid-template-columns: 1fr; }
