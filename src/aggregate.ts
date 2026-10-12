@@ -67,14 +67,30 @@ function add(t: TokenTotals, e: UsageEvent): void {
   addWithParts(t, e, parts);
 }
 
+// Keep these aliases aligned with MODEL_DISPLAY_ALIASES in dashboard.html.
+// Group on the displayed model name so aliases share totals and peak RPM.
+const MODEL_GROUP_ALIASES = new Map<string, string>([
+  ["adaptive", "big-pickle"],
+  ["big pickle", "big-pickle"],
+  ["coding", "claude-fable-5"],
+  ["claude fable 5", "claude-fable-5"],
+  ["qwen3.8-27b", "qwen3.8-max"],
+  ["qwen3.8-max-preview", "qwen3.8-max"],
+  ["qwen3guard-gen-0.6b", "qwen3.8-max"],
+  ["qwen3guard-gen-8b", "qwen3.8-max"],
+  ["qwenheavy", "qwen3.8-max"],
+  ["qwen 3.8 max", "qwen3.8-max"],
+]);
+
+function modelGroupKey(e: UsageEvent): string {
+  const model = normalizeModelForAgent(e.model, e.agent);
+  const key = (model || `unknown (${e.agent})`).toLowerCase();
+  return MODEL_GROUP_ALIASES.get(key) || key;
+}
+
 function groupKey(e: UsageEvent, by: GroupBy, tsMs?: number): string {
   if (by === "agent") return e.agent;
-  if (by === "model") {
-    // Strip provider suffixes; always lowercase so kimi-k3 ≡ Kimi-k3
-    const m = normalizeModelForAgent(e.model, e.agent);
-    // Label missing model with agent so "unknown" is not a mystery model name
-    return (m || `unknown (${e.agent})`).toLowerCase();
-  }
+  if (by === "model") return modelGroupKey(e);
   const t = tsMs != null && Number.isFinite(tsMs) ? tsMs : Date.parse(e.timestamp);
   if (!Number.isFinite(t)) return "unknown";
   const d = new Date(t);
@@ -207,7 +223,7 @@ export function precomputeDashboardPeriods(
       e.estimatedCost,
     );
     const agentKey = e.agent;
-    const modelKey = (normalizeModelForAgent(e.model, e.agent) || `unknown (${e.agent})`).toLowerCase();
+    const modelKey = modelGroupKey(e);
     const dayKey = new Date(t).toISOString().slice(0, 10);
     const hourKey = `${new Date(t).toISOString().slice(0, 13)}:00`;
 
