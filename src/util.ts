@@ -585,6 +585,8 @@ export function num(v: unknown): number {
  *  - "gpt-5.5 (openai-compatible-responses-uuid)" → "gpt-5.5"
  *  - "gpt-5.5|provider-id" → "gpt-5.5"
  *  - "provider/gpt-5.5" → "gpt-5.5" (keeps last path segment when useful)
+ *  - strips routing/reasoning suffixes such as :free, -xhigh, or -compact
+ *  - folds common separator/version aliases to the OpenRouter model slug
  *  - trims whitespace / trailing punctuation
  */
 /**
@@ -675,6 +677,16 @@ function zoneOffsetMs(epochMs: number, timezone: string): number | null {
   }
 }
 
+const OFFICIAL_OPENROUTER_HIGH_MODEL_IDS = new Set(["o3-mini-high", "o4-mini-high"]);
+const NON_MODEL_USAGE_LABELS = new Set([
+  "9router-usage-backup",
+  "9router-daily-summary",
+  "9router-api-chart",
+  "mixed",
+  "default",
+  "gpt",
+]);
+
 export function normalizeModelName(model: string | null | undefined): string | null {
   if (model == null) return null;
   let m = String(model).trim();
@@ -708,6 +720,46 @@ export function normalizeModelName(model: string | null | undefined): string | n
 
   // Collapse internal whitespace
   m = m.replace(/\s+/g, " ").trim();
+
+  // Mirror the model-label cleanup used in the dashboard. These are routing or
+  // reasoning variants, not separate OpenRouter models. Keep literal `free`
+  // because OpenRouter exposes `openrouter/free` as a model selector.
+  m = m.replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, "");
+  m = m.replace(/-openai-compact$/i, "");
+  if (!/^(?:free|batch)$/i.test(m)) {
+    m = m.replace(/[-_:|/\s]+(?:free|batch)$/i, "");
+  }
+
+  // A small number of official OpenRouter IDs really do end in `-high`.
+  // Preserve those exact IDs while removing effort labels from other models.
+  if (!OFFICIAL_OPENROUTER_HIGH_MODEL_IDS.has(m.toLowerCase())) {
+    m = m.replace(/[-_:|/\s]+(?:xhigh|high|low|medium|compact|tiered)$/i, "");
+  }
+  // Claude clients sometimes append the reasoning mode to an otherwise public
+  // model ID. Other providers have real `-thinking` model IDs, so keep them.
+  if (/^claude-(?:opus|sonnet|haiku)-.+-thinking$/i.test(m)) {
+    m = m.replace(/-thinking$/i, "");
+  }
+  // SWE's fast/slow values are modes on the same family, not OpenRouter IDs.
+  if (/^swe-\d+(?:[-.]\d+)?-(?:fast|slow)$/i.test(m)) {
+    m = m.replace(/-(?:fast|slow)$/i, "");
+  }
+
+  // Repair observed aliases that differ from OpenRouter's stable model IDs.
+  m = m.replace(
+    /^(claude-(?:opus|sonnet|haiku)-\d+\.\d+)(?:-\d+\.\d+)+$/i,
+    "$1",
+  );
+  m = m.replace(/^(claude-(?:opus|sonnet|haiku)-\d+)-(\d+)$/i, "$1.$2");
+  m = m.replace(/^(gpt-\d+)-(\d+)-(luna|sol|terra)$/i, "$1.$2-$3");
+  m = m.replace(/^(glm|swe)-(\d+)-(\d+)$/i, "$1-$2.$3");
+  m = m.replace(/^glm-(\d+)\.0$/i, "glm-$1");
+  m = m.replace(/^gemini-3\.1-pro$/i, "gemini-3.1-pro-preview");
+  m = m.replace(/^(grok-\d+\.\d+)-build$/i, "$1");
+  m = m.replace(/^(claude-(?:opus|sonnet|haiku)-.+)-lite$/i, "$1");
+  m = m.replace(/^pmv-opus-(\d+\.\d+)$/i, "claude-opus-$1");
+  if (NON_MODEL_USAGE_LABELS.has(m.toLowerCase())) return null;
+
   // Drop trailing separators
   m = m.replace(/[-_:|]+$/g, "").trim();
 

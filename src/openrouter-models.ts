@@ -261,15 +261,19 @@ export function openRouterLookupCandidates(model: string): string[] {
   const STRIP_END = [
     ":batch",
     ":free",
+    "-openai-compact",
     "-high",
     "-tiered",
     "-low",
     "-medium",
     "-xhigh",
+    "-compact",
+    "-thinking",
     "-fast",
     "-exp",
     "-latest",
     "-preview",
+    "-free",
   ];
   let cur = bare;
   // Peel suffixes repeatedly
