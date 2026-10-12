@@ -765,6 +765,9 @@ export function normalizeModelName(model: string | null | undefined): string | n
 
   // Common vendor spelling variants → canonical form for grouping + rates
   const lower = m.toLowerCase();
+  if (lower === "claude-fable") m = "claude-fable-5";
+  else if (lower === "claude-opus") m = "claude-opus-5.5";
+  else if (lower === "claude-sonnet") m = "claude-sonnet-5.5";
   if (lower.startsWith("deep-seek")) m = "deepseek" + m.slice("deep-seek".length);
   if (lower.startsWith("deep_seek")) m = "deepseek" + m.slice("deep_seek".length);
   // Digigo / digigo case

@@ -24,7 +24,7 @@ import { normalizeModelName } from "./util.js";
  * breakdown truthful, not about the dollar figure, which the rescan changes only
  * marginally.
  */
-export const RATES_VERSION = 5;
+export const RATES_VERSION = 6;
 
 /**
  * Bundled offline rates (USD per 1M tokens).
