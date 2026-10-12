@@ -135,6 +135,7 @@
       }
       m = m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
       const lower = m.toLowerCase();
+      if (lower === 'gpt-5.3-codex') return 'gpt-5.5';
       if (lower === 'claude-fable') return 'claude-fable-5';
       if (lower === 'claude-opus') return 'claude-opus-5.5';
       if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
@@ -149,6 +150,7 @@
         .replace(/^[-_:|]+|[-_:|]+$/g, '')
         .trim();
       const lower = cleaned.toLowerCase();
+      if (lower === 'gpt-5.3-codex') return 'gpt-5.5';
       if (lower === 'claude-fable') return 'claude-fable-5';
       if (lower === 'claude-opus') return 'claude-opus-5.5';
       if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
