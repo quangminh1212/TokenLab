@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { priceCostParts, priceTokens, resolveModelKey } from "../src/pricing.js";
+import {
+  applyPricing,
+  priceCostParts,
+  priceTokens,
+  repriceEvents,
+  resolveModelKey,
+} from "../src/pricing.js";
+import type { UsageEvent } from "../src/types.js";
 
 test("resolveModelKey maps claude sonnet aliases", () => {
   assert.equal(resolveModelKey("claude-sonnet-4-20250514"), "claude-sonnet-4");
@@ -101,4 +108,69 @@ test("getRateForModel prefers OpenRouter over bundled Gemini family fallback", a
     assert.equal(proLow.source, "openrouter");
     assert.equal(proLow.rate.inputPer1M, orPro.rate.inputPer1M);
   }
+});
+
+/** A priced row priced from the bundled table, used as the reprice input shape. */
+function priced(over: Partial<UsageEvent> = {}): UsageEvent {
+  return applyPricing({
+    id: "e1",
+    agent: "litellm",
+    model: "claude-fable-5",
+    timestamp: "2026-10-11T05:32:12.000Z",
+    inputTokens: 2_000_000,
+    outputTokens: 10_000,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    requestCount: 1,
+    ...over,
+  }) as UsageEvent;
+}
+
+test("costParityGap reports the gateway figure, not the token-implied one", () => {
+  // 2M in + 10k out on claude-fable-5 implies $20.50 from the table, but the
+  // gateway billed $12.30 on a cheaper card (it priced the model it actually
+  // served), so a table lookup on this row's label cannot reproduce it.
+  const implied = priced({ routerCost: null }).estimatedCost ?? 0;
+  assert.ok(Math.abs(implied - 20.5) < 1e-9);
+
+  const row = priced({ costParityGap: true, routerCost: 12.3 });
+  assert.equal(row.estimatedCost, 12.3);
+  assert.equal(row.pricingStatus, "zero_rate");
+  assert.notEqual(row.estimatedCost, implied);
+});
+
+test("costParityGap with no gateway figure is zero, never invented", () => {
+  const row = priced({ costParityGap: true, routerCost: null });
+  assert.equal(row.estimatedCost, 0);
+  assert.equal(row.pricingStatus, "zero_rate");
+});
+
+test("a row billing MORE than its tokens imply is left alone", () => {
+  // Over-reporting a gateway cost is the safer failure: keep the stated figure.
+  const row = priced({ routerCost: 25 });
+  assert.equal(row.estimatedCost, 25);
+  assert.equal(row.pricingStatus, "priced");
+});
+
+test("costParityGap survives a forced table reprice", () => {
+  // A forced reprice nulls routerCost so every row is re-derived from tokens.
+  // That must not zero a gap row: its estimatedCost IS the gateway's figure.
+  const gap = priced({ costParityGap: true, routerCost: 12.3 });
+  const normal = priced({ routerCost: null });
+  const [reGap, reNormal] = repriceEvents([gap, normal], { forceTable: true });
+
+  assert.equal(reGap.estimatedCost, 12.3);
+  assert.equal(reGap.pricingStatus, "zero_rate");
+  assert.equal(reGap.costParityGap, true);
+  // An ordinary row still gets re-derived from the table.
+  assert.equal(reNormal.estimatedCost, 20.5);
+  assert.equal(reNormal.pricingStatus, "priced");
+});
+
+test("a forced reprice keeps a gapless row's gateway cost out of the table", () => {
+  // Without the gap flag, forceTable is meant to recompute from tokens.
+  const row = priced({ routerCost: 25 });
+  const [out] = repriceEvents([row], { forceTable: true });
+  assert.equal(out.estimatedCost, 20.5);
+  assert.equal(out.costParityGap, undefined);
 });
