@@ -93,6 +93,10 @@
         <button type="button" class="seg-btn" data-group="model">By model</button>
         <button type="button" class="seg-btn" data-group="day" id="groupTimeBtn">By day</button>
       </div>
+      <div class="seg seg-sm" id="sortSeg" role="tablist" aria-label="Sort rows">
+        <button type="button" class="seg-btn active" data-sort="value" id="tableValueSortBtn">By cost</button>
+        <button type="button" class="seg-btn" data-sort="name">By name</button>
+      </div>
       <div class="seg seg-sm" id="viewModeSeg" role="tablist" aria-label="Value mode">
         <button type="button" class="seg-btn active" data-view="costs">Costs</button>
         <button type="button" class="seg-btn" data-view="tokens">Tokens</button>
@@ -183,6 +187,7 @@
     const state = {
       period: 'today',
       groupBy: 'agent',
+      sortBy: 'value',
       viewMode: 'costs',
       chartMode: 'tokens',
       daySeries: [],
@@ -850,7 +855,18 @@
       $('tableHead').innerHTML = `<tr>${head.map((h, i) =>
         `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr>`;
 
-      const groups = state.groups;
+      const collator = state.sortBy === 'name'
+        ? new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+        : null;
+      const groups = collator
+        ? state.groups.slice().sort((a, b) =>
+            collator.compare(formatGroupKey(a.key), formatGroupKey(b.key)))
+        : state.groups;
+      $('tableValueSortBtn').textContent =
+        state.groupBy === 'day' || state.groupBy === 'hour'
+          ? 'By date'
+          : state.viewMode === 'tokens' ? 'By tokens' : 'By cost';
+      setActive($('sortSeg'), 'data-sort', state.sortBy);
       if (!groups.length) {
         $('tableBody').innerHTML = `<tr><td colspan="${head.length}"><div class="empty">${emptyMsg('table')}</div></td></tr>`;
         return;
@@ -1125,6 +1141,12 @@
       state.groupBy = b.getAttribute('data-group') || 'agent';
       setActive($('groupSeg'), 'data-group', state.groupBy);
       requestLoad();
+    };
+    $('sortSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.sortBy = b.getAttribute('data-sort') || 'value';
+      renderTable();
     };
     $('viewModeSeg').onclick = (e) => {
       const b = e.target.closest('.seg-btn');
