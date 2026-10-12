@@ -1080,9 +1080,9 @@ function expandOneDay(
     }
   }
 
-  // No usable byModel → emit the whole day as one row. The model stays
-  // "unattributed" rather than "mixed" so it is visibly unpriced instead of
-  // looking like a real model that happens to have no rate.
+  // No usable byModel → emit the whole day as one source row with model
+  // "unattributed". Shared model normalization applies the mapping used by
+  // aggregate and dashboard views; this source marker remains available here.
   if (dayInput + dayOutput + dayCache <= 0 && dayCost <= 0) return [];
   const dayRequests = num(day.requests);
   const e = rowToEvent(
@@ -1113,11 +1113,9 @@ function expandOneDay(
 }
 
 /**
- * Emit the slice of a day that `byModel` did not cover.
- *
- * Kept as a separate "unattributed" row so the per-model rows stay priceable
- * (the rate table is keyed by model) instead of collapsing the whole day into
- * one unpricable "mixed" blob. Returns null when there is nothing material left.
+ * Emit the slice of a day that `byModel` did not cover as a separate source row.
+ * Shared model normalization applies the label mapping for aggregate and
+ * dashboard views. Returns null when there is nothing material left.
  */
 function remainderRow(
   dateKey: string,

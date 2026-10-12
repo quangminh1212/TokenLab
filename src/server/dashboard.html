@@ -353,6 +353,7 @@
       m = m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
       const lower = m.toLowerCase();
       if (lower === 'deepseek-chat') return 'deepseek-v4-flash';
+      if (lower === 'unattributed') return 'gpt-5.5';
       if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
       if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.7';
       if (lower === 'mimo-auto') return 'mimo-v2.5';
@@ -376,6 +377,7 @@
       const normalized = normalizeModelName(model);
       if (normalized) return normalized;
       const agentId = String(agent || '').trim().toLowerCase();
+      if (['9router', 'routerlab'].includes(agentId)) return 'gpt-5.5';
       return ['devin', 'swe-agent', 'swe agent'].includes(agentId) ? 'swe-1.6' : '';
     }
 

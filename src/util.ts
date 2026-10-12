@@ -766,6 +766,7 @@ export function normalizeModelName(model: string | null | undefined): string | n
   // Common vendor spelling variants → canonical form for grouping + rates
   const lower = m.toLowerCase();
   if (lower === "deepseek-chat") m = "deepseek-v4-flash";
+  else if (lower === "unattributed") m = "gpt-5.5";
   else if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
   else if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.7";
   else if (lower === "mimo-auto") m = "mimo-v2.5";
@@ -798,8 +799,12 @@ export function normalizeModelForAgent(
 ): string | null {
   const normalized = normalizeModelName(model);
   if (normalized) return normalized;
-  // Only use agent-level defaults where the agent identifies the model; gateways may route many models.
+  // Apply explicit model-less RouterLab/9Router mappings; gateways may route many
+  // models, so leave other agents unattributed.
   switch (String(normalizeAgentId(agent))) {
+    case "9router":
+    case "routerlab":
+      return "gpt-5.5";
     case "devin":
     case "swe-agent":
     case "swe agent":
