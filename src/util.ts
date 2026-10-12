@@ -793,11 +793,12 @@ export function normalizeModelForAgent(
 ): string | null {
   const normalized = normalizeModelName(model);
   if (normalized) return normalized;
-  switch (normalizeAgentId(agent)) {
-    case "9router":
+  // Only use agent-level defaults where the agent identifies the model; gateways may route many models.
+  switch (String(normalizeAgentId(agent))) {
     case "devin":
-    case "routerlab":
-      return "gpt-5.5";
+    case "swe-agent":
+    case "swe agent":
+      return "swe-1.6";
     default:
       return null;
   }
