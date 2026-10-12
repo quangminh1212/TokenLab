@@ -24,7 +24,7 @@ import { normalizeModelName } from "./util.js";
  * breakdown truthful, not about the dollar figure, which the rescan changes only
  * marginally.
  */
-export const RATES_VERSION = 8;
+export const RATES_VERSION = 9;
 
 /**
  * Bundled offline rates (USD per 1M tokens).
@@ -148,10 +148,6 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   // Hermes / 9router gateway aliases for Kimi K3 family
   "kimi-k3": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
   "kimi-k3.0": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
-  // Hermes gateway profile name (routes via 9router/RouterLab) — NOT Claude default $3/$15.
-  // Approx blended route cost (kimi-class); real backend model often hidden behind the alias.
-  xlab: { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
-  "vip-kimi": { inputPer1M: 0.6, outputPer1M: 2.5, cacheReadPer1M: 0.06 },
   // Qwen max family (approx OpenRouter-class rates when Hermes/9router labels them)
   "qwen3.7-max": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
   "qwen3.8-max-preview": { inputPer1M: 0.8, outputPer1M: 3.2, cacheReadPer1M: 0.08 },
@@ -170,9 +166,8 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   // --- Agent / router house models (still approx) ---
   "cursor-small": { inputPer1M: 0.2, outputPer1M: 0.8 },
   "mimo-auto": { inputPer1M: 0.2, outputPer1M: 0.8 },
-  "swe-1-6": { inputPer1M: 0.5, outputPer1M: 2 },
+  "swe-1.6": { inputPer1M: 0.5, outputPer1M: 2 },
   "swe-1-7": { inputPer1M: 0.5, outputPer1M: 2 },
-  "windsurf-cascade": { inputPer1M: 1, outputPer1M: 4 },
   adaptive: { inputPer1M: 1, outputPer1M: 4 },
   // Paid references for the free/stealth aliases shown in the model table.
   // Big Pickle and `coding` have no disclosed paid model ID; use Qwen3 Coder
@@ -252,7 +247,7 @@ export function guessProvider(modelId: string): string {
   if (raw.startsWith("grok")) return "x-ai";
   if (raw.startsWith("deepseek")) return "deepseek";
   if (raw.startsWith("glm") || raw.startsWith("chatglm")) return "z-ai";
-  if (raw.startsWith("kimi") || raw.startsWith("moonshot")) return "moonshotai";
+  if (raw.startsWith("kimi") || raw === "vip-kimi" || raw.startsWith("moonshot")) return "moonshotai";
   if (raw.startsWith("qwen")) return "qwen";
   if (raw.startsWith("minimax")) return "minimax";
   if (raw.startsWith("step-") || raw.startsWith("stepfun")) return "stepfun";
@@ -266,7 +261,8 @@ export function guessProvider(modelId: string): string {
   if (raw.startsWith("mimo")) return "xiaomi";
   if (raw.includes("windsurf") || raw.startsWith("swe-") || raw === "cascade") return "windsurf";
   if (raw.includes("cursor")) return "cursor";
-  if (raw.includes("digigo") || raw === "xlab" || raw.startsWith("9router")) return "other";
+  if (raw === "xlab") return "openai";
+  if (raw.includes("digigo") || raw.startsWith("9router")) return "other";
   return "other";
 }
 
@@ -281,8 +277,6 @@ const ALIASES: Record<string, string> = {
   "grok-4-latest": "grok-4",
   "grok-code-fast-1-0825": "grok-code-fast-1",
   "kimi-k3": "kimi-k3",
-  xlab: "xlab",
-  "vip-kimi": "vip-kimi",
   "qwen3.7-max": "qwen3.7-max",
   "qwen3.8-max-preview": "qwen3.8-max-preview",
   "qwen3-coder-next": "qwen3-coder-next",

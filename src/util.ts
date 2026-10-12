@@ -767,6 +767,9 @@ export function normalizeModelName(model: string | null | undefined): string | n
   const lower = m.toLowerCase();
   if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
   else if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.7";
+  else if (lower === "vip-kimi") m = "kimi-k3";
+  else if (lower === "windsurf-cascade") m = "swe-1.6";
+  else if (lower === "xlab") m = "gpt-5.5";
   else if (lower === "gpt-5.3-codex") m = "gpt-5.5";
   else if (lower === "claude-fable") m = "claude-fable-5";
   else if (lower === "claude-opus") m = "claude-opus-5.5";
