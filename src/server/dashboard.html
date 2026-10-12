@@ -331,6 +331,19 @@
       return only !== String(new Date().getFullYear());
     }
 
+    const MODEL_DISPLAY_ALIASES = new Map([
+      ['adaptive', 'big-pickle'],
+      ['big pickle', 'big-pickle'],
+      ['coding', 'claude-fable-5'],
+      ['claude fable 5', 'claude-fable-5'],
+      ['qwen3.8-27b', 'qwen3.8-max'],
+      ['qwen3.8-max-preview', 'qwen3.8-max'],
+      ['qwen3guard-gen-0.6b', 'qwen3.8-max'],
+      ['qwen3guard-gen-8b', 'qwen3.8-max'],
+      ['qwenheavy', 'qwen3.8-max'],
+      ['qwen 3.8 max', 'qwen3.8-max'],
+    ]);
+
     /** Strip provider suffixes so "gpt-5.5 (openai-compatible-\u2026)" \u2192 "gpt-5.5" */
     function normalizeModelName(model) {
       if (model == null) return '';
@@ -352,6 +365,8 @@
       m = m.replace(/[-_:|/\s]+free$/i, '');
       m = m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
       const lower = m.toLowerCase();
+      const displayAlias = MODEL_DISPLAY_ALIASES.get(lower);
+      if (displayAlias) return displayAlias;
       if (lower === 'deepseek-chat') return 'deepseek-v4-flash';
       if (lower === 'unattributed') return 'gpt-5.5';
       if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
@@ -468,7 +483,11 @@
 
     function displayModelLabel(model) {
       const label = String(model ?? '');
-      return label.toLowerCase() === 'big-pickle' ? 'Big Pickle' : label;
+      const lower = label.toLowerCase();
+      if (lower === 'big-pickle') return 'big pickle';
+      if (lower === 'claude-fable-5') return 'claude fable 5';
+      if (lower === 'qwen3.8-max') return 'qwen 3.8 max';
+      return label;
     }
 
     function formatGroupKey(key) {
