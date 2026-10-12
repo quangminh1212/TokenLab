@@ -369,7 +369,7 @@
       const normalized = normalizeModelName(model);
       if (normalized) return normalized;
       const agentId = String(agent || '').trim().toLowerCase();
-      return ['9router', 'devin', 'routerlab'].includes(agentId) ? 'gpt-5.5' : '';
+      return ['devin', 'swe-agent', 'swe agent'].includes(agentId) ? 'swe-1.6' : '';
     }
 
     /** Agent id → display name (XLab Router → RouterLab, etc.) */
