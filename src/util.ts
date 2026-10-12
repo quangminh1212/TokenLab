@@ -776,6 +776,7 @@ export function normalizeModelName(model: string | null | undefined): string | n
   else if (lower === "gpt-5.3-codex") m = "gpt-5.5";
   else if (lower === "gp-gpt-5.5") m = "gpt-5.5";
   else if (lower === "claude-fable") m = "claude-fable-5";
+  else if (lower === "pmv-default") m = "claude-fable-5";
   else if (lower === "claude-opus") m = "claude-opus-5.5";
   else if (lower === "claude-sonnet") m = "claude-sonnet-5.5";
   else if (lower === "digigo") m = "gpt-5.5";
