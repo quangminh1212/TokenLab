@@ -35,6 +35,7 @@
       </nav>
       <div class="top-actions">
         <span class="meta-chip" id="activeChip" hidden></span>
+        <span class="meta-chip" id="phanmemvipChip"></span>
         <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
         <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings"></a>
@@ -188,6 +189,8 @@
       live: null,
       /** Period peak RPM (busiest minute) from /api/stats.usageRpm */
       usageRpm: null,
+      /** Daily PhanmemVIP minute usage from the LiteLLM hook mirror. */
+      phanmemvipUsage: null,
       /** Server version for the header chip — kept so a bare updateMeta() (no
        *  full /api/stats pass) can still rewrite the version text intact. */
       version: '',
@@ -569,6 +572,19 @@
       const v = version || state.version || '';
       $('meta').textContent = `v${v}${scanHint}`;
 
+      const pmvChip = $('phanmemvipChip');
+      const pmv = state.phanmemvipUsage;
+      if (pmv && typeof pmv.usedMinutes === 'number' && Number.isFinite(pmv.usedMinutes)) {
+        const used = Math.max(0, Math.round(pmv.usedMinutes));
+        const limit = Math.max(1, Math.round(Number(pmv.limitMinutes) || 1070));
+        pmvChip.textContent = `PhanmemVIP ${used.toLocaleString('vi-VN')}/${limit.toLocaleString('vi-VN')} phút`;
+        const updated = pmv.updatedAt ? ` Cập nhật: ${new Date(pmv.updatedAt).toLocaleString('vi-VN')}.` : '';
+        pmvChip.title = `Hôm nay (${pmv.date}): ${used} phút có request, tối đa ${limit} phút. Một phút có từ một request được tính là một phút.${updated}`;
+      } else {
+        pmvChip.textContent = 'PhanmemVIP —/1.070 phút';
+        pmvChip.title = 'Chưa đồng bộ được số phút PhanmemVIP hôm nay từ LiteLLM.';
+      }
+
       const chip = $('activeChip');
       // Round BEFORE the >0 test: activeMinutes is always a whole number of
       // minute buckets, but a fractional value must not slip through and render
@@ -585,6 +601,17 @@
       chip.hidden = false;
       chip.textContent = `Active ${fmtActiveTime(m)}`;
       chip.title = `${m} minute${m === 1 ? '' : 's'} with requests in ${periodLabel()} \u2014 any minute containing a request counts in full`;
+    }
+
+    async function refreshPhanmemvipUsage() {
+      try {
+        const response = await fetch('/api/phanmemvip-usage', { cache: 'no-store' });
+        if (!response.ok) throw new Error('PhanmemVIP usage request failed');
+        state.phanmemvipUsage = await response.json();
+        updateMeta();
+      } catch {
+        // Keep the last known value visible while the mirror/API is unavailable.
+      }
     }
 
     function renderOverview(t, live) {
@@ -1100,6 +1127,10 @@
     };
 
     requestLoad();
+    void refreshPhanmemvipUsage();
+    setInterval(() => {
+      void refreshPhanmemvipUsage();
+    }, 60_000);
     // Background refresh once per minute — skip while scanning (SSE + scan poll handle that)
     setInterval(() => {
       if (state.scanning) return;

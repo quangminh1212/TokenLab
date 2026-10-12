@@ -26,6 +26,9 @@ from __future__ import annotations
 
 import os
 import sys
+import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import paramiko
 
@@ -903,6 +906,57 @@ if not _litellm_fresh:
 '''
 
 
+def sync_phanmemvip_usage(sftp: paramiko.SFTPClient, mirror_roots: list[str], vps_dirs: dict[str, str]) -> int:
+    """Mirror only the sanitized daily PMV minute count, without spend SQL."""
+    source_path = "/opt/litellm/phanmemvip-minute-usage.json"
+    try:
+        with sftp.file(source_path, "r") as remote_file:
+            raw_bytes = remote_file.read()
+        if isinstance(raw_bytes, bytes):
+            raw_bytes = raw_bytes.decode("utf-8", "strict")
+        state = json.loads(raw_bytes)
+        if not isinstance(state, dict):
+            state = {}
+    except (OSError, ValueError, TypeError, UnicodeError):
+        state = {}
+
+    today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat()
+    used = 0
+    if state.get("date") == today:
+        minutes = state.get("minutes")
+        if isinstance(minutes, list):
+            used = len({value for value in minutes if isinstance(value, str)})
+        else:
+            try:
+                used = int(state.get("usedMinutes", 0))
+            except (TypeError, ValueError):
+                used = 0
+    payload = {
+        "date": today,
+        "usedMinutes": max(0, min(1070, used)),
+        "limitMinutes": 1070,
+        "updatedAt": state.get("updatedAt") if state.get("date") == today else None,
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    destinations = [
+        os.path.join(root, "litellm", "phanmemvip-minute-usage.json")
+        for root in mirror_roots
+    ]
+    vps_data = vps_dirs.get("litellm")
+    if vps_data and os.path.isdir(vps_data):
+        destinations.append(os.path.join(vps_data, "phanmemvip-minute-usage.json"))
+    for destination in destinations:
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        temporary = destination + ".part"
+        with open(temporary, "w", encoding="utf-8") as target:
+            target.write(serialized)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, destination)
+    print("SYNCED_PHANMEMVIP_MINUTES", payload["usedMinutes"], today)
+    return 0
+
+
 def main() -> int:
     appdata = os.environ.get("APPDATA")
     if not appdata:
@@ -948,6 +1002,13 @@ def main() -> int:
         )
     client.connect(**connect_kwargs)
     sftp = client.open_sftp()
+
+    if "--pmv-only" in sys.argv[1:]:
+        try:
+            return sync_phanmemvip_usage(sftp, mirror_roots, vps_dirs)
+        finally:
+            sftp.close()
+            client.close()
 
     with sftp.file("/tmp/xlab_export_mirror.py", "w") as rf:
         rf.write(EXPORT_PY)
