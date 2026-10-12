@@ -484,10 +484,15 @@
     function displayModelLabel(model) {
       const label = String(model ?? '');
       const lower = label.toLowerCase();
-      if (lower === 'big-pickle') return 'big pickle';
-      if (lower === 'claude-fable-5') return 'claude fable 5';
-      if (lower === 'qwen3.8-max') return 'qwen3.8 max';
-      return label.replace(/-/g, ' ');
+      const format = (name) => {
+        const spaced = String(name).replace(/-/g, ' ');
+        return (spaced.charAt(0).toUpperCase() + spaced.slice(1))
+          .replace(/\bgpt\b/gi, 'GPT');
+      };
+      if (lower === 'big-pickle') return format('big pickle');
+      if (lower === 'claude-fable-5') return format('claude fable 5');
+      if (lower === 'qwen3.8-max') return format('qwen3.8 max');
+      return format(label);
     }
 
     function formatGroupKey(key) {
