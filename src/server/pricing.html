@@ -136,6 +136,15 @@
       return m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
     }
 
+    function cleanModelDisplayName(model) {
+      return String(model ?? '')
+        .replace(/\b(?:mintrouter|free)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .replace(/[-_:|]{2,}/g, '-')
+        .replace(/[-_:|]+$/g, '')
+        .trim();
+    }
+
     const ICONS = {
       moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
       sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
@@ -584,13 +593,16 @@
         const id = escapeHtml(m.id);
         const free = Number(rates.input) === 0 && Number(rates.output) === 0;
         const src = rates.source;
-        const displayName = escapeHtml((m.name || m.id || '').replace(/^[^:]+:\s*/, ''));
+        const rawName = m.name
+          ? m.name.replace(/^[^:]+:\s*/, '')
+          : String(m.id || '').split('/').pop();
+        const displayName = escapeHtml(cleanModelDisplayName(rawName));
         return `<article class="or-row ${src === 'custom' || src === 'draft' ? 'is-custom' : ''} ${free ? 'is-free' : ''}" data-id="${id}">
           <div class="or-cell-model">
             ${providerIconHtml(m.provider)}
             <div class="or-card-main">
               <div class="or-card-title-row">
-                <h3 class="or-card-name" title="${escapeHtml(m.name)}">${displayName}</h3>
+                <h3 class="or-card-name" title="${displayName}">${displayName}</h3>
                 ${free ? '<span class="or-badge free">Free</span>' : ''}
                 ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
                 ${src === 'seen' ? '<span class="or-badge custom">seen</span>' : ''}

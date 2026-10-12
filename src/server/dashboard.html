@@ -337,7 +337,8 @@
         const last = parts[parts.length - 1] || m;
         if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
       }
-      return m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
+      m = m.replace(/\b(?:mintrouter|free)\b/gi, '');
+      return m.replace(/\s+/g, ' ').replace(/[-_:|]{2,}/g, '-').replace(/[-_:|]+$/g, '').trim();
     }
 
     /** Agent id → display name (XLab Router → RouterLab, etc.) */
