@@ -765,7 +765,8 @@ export function normalizeModelName(model: string | null | undefined): string | n
 
   // Common vendor spelling variants → canonical form for grouping + rates
   const lower = m.toLowerCase();
-  if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
+  if (lower === "deepseek-chat") m = "deepseek-v4-flash";
+  else if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
   else if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.7";
   else if (lower === "mimo-auto") m = "mimo-v2.5";
   else if (lower === "model_private_11") m = "big-pickle";
