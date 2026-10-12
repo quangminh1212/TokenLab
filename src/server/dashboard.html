@@ -363,6 +363,7 @@
       if (lower === 'claude-opus') return 'claude-opus-5.5';
       if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
       if (lower === 'digigo') return 'gpt-5.5';
+      if (lower === 'free') return 'big-pickle';
       return m;
     }
 
@@ -458,6 +459,11 @@
       return id.replace(/[a-z0-9]+/g, (w) => w.replace(/^[a-z]/, (c) => c.toUpperCase()));
     }
 
+    function displayModelLabel(model) {
+      const label = String(model ?? '');
+      return label.toLowerCase() === 'big-pickle' ? 'Big Pickle' : label;
+    }
+
     function formatGroupKey(key) {
       if (state.groupBy === 'hour' || /^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(String(key || ''))) {
         return formatHourLabel(key, true);
@@ -466,7 +472,7 @@
         const k = String(key ?? '');
         // Keep "unknown (devin)" — do not strip agent suffix (looks like bare "unknown")
         if (/^unknown\s*\(/i.test(k)) return k;
-        return normalizeModelName(k) || k;
+        return displayModelLabel(normalizeModelName(k) || k);
       }
       if (state.groupBy === 'agent') {
         return agentLabel(key);
@@ -759,7 +765,7 @@
         <ul class="recent-list">
           ${events.map((e) => {
             const resolvedModel = normalizeModelForAgent(e.model, e.agent);
-            const model = resolvedModel || agentLabel(e.agent) || '\u2014';
+            const model = displayModelLabel(resolvedModel || agentLabel(e.agent) || '\u2014');
             const agent = e.agent && resolvedModel ? agentLabel(e.agent) : '';
             const cached = (Number(e.cacheReadTokens) || 0) + (Number(e.cacheWriteTokens) || 0);
             return `<li class="recent-item">

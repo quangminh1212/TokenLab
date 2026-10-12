@@ -722,8 +722,8 @@ export function normalizeModelName(model: string | null | undefined): string | n
   m = m.replace(/\s+/g, " ").trim();
 
   // Mirror the model-label cleanup used in the dashboard. These are routing or
-  // reasoning variants, not separate OpenRouter models. Keep literal `free`
-  // because OpenRouter exposes `openrouter/free` as a model selector.
+  // reasoning variants, not separate OpenRouter models. In this usage catalog,
+  // the `free` route is the Big Pickle alias.
   m = m.replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, "");
   m = m.replace(/-openai-compact$/i, "");
   if (!/^(?:free|batch)$/i.test(m)) {
@@ -776,6 +776,7 @@ export function normalizeModelName(model: string | null | undefined): string | n
   else if (lower === "claude-opus") m = "claude-opus-5.5";
   else if (lower === "claude-sonnet") m = "claude-sonnet-5.5";
   else if (lower === "digigo") m = "gpt-5.5";
+  else if (lower === "free") m = "big-pickle";
   if (lower.startsWith("deep-seek")) m = "deepseek" + m.slice("deep-seek".length);
   if (lower.startsWith("deep_seek")) m = "deepseek" + m.slice("deep_seek".length);
   // LiteLLM internal alias for the openclaw 5.3 route (Claude Code / router SpendLogs)
