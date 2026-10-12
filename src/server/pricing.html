@@ -154,18 +154,22 @@
         .replace(/\s+/g, ' ')
         .replace(/^[-_:|]+|[-_:|]+$/g, '')
         .trim();
-      const spaced = (name) => name.replace(/-/g, ' ');
+      const format = (name) => {
+        const spaced = name.replace(/-/g, ' ');
+        return (spaced.charAt(0).toUpperCase() + spaced.slice(1))
+          .replace(/\bgpt\b/gi, 'GPT');
+      };
       const lower = cleaned.toLowerCase();
-      if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return spaced('kimi-k2.6');
-      if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return spaced('kimi-k2.7');
-      if (lower === 'vip-kimi') return spaced('kimi-k3');
-      if (lower === 'windsurf-cascade') return spaced('swe-1.6');
-      if (lower === 'xlab') return spaced('gpt-5.5');
-      if (lower === 'gpt-5.3-codex') return spaced('gpt-5.5');
-      if (lower === 'claude-fable') return spaced('claude-fable-5');
-      if (lower === 'claude-opus') return spaced('claude-opus-5.5');
-      if (lower === 'claude-sonnet') return spaced('claude-sonnet-5.5');
-      return spaced(cleaned);
+      if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return format('kimi-k2.6');
+      if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return format('kimi-k2.7');
+      if (lower === 'vip-kimi') return format('kimi-k3');
+      if (lower === 'windsurf-cascade') return format('swe-1.6');
+      if (lower === 'xlab') return format('gpt-5.5');
+      if (lower === 'gpt-5.3-codex') return format('gpt-5.5');
+      if (lower === 'claude-fable') return format('claude-fable-5');
+      if (lower === 'claude-opus') return format('claude-opus-5.5');
+      if (lower === 'claude-sonnet') return format('claude-sonnet-5.5');
+      return format(cleaned);
     }
 
     const ICONS = {
