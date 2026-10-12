@@ -775,10 +775,9 @@ export function normalizeModelName(model: string | null | undefined): string | n
   else if (lower === "claude-fable") m = "claude-fable-5";
   else if (lower === "claude-opus") m = "claude-opus-5.5";
   else if (lower === "claude-sonnet") m = "claude-sonnet-5.5";
+  else if (lower === "digigo") m = "gpt-5.5";
   if (lower.startsWith("deep-seek")) m = "deepseek" + m.slice("deep-seek".length);
   if (lower.startsWith("deep_seek")) m = "deepseek" + m.slice("deep_seek".length);
-  // Digigo / digigo case
-  if (lower === "digigo") m = "Digigo";
   // LiteLLM internal alias for the openclaw 5.3 route (Claude Code / router SpendLogs)
   // — display the real public model, not the router alias.
   if (lower === "openclaw") m = "glm-5.3";
