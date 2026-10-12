@@ -24,7 +24,7 @@ import { normalizeModelName } from "./util.js";
  * breakdown truthful, not about the dollar figure, which the rescan changes only
  * marginally.
  */
-export const RATES_VERSION = 7;
+export const RATES_VERSION = 8;
 
 /**
  * Bundled offline rates (USD per 1M tokens).
@@ -142,7 +142,7 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   // MiniMax paygo (≤512k, 50% promo): $0.30 / $1.20 / cache $0.06
   "minimax-m3": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06 },
   "minimax-m2.7": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06 },
-  "kimi-k2-7": { inputPer1M: 0.6, outputPer1M: 2.5 },
+  "kimi-k2.7": { inputPer1M: 0.6, outputPer1M: 2.5 },
   "kimi-k2.6": { inputPer1M: 0.66, outputPer1M: 3.41 },
   "kimi-k2.5": { inputPer1M: 0.375, outputPer1M: 2.025 },
   // Hermes / 9router gateway aliases for Kimi K3 family
@@ -228,7 +228,6 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "pmv-default": { inputPer1M: 1.66, outputPer1M: 9.65 },
   "openai-default": { inputPer1M: 1.66, outputPer1M: 9.65 },
   "kimi-k3-xlab": { inputPer1M: 0.28, outputPer1M: 9.93 },
-  "kimi-2.6": { inputPer1M: 0.03, outputPer1M: 5.43 },
 
   default: { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75 },
 };
