@@ -622,7 +622,6 @@
     }
 
     function renderOverview(t, live) {
-      const cache = (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
       // RPM = busiest single minute in the period (peak, not an average)
       const rate = periodRequestRate(t.eventCount || 0);
       const rpmVal = (Math.round(rate.rpm * 10) / 10).toLocaleString(undefined, {
@@ -631,10 +630,13 @@
       });
       // Peak metric — no subtitle under RPM
       const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
-      // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout)
+      // Row 1 = tokens; Row 2 = requests / RPM / cost (3-col layout).
+      // Cache tokens are deliberately not shown: for every model TokenLab tracks
+      // the cached bucket bills at the same rate as fresh input (and is a
+      // rounding error next to it), so a separate card only invites the reader to
+      // add it to input and double-count the same prompt tokens.
       $('overview').innerHTML = [
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
-        overviewCard('Cached tokens', fmtFull(cache), 'tone-info'),
         overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         rpmCard,
@@ -726,8 +728,8 @@
                 ${agent ? `<span class="recent-agent">${escapeHtml(agent)}</span>` : ''}
               </div>
               <div class="recent-item-meta">
-                <span class="recent-tokens" title="fresh input / cached input / output">
-                  <span>${fmt(e.inputTokens)}</span><span class="recent-sep">/</span><span class="recent-cache">${fmt(cached)}</span><span class="recent-sep">/</span><span>${fmt(e.outputTokens)}</span>
+                <span class="recent-tokens" title="input / output">
+                  <span>${fmt((Number(e.inputTokens) || 0) + cached)}</span><span class="recent-sep">/</span><span>${fmt(e.outputTokens)}</span>
                 </span>
                 <time class="recent-when" datetime="${escapeHtml(e.timestamp || '')}">${timeAgo(e.timestamp)}</time>
               </div>
@@ -825,10 +827,13 @@
     function renderTable() {
       const costs = state.viewMode === 'costs';
       // RPM column is always present (it is meaningful for every group: each
-      // row is measured against its own active minutes).
+      // row is measured against its own active minutes). No cache column: cache
+      // reads bill at the same rate as input for every tracked model, so the
+      // bucket carries no information the total does not already have, and a
+      // caveat-free column of near-zero numbers is worse than no column.
       const head = costs
-        ? ['Key', 'Requests', 'RPM', 'Input $', 'Cache $', 'Output $', 'Total $']
-        : ['Key', 'Requests', 'RPM', 'Input', 'Cached', 'Output', 'Total'];
+        ? ['Key', 'Requests', 'RPM', 'Input $', 'Output $', 'Total $']
+        : ['Key', 'Requests', 'RPM', 'Input', 'Output', 'Total'];
       $('tableHead').innerHTML = `<tr>${head.map((h, i) =>
         `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr>`;
 
@@ -840,6 +845,9 @@
 
       // Cost columns use rate-weighted parts from API (input/cache/output rates).
       // Fallback: token-share only if older aggregate payload lacks inputCost/cacheCost.
+      // The cache share is summed back INTO the input column so the two-part
+      // split still adds up to the total: the API reports them separately, but
+      // they are the same prompt tokens billed at the same rate.
       $('tableBody').innerHTML = groups.map((g) => {
         const input = g.inputTokens || 0;
         const output = g.outputTokens || 0;
@@ -848,12 +856,11 @@
         const cost = g.estimatedCost || 0;
         const hasParts =
           g.inputCost != null || g.cacheCost != null || g.outputCost != null;
-        const inputCost = hasParts
+        const inputCost = (hasParts
           ? Number(g.inputCost) || 0
-          : cost * (input / totalTok);
-        const cacheCost = hasParts
+          : cost * (input / totalTok)) + (hasParts
           ? Number(g.cacheCost) || 0
-          : cost * (cache / totalTok);
+          : cost * (cache / totalTok));
         const outCost = hasParts
           ? Number(g.outputCost) || 0
           : cost * (output / totalTok);
@@ -867,20 +874,15 @@
               maximumFractionDigits: 1,
             })
           : '\u2014';
-        // CACHE $ is "—" only when the feed never mentioned caching. A group
-        // whose rows all reported cache (even as zero) shows its real number —
-        // otherwise a measured $0.00 was indistinguishable from missing data.
-        const cacheReported = Number(g.cacheReportedEvents) || 0;
-        const cacheCell = cache || cacheReported
-          ? money(cacheCost)
-          : '\u2014';
+        // No cache cell: a measured $0.00 was indistinguishable from missing
+        // data, and neither is worth a column when the bucket is priced at the
+        // same rate as the input column beside it.
         if (costs) {
           return `<tr>
             <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
             <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
             <td class="num muted">${rpmCell}</td>
             <td class="num muted">${money(inputCost)}</td>
-            <td class="num muted">${cacheCell}</td>
             <td class="num muted">${money(outCost)}</td>
             <td class="num toned-cost"><strong>${money(cost)}</strong></td>
           </tr>`;
@@ -889,8 +891,7 @@
           <td><code title="${escapeHtml(g.key)}">${escapeHtml(label)}</code></td>
           <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
           <td class="num muted">${rpmCell}</td>
-          <td class="num muted">${fmtFull(input)}</td>
-          <td class="num muted">${cache ? fmtFull(cache) : '\u2014'}</td>
+          <td class="num muted">${fmtFull(input + cache)}</td>
           <td class="num muted">${fmtFull(output)}</td>
           <td class="num"><strong>${fmtFull(g.totalTokens || 0)}</strong></td>
         </tr>`;
