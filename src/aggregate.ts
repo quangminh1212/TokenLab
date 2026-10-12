@@ -10,6 +10,7 @@ function emptyTotals(currency = "USD"): TokenTotals {
     cacheWriteTokens: 0,
     totalTokens: 0,
     estimatedCost: 0,
+    estimatedPricing: false,
     inputCost: 0,
     cacheCost: 0,
     outputCost: 0,
@@ -29,6 +30,7 @@ function addWithParts(t: TokenTotals, e: UsageEvent, parts: CostParts): void {
   t.cacheWriteTokens += e.cacheWriteTokens || 0;
   t.totalTokens += e.totalTokens || 0;
   t.estimatedCost += e.estimatedCost ?? 0;
+  if (getRateForModel(e.model).rate.estimated) t.estimatedPricing = true;
   t.inputCost = (t.inputCost || 0) + parts.inputCost;
   t.cacheCost = (t.cacheCost || 0) + parts.cacheCost;
   t.outputCost = (t.outputCost || 0) + parts.outputCost;

@@ -530,6 +530,7 @@
         output: draft?.outputPer1M ?? cust?.outputPer1M ?? m.outputPer1M ?? 0,
         // Single cache rate (cache read); write rate stays backend-only for cost calc
         cache: draft?.cacheReadPer1M ?? cust?.cacheReadPer1M ?? m.cacheReadPer1M,
+        estimated: !draft && !cust && m.estimated === true,
         source: draft ? 'draft' : cust ? 'custom' : (m.source || 'openrouter'),
       };
     }
@@ -607,6 +608,7 @@
                 ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
                 ${src === 'seen' ? '<span class="or-badge custom">seen</span>' : ''}
                 ${src === 'bundled' ? '<span class="or-badge">bundled</span>' : ''}
+                ${rates.estimated ? '<span class="or-badge">reference</span>' : ''}
               </div>
               <div class="or-card-meta">
                 <code class="or-id">${id}</code>

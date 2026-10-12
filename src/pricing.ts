@@ -24,12 +24,12 @@ import { normalizeModelName } from "./util.js";
  * breakdown truthful, not about the dollar figure, which the rescan changes only
  * marginally.
  */
-export const RATES_VERSION = 3;
+export const RATES_VERSION = 4;
 
 /**
  * Bundled offline rates (USD per 1M tokens).
  * Prefer official vendor list prices when known (Anthropic / OpenAI / xAI docs, 2026).
- * Models only on OpenRouter still take live OR rates at runtime via lookupOpenRouterRate.
+ * OpenRouter rates take precedence except when a free alias has an explicit paid reference below.
  */
 export const BUNDLED_RATES: Record<string, ModelRate> = {
   // --- Anthropic (platform.claude.com/docs pricing) ---
@@ -174,8 +174,26 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "swe-1-7": { inputPer1M: 0.5, outputPer1M: 2 },
   "windsurf-cascade": { inputPer1M: 1, outputPer1M: 4 },
   adaptive: { inputPer1M: 1, outputPer1M: 4 },
-  "big-pickle": { inputPer1M: 0, outputPer1M: 0 },
-  "nemotron-3-ultra-free": { inputPer1M: 0, outputPer1M: 0 },
+  // Paid references for the free/stealth aliases shown in the model table.
+  // Big Pickle and `coding` have no disclosed paid model ID; use Qwen3 Coder
+  // 480B A35B's OpenRouter list rate ($0.22 / $1.80 per 1M) as an estimate.
+  "big-pickle": { inputPer1M: 0.22, outputPer1M: 1.8, estimated: true },
+  coding: { inputPer1M: 0.22, outputPer1M: 1.8, estimated: true },
+  // Space Bunny is a stealth alias; MiniMax M3's paid OpenCode rate is
+  // $0.30 / $1.20 per 1M, cache read $0.06. Treat the mapping as an estimate.
+  "space-bunny": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.06, estimated: true },
+  // Paid LongCat 2.5 Preview rate on Vercel AI Gateway.
+  "longcat-2.5-preview": { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.006 },
+  // InclusionAI paid provider reference for Ling 3.1 Flash. Cache pricing is
+  // unpublished, so the shared fallback cache estimate applies.
+  "ling-3.1-flash": { inputPer1M: 0.3, outputPer1M: 0.9, estimated: true },
+  // Current OpenRouter API rates for paid model listings; these also serve as
+  // offline fallbacks when a free-suffixed route is encountered.
+  "nemotron-3-ultra-550b-a55b": { inputPer1M: 0.6, outputPer1M: 2.4, cacheReadPer1M: 0.12 },
+  "nemotron-3-ultra-free": { inputPer1M: 0.6, outputPer1M: 2.4, cacheReadPer1M: 0.12 },
+  "mimo-v2.6-flash": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028 },
+  "muse-spark-1.3-contributor": { inputPer1M: 0.1, outputPer1M: 0.2, cacheReadPer1M: 0.002 },
+  "nemotron-3.5-lightning": { inputPer1M: 0.07, outputPer1M: 0.2, cacheReadPer1M: 0.04 },
   Digigo: { inputPer1M: 0, outputPer1M: 0 },
   digigo: { inputPer1M: 0, outputPer1M: 0 },
 
@@ -308,6 +326,15 @@ function cachedRateLookupState(): Record<string, ModelRate> {
   return custom;
 }
 
+function withPaidReferenceStatus(
+  rate: ModelRate,
+  model: string | null | undefined,
+): ModelRate {
+  const label = String(model || "").trim().toLowerCase();
+  const isFreeAlias = label.startsWith("mintrouter-") || /(?:^|[-_:])free$/i.test(label);
+  return isFreeAlias && !rate.estimated ? { ...rate, estimated: true } : rate;
+}
+
 /** Resolve to a rate table key (bundled or custom). */
 export function resolveModelKey(model: string | null | undefined): string | null {
   if (!model) return null;
@@ -406,6 +433,14 @@ export function getRateForModel(model: string | null | undefined): {
     lookupOpenRouterRate(model) ||
     (raw ? lookupOpenRouterRate(raw) : null) ||
     (key ? lookupOpenRouterRate(key) : null);
+  const bundleRate = key ? BUNDLED_RATES[key] : undefined;
+  const usePaidBundleForFreeRoute = Boolean(
+    or &&
+      or.rate.inputPer1M === 0 &&
+      or.rate.outputPer1M === 0 &&
+      bundleRate &&
+      (bundleRate.inputPer1M > 0 || bundleRate.outputPer1M > 0),
+  );
   if (or) {
     if (custom[or.key.toLowerCase()]) {
       const result = { key: or.key, rate: custom[or.key.toLowerCase()], source: "custom" as const };
@@ -417,13 +452,26 @@ export function getRateForModel(model: string | null | undefined): {
       rateLookupCache.set(cacheKey, result);
       return result;
     }
-    const result = { key: or.key, rate: or.rate, source: "openrouter" as const };
-    rateLookupCache.set(cacheKey, result);
-    return result;
+    if (!usePaidBundleForFreeRoute) {
+      const result = {
+        key: or.key,
+        rate: withPaidReferenceStatus(or.rate, model),
+        source: "openrouter" as const,
+      };
+      rateLookupCache.set(cacheKey, result);
+      return result;
+    }
   }
 
   if (key && BUNDLED_RATES[key]) {
-    const result = { key, rate: BUNDLED_RATES[key], source: "bundled" as const };
+    const bundleRate = usePaidBundleForFreeRoute
+      ? { ...BUNDLED_RATES[key], estimated: true }
+      : BUNDLED_RATES[key];
+    const result = {
+      key,
+      rate: withPaidReferenceStatus(bundleRate, model),
+      source: "bundled" as const,
+    };
     rateLookupCache.set(cacheKey, result);
     return result;
   }
@@ -488,7 +536,7 @@ export function priceTokens(
   cacheWriteTokens = 0,
   currency = "USD",
 ): Pick<UsageEvent, "estimatedCost" | "pricingStatus" | "currency"> {
-  const { key, rate, source } = getRateForModel(model);
+  const { rate, source } = getRateForModel(model);
   const { tableTotal: cost } = priceCostParts(
     model,
     inputTokens,
@@ -505,7 +553,11 @@ export function priceTokens(
   }
   return {
     estimatedCost: cost,
-    pricingStatus: source === "default" && !key ? "unknown_model" : source === "default" ? "unknown_model" : "priced",
+    pricingStatus: rate.estimated
+      ? "estimated"
+      : source === "default"
+        ? "unknown_model"
+        : "priced",
     currency,
   };
 }
@@ -627,6 +679,7 @@ export function listPricingCatalog(models: string[] = []): Array<{
   outputPer1M: number;
   cacheReadPer1M?: number;
   cacheWritePer1M?: number;
+  estimated: boolean;
 }> {
   const custom = customRates();
   const names = new Set<string>([
@@ -646,6 +699,7 @@ export function listPricingCatalog(models: string[] = []): Array<{
         outputPer1M: rate.outputPer1M,
         cacheReadPer1M: rate.cacheReadPer1M,
         cacheWritePer1M: rate.cacheWritePer1M,
+        estimated: rate.estimated === true,
       };
     });
 }
