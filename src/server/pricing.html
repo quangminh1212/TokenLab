@@ -138,10 +138,10 @@
 
     function cleanModelDisplayName(model) {
       return String(model ?? '')
-        .replace(/\b(?:mintrouter|free)\b/gi, '')
+        .replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '')
+        .replace(/[-_:|/\s]+free$/i, '')
         .replace(/\s+/g, ' ')
-        .replace(/[-_:|]{2,}/g, '-')
-        .replace(/[-_:|]+$/g, '')
+        .replace(/^[-_:|]+|[-_:|]+$/g, '')
         .trim();
     }
 
