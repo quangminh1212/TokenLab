@@ -358,23 +358,24 @@ test("dsh light scan reads a changed session once and skips the next identical p
     assert.equal(second.length, 0);
     await writeFile(file, `${line(1, 3)}\n${line(2, 9)}\n`);
     const third = await dshAgent.parseLight!(roots);
-    // Turn 1 is fresh input (nothing cached yet). Turn 2's prompt of 9 re-reads
-    // turn 1's prompt of 3 from cache, so only the 6-token growth is fresh input.
-    // Asserting [3, 9] fed the cache back in as input and left cacheReadTokens at
-    // 0, which is what made the dashboard show "—" under CACHE $.
+    // Both turns are legacy shape: total == input + output, with no cache key
+    // anywhere in the stream. The cache split is therefore unknown, and unknown
+    // is reported as zero. An earlier implementation inferred "turn 2 re-read
+    // turn 1's prompt" and asserted [3, 6] here; `previousPrompt` is by
+    // construction almost exactly `prompt` in a growing conversation, so that
+    // inference moved nearly the whole prompt into cache and showed a cache hit
+    // rate that the provider never reported.
     assert.deepEqual(
       third.map((event) => event.inputTokens).sort((a, b) => a - b),
-      [3, 6],
+      [3, 9],
     );
-    assert.deepEqual(
-      third.map((event) => event.cacheReadTokens ?? 0).sort((a, b) => a - b),
-      [0, 3],
-    );
+    assert.deepEqual(third.map((event) => event.cacheReadTokens ?? 0), [0, 0]);
+    assert.deepEqual(third.map((event) => event.cacheReported ?? false), [false, false]);
     const sessionDir2 = path.join(root, "sessions", "s2");
     await mkdir(sessionDir2, { recursive: true });
     await writeFile(path.join(sessionDir2, "session.jsonl"), `${line(1, 4)}\n`);
     const fourth = await dshAgent.parseLight!(roots);
-    // A brand-new session has nothing to re-read, so its first turn is all input.
+    // A brand-new session's first turn is all input.
     assert.deepEqual(fourth.map((event) => event.inputTokens), [4]);
     assert.deepEqual(fourth.map((event) => event.cacheReadTokens ?? 0), [0]);
   } finally {

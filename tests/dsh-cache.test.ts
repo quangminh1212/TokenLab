@@ -70,11 +70,20 @@ test("parseDsh keeps cache reads from the cache-aware usage shape", async () => 
   }
 });
 
-test("parseDsh reconstructs a cache read for legacy rows while preserving the prompt total", async () => {
+test("parseDsh does NOT invent a cache read for legacy rows", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-dsh-legacy-"));
   try {
     // Legacy shape: total == input + output, no cache field. Prompts grow
     // 165k -> 168k -> 169k, exactly like the real Claude-Fable sessions.
+    //
+    // This shape carries no cache key anywhere in the stream, so the cache split
+    // is UNKNOWN. An earlier implementation guessed it from the previous turn's
+    // prompt; because a conversation grows monotonically (`previousPrompt` is by
+    // construction almost exactly `prompt`), that guess drove `inputTokens`
+    // toward 0 and attributed the entire prompt to cache — fiction on the
+    // dashboard, and it leaked state past turns that had no usage at all.
+    //
+    // Unknown cache is reported as zero, and the prompt stays whole.
     await writeSession(root, "demo", "session.jsonl", [
       { type: "request/context", seq: 0, cwd: "/work/demo", data: { model: "anthropic/claude-fable-5" } },
       { type: "assistant/message", seq: 1, cwd: "/work/demo", data: { usage: { inputTokens: 165_056, outputTokens: 512, totalTokens: 165_568 } } },
@@ -84,22 +93,16 @@ test("parseDsh reconstructs a cache read for legacy rows while preserving the pr
 
     const events = await parseDsh([root]);
     assert.equal(events.length, 3);
-    const [first, second, third] = [events[0]!, events[1]!, events[2]!];
 
-    // Turn 1: nothing cached yet, so the whole prompt is fresh input.
-    assert.equal(first.cacheReadTokens, 0);
-    assert.equal(first.inputTokens, 165_056);
-
-    // Turns 2-3: the previous turn's prompt is reported as a cache read, so
-    // CACHE $ stops reading "—" and the fresh part is only the growth.
-    assert.equal(second.cacheReadTokens, 165_056);
-    assert.equal(second.inputTokens, 168_204 - 165_056);
-    assert.equal(third.cacheReadTokens, 168_204);
-    assert.equal(third.inputTokens, 169_110 - 168_204);
-
-    // Nothing invented or lost: each row still accounts for its whole prompt.
-    for (const [e, prompt] of [[first, 165_056], [second, 168_204], [third, 169_110]] as const) {
-      assert.equal(e.inputTokens + e.cacheReadTokens, prompt, "split must preserve the prompt total");
+    for (const [e, prompt] of [[events[0]!, 165_056], [events[1]!, 168_204], [events[2]!, 169_110]] as const) {
+      assert.equal(e.cacheReadTokens, 0, "no cache number may be fabricated");
+      assert.equal(e.inputTokens, prompt, "the whole prompt counts as fresh input");
+      assert.equal(e.cacheReported, false, "a guessed split must not claim to be measured");
+      assert.equal(
+        e.inputTokens + e.cacheReadTokens,
+        prompt,
+        "split must preserve the prompt total",
+      );
     }
   } finally {
     await rm(root, { recursive: true, force: true });
