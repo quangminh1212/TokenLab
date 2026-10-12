@@ -765,7 +765,9 @@ export function normalizeModelName(model: string | null | undefined): string | n
 
   // Common vendor spelling variants → canonical form for grouping + rates
   const lower = m.toLowerCase();
-  if (lower === "gpt-5.3-codex") m = "gpt-5.5";
+  if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
+  else if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.7";
+  else if (lower === "gpt-5.3-codex") m = "gpt-5.5";
   else if (lower === "claude-fable") m = "claude-fable-5";
   else if (lower === "claude-opus") m = "claude-opus-5.5";
   else if (lower === "claude-sonnet") m = "claude-sonnet-5.5";
