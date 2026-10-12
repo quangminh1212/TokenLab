@@ -111,6 +111,8 @@ export interface TokenTotals {
   cacheWriteTokens: number;
   totalTokens: number;
   estimatedCost: number;
+  /** At least one model in this bucket used a paid reference rate. */
+  estimatedPricing?: boolean;
   /** Rate-weighted cost parts (not token-share of total). */
   inputCost?: number;
   cacheCost?: number;
@@ -181,6 +183,8 @@ export interface ModelRate {
   outputPer1M: number;
   cacheReadPer1M?: number;
   cacheWritePer1M?: number;
+  /** This rate is a paid reference proxy for an anonymous or free-only alias. */
+  estimated?: boolean;
   /**
    * When prompt tokens (uncached input + cache read) reach this threshold,
    * all token rates are billed at 2× (xAI long-context tier, docs.x.ai pricing).

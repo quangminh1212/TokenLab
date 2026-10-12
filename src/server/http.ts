@@ -1698,6 +1698,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         outputPer1M: number;
         cacheReadPer1M?: number;
         cacheWritePer1M?: number;
+        estimated?: boolean;
         created?: number;
       };
       // Merge OpenRouter rows with effective rates (custom overrides)
@@ -1705,6 +1706,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         const cKey = m.id.toLowerCase();
         const sKey = m.slug.toLowerCase();
         const cust = custom[cKey] || custom[sKey];
+        const reference = getRateForModel(m.id);
+        const usePaidReference =
+          !cust &&
+          m.free &&
+          reference.source === "bundled" &&
+          (reference.rate.inputPer1M > 0 || reference.rate.outputPer1M > 0);
         return {
           id: m.id,
           name: m.name,
@@ -1712,12 +1719,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           slug: m.slug,
           contextLength: m.contextLength,
           modality: m.modality,
-          free: m.free,
-          source: cust ? ("custom" as const) : ("openrouter" as const),
-          inputPer1M: cust?.inputPer1M ?? m.inputPer1M,
-          outputPer1M: cust?.outputPer1M ?? m.outputPer1M,
-          cacheReadPer1M: cust?.cacheReadPer1M ?? m.cacheReadPer1M,
-          cacheWritePer1M: cust?.cacheWritePer1M ?? m.cacheWritePer1M,
+          free: usePaidReference
+            ? false
+            : (cust?.inputPer1M ?? m.inputPer1M) === 0 &&
+              (cust?.outputPer1M ?? m.outputPer1M) === 0,
+          source: cust ? ("custom" as const) : usePaidReference ? ("bundled" as const) : ("openrouter" as const),
+          inputPer1M: cust?.inputPer1M ?? (usePaidReference ? reference.rate.inputPer1M : m.inputPer1M),
+          outputPer1M: cust?.outputPer1M ?? (usePaidReference ? reference.rate.outputPer1M : m.outputPer1M),
+          cacheReadPer1M: cust?.cacheReadPer1M ?? (usePaidReference ? reference.rate.cacheReadPer1M : m.cacheReadPer1M),
+          cacheWritePer1M: cust?.cacheWritePer1M ?? (usePaidReference ? reference.rate.cacheWritePer1M : m.cacheWritePer1M),
+          estimated: !cust && usePaidReference,
           created: m.created,
         };
       });
@@ -1771,6 +1782,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           outputPer1M: cust?.outputPer1M ?? rate.outputPer1M,
           cacheReadPer1M: cust?.cacheReadPer1M ?? rate.cacheReadPer1M,
           cacheWritePer1M: cust?.cacheWritePer1M ?? rate.cacheWritePer1M,
+          estimated: rate.estimated === true,
           created: 0,
         };
         openrouterCatalog.push(entry);
