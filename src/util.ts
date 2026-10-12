@@ -786,14 +786,21 @@ export function normalizeModelName(model: string | null | undefined): string | n
   return m || null;
 }
 
-/** Apply an explicit per-agent model fallback when the source omitted the model. */
+/** Apply the selected fallback only when the source has no usable model ID. */
 export function normalizeModelForAgent(
   model: string | null | undefined,
   agent: string | null | undefined,
 ): string | null {
   const normalized = normalizeModelName(model);
   if (normalized) return normalized;
-  return normalizeAgentId(agent) === "devin" ? "swe-1.6" : null;
+  switch (normalizeAgentId(agent)) {
+    case "9router":
+    case "devin":
+    case "routerlab":
+      return "gpt-5.5";
+    default:
+      return null;
+  }
 }
 
 export function estimateTokensFromText(text: string): number {
