@@ -587,6 +587,94 @@ export function num(v: unknown): number {
  *  - "provider/gpt-5.5" → "gpt-5.5" (keeps last path segment when useful)
  *  - trims whitespace / trailing punctuation
  */
+/**
+ * True when `value` is a timestamp that names an instant but NOT a zone.
+ *
+ * `"2026-10-11T12:32:12"` and `"2026-10-11 12:32:12.249"` are zone-less: JS
+ * `Date.parse` reads them as host-local, which is a guess. Some exporters drop
+ * the zone by accident (LiteLLM's mirror writes `…T12:32:12.249Z` in one field
+ * and a bare local stamp in another), so a zone-less string must never be
+ * silently rendered as UTC — that shifts usage across day boundaries and makes
+ * a day-over-day comparison look like missing data.
+ */
+export function isZonelessTimestamp(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const s = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)) return false;
+  // An explicit zone is either a trailing Z or a ±HH:MM / ±HHMM offset.
+  return !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+}
+
+/**
+ * Timestamps that name an instant without a zone are interpreted in `timezone`.
+ *
+ * `timezone` is an IANA name (`"Asia/Ho_Chi_Minh"`) or `"local"`. Anything the
+ * runtime cannot resolve, and any value that already carries a zone, is passed
+ * through to the normal `Date` parse untouched — this never invents an instant,
+ * it only stops the host's zone from being picked by accident.
+ */
+export function parseTimestampInZone(value: string, timezone?: string): number {
+  const naive = Date.parse(value);
+  if (!isZonelessTimestamp(value)) return naive;
+  const zone = (timezone || "local").trim();
+  if (!zone || zone === "local") return naive;
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?/.exec(
+    value.trim(),
+  );
+  if (!m) return naive;
+  const ms = Date.UTC(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    Number(m[6] ?? 0),
+    Number((m[7] ?? "").padEnd(3, "0") || 0),
+  );
+  if (Number.isNaN(ms)) return naive;
+
+  // Take the zone's offset AT that instant, then subtract it to get the true
+  // UTC epoch. One correction pass is enough because the offset we read back
+  // already reflects the instant; a DST cusp can be off by the DST delta, so
+  // re-read the offset at the corrected instant once and keep that.
+  const firstOffset = zoneOffsetMs(ms, zone);
+  if (firstOffset === null) return naive;
+  const corrected = ms - firstOffset;
+  const finalOffset = zoneOffsetMs(corrected, zone);
+  return finalOffset === null ? corrected : ms - finalOffset;
+}
+
+/** Offset in ms of `timezone` at instant `epochMs`, or null when unknown. */
+function zoneOffsetMs(epochMs: number, timezone: string): number | null {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const parts = fmt.formatToParts(new Date(epochMs));
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+    const asUtc = Date.UTC(
+      get("year"),
+      get("month") - 1,
+      get("day"),
+      get("hour") % 24,
+      get("minute"),
+      get("second"),
+    );
+    return Number.isNaN(asUtc) ? null : asUtc - (epochMs - (epochMs % 1000));
+  } catch {
+    // An unrecognised IANA name throws here; fall back to the host zone.
+    return null;
+  }
+}
+
 export function normalizeModelName(model: string | null | undefined): string | null {
   if (model == null) return null;
   let m = String(model).trim();
