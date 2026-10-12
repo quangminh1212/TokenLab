@@ -638,15 +638,22 @@ html.dark {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
 }
-/* An odd card count leaves the last row short: let the trailing card fill it. */
-.overview-grid .ov-card:last-child:nth-child(odd) {
-  grid-column: 1 / -1;
+.overview-grid--five-cards {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+@media (min-width: 641px) and (max-width: 1199px) {
+  .overview-grid--five-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .overview-grid--five-cards .ov-card:last-child { grid-column: span 2; }
 }
 @media (max-width: 640px) {
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-grid--five-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-grid--five-cards .ov-card:last-child { grid-column: 1 / -1; }
 }
 @media (max-width: 400px) {
   .overview-grid { grid-template-columns: 1fr; }
+  .overview-grid--five-cards { grid-template-columns: 1fr; }
+  .overview-grid--five-cards .ov-card:last-child { grid-column: auto; }
 }
 .ov-card {
   display: flex; flex-direction: column; gap: 0.25rem;
@@ -1070,7 +1077,9 @@ html.dark {
   #meta { display: none; }
   #activeChip { font-size: 0.72rem; padding: 0.3rem 0.55rem; }
   #phanmemvipChip { font-size: 0.72rem; padding: 0.3rem 0.55rem; max-width: 52vw; }
-  .overview-grid { grid-template-columns: 1fr 1fr; }
+  .overview-grid { grid-template-columns: 1fr; }
+  .overview-grid--five-cards { grid-template-columns: 1fr; }
+  .overview-grid--five-cards .ov-card:last-child { grid-column: auto; }
   .ov-value { font-size: 1.05rem; }
   .provider-grid { grid-template-columns: 1fr; }
   .usage-toolbar > .seg .seg-btn {

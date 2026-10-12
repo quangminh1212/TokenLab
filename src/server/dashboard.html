@@ -642,19 +642,21 @@
       const activeCard = active
         ? overviewCard('Active time', active.value, 'tone-primary', undefined, active.title)
         : '';
-      // Six cards in a 3-column grid: two balanced rows of three.
+      // Today adds Active time as a sixth card; other periods show five cards.
       // Cache tokens are deliberately not shown: for every model TokenLab tracks
       // the cached bucket bills at the same rate as fresh input (and is a
       // rounding error next to it), so a separate card only invites the reader to
       // add it to input and double-count the same prompt tokens.
-      $('overview').innerHTML = [
+      const cards = [
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
         overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         rpmCard,
         overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing'),
         activeCard,
-      ].join('');
+      ].filter(Boolean);
+      $('overview').classList.toggle('overview-grid--five-cards', cards.length === 5);
+      $('overview').innerHTML = cards.join('');
     }
 
     function timeAgo(iso) {
