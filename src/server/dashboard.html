@@ -55,7 +55,7 @@
       </div>
       <div class="usage-actions">
         <span class="fetch-spin hidden" id="fetchSpin" aria-hidden="true"></span>
-        <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Rescan agents and reload stats">Refresh</button>
+        <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Sync VPS BNIX, rescan agents, and reload stats">Refresh</button>
       </div>
     </div>
 
@@ -525,6 +525,11 @@
       return rest ? `${h}h ${rest}m` : `${h}h`;
     }
 
+    function fmtPhanmemvipDuration(mins) {
+      const m = Math.max(0, Math.round(Number(mins) || 0));
+      return `${Math.floor(m / 60)} giờ ${m % 60} phút`;
+    }
+
     /**
      * Period PEAK RPM — the busiest single minute in the period:
      *   RPM = max over minutes of (requests landing in that calendar minute)
@@ -577,12 +582,14 @@
       if (pmv && typeof pmv.usedMinutes === 'number' && Number.isFinite(pmv.usedMinutes)) {
         const used = Math.max(0, Math.round(pmv.usedMinutes));
         const limit = Math.max(1, Math.round(Number(pmv.limitMinutes) || 1070));
-        pmvChip.textContent = `PhanmemVIP ${used.toLocaleString('vi-VN')}/${limit.toLocaleString('vi-VN')} phút`;
+        const percent = Math.min(100, (used / limit) * 100);
+        const percentLabel = `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 }).format(percent)}%`;
+        pmvChip.textContent = `PhanmemVIP ${percentLabel}`;
         const updated = pmv.updatedAt ? ` Cập nhật: ${new Date(pmv.updatedAt).toLocaleString('vi-VN')}.` : '';
-        pmvChip.title = `Hôm nay (${pmv.date}): ${used} phút có request, tối đa ${limit} phút. Một phút có từ một request được tính là một phút.${updated}`;
+        pmvChip.title = `Hôm nay (${pmv.date}): ${fmtPhanmemvipDuration(used)} / ${fmtPhanmemvipDuration(limit)} (${used.toLocaleString('vi-VN')}/${limit.toLocaleString('vi-VN')} phút; ${percentLabel}). Một phút có từ một request được tính là một phút.${updated}`;
       } else {
-        pmvChip.textContent = 'PhanmemVIP —/1.070 phút';
-        pmvChip.title = 'Chưa đồng bộ được số phút PhanmemVIP hôm nay từ LiteLLM.';
+        pmvChip.textContent = 'PhanmemVIP —';
+        pmvChip.title = 'Chưa đồng bộ được số phút PhanmemVIP hôm nay từ LiteLLM. Giới hạn là 17 giờ 50 phút/ngày.';
       }
 
       const chip = $('activeChip');
@@ -1171,7 +1178,7 @@
               const rev = msg.revision || 0;
               const wasScanning = state.scanning;
               state.scanning = Boolean(msg.scanning);
-              if (msg.reason === 'start') {
+              if (msg.reason === 'start' || msg.reason === 'start-vps-sync') {
                 state.awaitingData = state.awaitingData || state.lastEventCount === 0;
                 updateMeta();
                 scheduleScanPoll();
@@ -1200,6 +1207,7 @@
                 state.scanning = false;
                 state.awaitingData = false;
                 periodLoadCache.clear();
+                if (msg.reason === 'complete' || msg.reason === 'error') void refreshPhanmemvipUsage();
                 requestLoad({ quiet: true, force: true });
               }
             }
