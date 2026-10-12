@@ -24,7 +24,7 @@ import { normalizeModelName } from "./util.js";
  * breakdown truthful, not about the dollar figure, which the rescan changes only
  * marginally.
  */
-export const RATES_VERSION = 4;
+export const RATES_VERSION = 5;
 
 /**
  * Bundled offline rates (USD per 1M tokens).
@@ -190,6 +190,8 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   // Current OpenRouter API rates for paid model listings; these also serve as
   // offline fallbacks when a free-suffixed route is encountered.
   "nemotron-3-ultra-550b-a55b": { inputPer1M: 0.6, outputPer1M: 2.4, cacheReadPer1M: 0.12 },
+  // normalizeModelName strips `-free`, so keep the short alias as a paid key.
+  "nemotron-3-ultra": { inputPer1M: 0.6, outputPer1M: 2.4, cacheReadPer1M: 0.12 },
   "nemotron-3-ultra-free": { inputPer1M: 0.6, outputPer1M: 2.4, cacheReadPer1M: 0.12 },
   "mimo-v2.6-flash": { inputPer1M: 0.14, outputPer1M: 0.28, cacheReadPer1M: 0.0028 },
   "muse-spark-1.3-contributor": { inputPer1M: 0.1, outputPer1M: 0.2, cacheReadPer1M: 0.002 },
