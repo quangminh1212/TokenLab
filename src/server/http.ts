@@ -666,6 +666,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   }
   /** Shared promise so concurrent /api/scan waits for the in-flight scan (not empty cache). */
   let scanPromise: Promise<number> | null = null;
+  /** Coalesce manual scans while VPS BNIX mirrors are being refreshed. */
+  let manualFullScanPromise: Promise<number> | null = null;
   /** Last background light scan requested by the Recent requests feed. */
   let lastRecentLightScanAt = 0;
   /**
@@ -1245,7 +1247,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
    */
   function scheduleRecentLightScan(): void {
     const now = Date.now();
-    if (scanPromise || now - lastRecentLightScanAt < recentLightScanMinMs()) return;
+    if (manualFullScanPromise || scanPromise || now - lastRecentLightScanAt < recentLightScanMinMs()) return;
     void rescan({ full: false }).catch((err) => {
       slog("[tokenlab] recent light scan failed:", err instanceof Error ? err.message : err);
     });
@@ -1640,7 +1642,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         url.searchParams.get("async") === "1" ||
         url.searchParams.get("wait") === "0";
       if (asyncMode) {
-        void rescan({ full: true }).catch((err) => {
+        void scanAllSourcesManually().catch((err) => {
           console.error("[tokenlab] async scan failed:", err instanceof Error ? err.message : err);
         });
         return json(res, 202, {
@@ -1652,7 +1654,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           scanRevision,
         });
       }
-      const n = await rescan({ full: true });
+      const n = await scanAllSourcesManually();
       return json(res, 200, {
         ok: true,
         full: true,
@@ -2351,6 +2353,65 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     return pmvMirrorSyncPromise;
   }
 
+  async function scanAllSourcesManually(): Promise<number> {
+    if (manualFullScanPromise) return manualFullScanPromise;
+    manualFullScanPromise = (async () => {
+      const scanBeforeSync = scanPromise;
+      if (scanBeforeSync) {
+        try {
+          await scanBeforeSync;
+        } catch {
+          // A prior scan failure should not block a fresh manual scan.
+        }
+      }
+
+      const announceVpsSync = () => {
+        scanning = true;
+        broadcastStream({
+          type: "scan",
+          revision: scanRevision,
+          updatedAt: Date.now(),
+          reason: "start-vps-sync",
+          eventCount: cache.length,
+          scanning: true,
+          pricingRevision,
+        });
+      };
+      announceVpsSync();
+      slog("[tokenlab] manual full scan syncing VPS BNIX mirrors first");
+
+      const [vpsSynced, pmvSynced] = await Promise.all([
+        syncVpsMirrors("manual-scan"),
+        syncPhanmemvipUsageMirror("manual-scan"),
+      ]);
+      if (!vpsSynced) console.warn("[tokenlab] manual scan could not refresh VPS BNIX mirrors; continuing with existing mirror files");
+      if (!pmvSynced) console.warn("[tokenlab] manual scan could not refresh PhanmemVIP usage; keeping the last mirrored value");
+
+      const scanDuringSync = scanPromise;
+      if (scanDuringSync) {
+        try {
+          await scanDuringSync;
+        } catch {
+          // Scan again below after the mirror refresh, even if this scan failed.
+        }
+        announceVpsSync();
+      }
+      return await rescan({ full: true });
+    })();
+
+    try {
+      return await manualFullScanPromise;
+    } catch (err) {
+      if (scanning && !scanPromise) {
+        scanning = false;
+        bumpScan("error");
+      }
+      throw err;
+    } finally {
+      manualFullScanPromise = null;
+    }
+  }
+
   // Boot: serve the warm cache first. A full local scan can take minutes on a
   // machine with large Codex/Claude/Grok histories, so do not compete with the
   // first dashboard paint when a valid scan cache already exists.
@@ -2388,6 +2449,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   const timer = setInterval(() => {
     void (async () => {
       const now = Date.now();
+      if (manualFullScanPromise) return;
       if (now - lastPmvMirrorSyncAt >= PMV_MIRROR_SYNC_INTERVAL_MS) {
         void syncPhanmemvipUsageMirror("periodic");
       }
