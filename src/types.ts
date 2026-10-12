@@ -90,6 +90,18 @@ export interface UsageEvent {
    * data in this feed", which otherwise both render as a bare 0.
    */
   cacheReported?: boolean;
+  /**
+   * True when this row's billed `routerCost` is measurably BELOW what its own
+   * token counts imply at the rate table.
+   *
+   * Measured cause, not assumed: such a row was billed on a cheaper rate card
+   * than its `model` label names (the gateway priced the model it actually
+   * served). The tokens are trustworthy and the billed cost is faithful; it is
+   * the label that cannot be used as a lookup key. Recording the flag keeps the
+   * row's own cost authoritative instead of silently re-pricing it from a label
+   * that does not describe it.
+   */
+  costParityGap?: boolean;
 }
 
 export interface TokenTotals {

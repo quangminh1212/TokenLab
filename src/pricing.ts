@@ -11,8 +11,20 @@ import { normalizeModelName } from "./util.js";
  * version differs it reprices the whole cache once, so costs derived from an
  * older table (agents with no real router cost, e.g. dsh, claude-code) do not
  * keep a stale `estimatedCost` forever.
+ *
+ * Bump it for a parser change too, when the change rewrites which bucket the
+ * tokens land in, because `repriceEvents` re-derives cost from the tokens
+ * already in the cache — it never re-runs the parser — so a reprice alone
+ * leaves a wrong split in place. The full rescan the version change schedules is
+ * what repairs it. v3 is that case: the DSH parser stopped inferring cache reads
+ * from the previous turn's prompt (76719e3), which had moved ~2.83B tokens out of
+ * `inputTokens` and into `cacheReadTokens`. Note the DSH models bill both buckets
+ * at the same rate (`cacheReadPer1M === inputPer1M`, see the `claude-fable-5`
+ * entry), so that move was cost-neutral — v3 is about keeping the reported token
+ * breakdown truthful, not about the dollar figure, which the rescan changes only
+ * marginally.
  */
-export const RATES_VERSION = 2;
+export const RATES_VERSION = 3;
 
 /**
  * Bundled offline rates (USD per 1M tokens).
@@ -530,6 +542,24 @@ export function applyPricing(
     currency,
   );
 
+  // A row flagged `costParityGap` was billed on a cheaper rate card than its
+  // `model` label names, so the gateway's own number is the only faithful one
+  // and a table lookup on that label cannot reproduce it. It must be settled
+  // BEFORE the generic prefer-router branch: on a forced table reprice that
+  // branch is disabled and the row would otherwise be re-billed from tokens at
+  // the wrong (pricier) card, inflating it above what the provider charged.
+  // Report the router figure, or 0 when there is none: tokens stay authoritative
+  // and the gap is attributed, not faked.
+  if (partial.costParityGap) {
+    return {
+      ...partial,
+      totalTokens,
+      estimatedCost: routerCost != null && routerCost > 0 ? routerCost : 0,
+      pricingStatus: "zero_rate",
+      currency: priced.currency,
+    };
+  }
+
   // Prefer positive router-reported cost; never lock in router $0 when table/custom has rates
   if (preferRouter && routerCost != null && routerCost > 0) {
     return {
@@ -579,7 +609,12 @@ export function repriceEvents(
       estimated: e.estimated,
       requestCount: e.requestCount,
       cacheReported: e.cacheReported,
-      routerCost: useTable ? null : e.estimatedCost,
+      costParityGap: e.costParityGap,
+      // A `costParityGap` row never had a table price: `e.estimatedCost` IS the
+      // gateway figure that `applyPricing` reported for it. Dropping it on a
+      // forced reprice would zero a cost the provider really charged, so it is
+      // carried through as the router cost even when the table is forced.
+      routerCost: !useTable || e.costParityGap ? e.estimatedCost : null,
     });
   });
 }
