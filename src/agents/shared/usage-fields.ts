@@ -1,4 +1,5 @@
-import { normalizeModelName, num } from "../../util.js";
+import { getConfigSync } from "../../config.js";
+import { normalizeModelName, num, parseTimestampInZone } from "../../util.js";
 
 export interface TokenBuckets {
   inputTokens: number;
@@ -495,9 +496,17 @@ export function splitUsageRow(
 }
 
 export function extractTimestamp(...candidates: unknown[]): string {
+  const zone = getConfigSync().timezone;
+  const stamp = (raw: string): string | null => {
+    const ms = parseTimestampInZone(raw, zone);
+    return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+  };
   for (const c of candidates) {
     if (c instanceof Date && !Number.isNaN(c.getTime())) return c.toISOString();
-    if (typeof c === "string" && c.trim() && !Number.isNaN(Date.parse(c))) return new Date(c).toISOString();
+    if (typeof c === "string" && c.trim()) {
+      const iso = stamp(c);
+      if (iso) return iso;
+    }
     if (typeof c === "number" && Number.isFinite(c)) {
       // epoch ms / sec, or treat small integers as invalid for time
       if (c <= 0) continue;
@@ -510,7 +519,10 @@ export function extractTimestamp(...candidates: unknown[]): string {
       const o = c as Record<string, unknown>;
       for (const k of TIMESTAMP_KEYS) {
         const v = o[k];
-        if (typeof v === "string" && !Number.isNaN(Date.parse(v))) return new Date(v).toISOString();
+        if (typeof v === "string") {
+          const iso = stamp(v);
+          if (iso) return iso;
+        }
         if (typeof v === "number" && Number.isFinite(v) && v > 0) {
           const ms = v > 1e12 ? v : v > 1e9 ? v * 1000 : NaN;
           if (Number.isFinite(ms)) return new Date(ms).toISOString();
@@ -518,8 +530,9 @@ export function extractTimestamp(...candidates: unknown[]): string {
       }
       if (o.time && typeof o.time === "object") {
         const t = o.time as Record<string, unknown>;
-        if (typeof t.created === "string" && !Number.isNaN(Date.parse(t.created))) {
-          return new Date(t.created).toISOString();
+        if (typeof t.created === "string") {
+          const iso = stamp(t.created);
+          if (iso) return iso;
         }
       }
     }
