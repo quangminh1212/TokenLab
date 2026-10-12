@@ -486,8 +486,8 @@
       const lower = label.toLowerCase();
       if (lower === 'big-pickle') return 'big pickle';
       if (lower === 'claude-fable-5') return 'claude fable 5';
-      if (lower === 'qwen3.8-max') return 'qwen 3.8 max';
-      return label;
+      if (lower === 'qwen3.8-max') return 'qwen3.8 max';
+      return label.replace(/-/g, ' ');
     }
 
     function formatGroupKey(key) {
@@ -791,7 +791,9 @@
         <ul class="recent-list">
           ${events.map((e) => {
             const resolvedModel = normalizeModelForAgent(e.model, e.agent);
-            const model = displayModelLabel(resolvedModel || agentLabel(e.agent) || '\u2014');
+            const model = resolvedModel
+              ? displayModelLabel(resolvedModel)
+              : agentLabel(e.agent) || '\u2014';
             const agent = e.agent && resolvedModel ? agentLabel(e.agent) : '';
             const cached = (Number(e.cacheReadTokens) || 0) + (Number(e.cacheWriteTokens) || 0);
             return `<li class="recent-item">
