@@ -88,7 +88,8 @@
       if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
       return String(Math.round(n || 0));
     };
-    const money = (n, digits = 4) => {
+    /** USD with thousand dots and decimal comma, rounded to 2 decimals. */
+    const money = (n, digits = 2) => {
       const v = Number(n) || 0;
       const neg = v < 0;
       const fixed = Math.abs(v).toFixed(digits);

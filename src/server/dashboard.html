@@ -138,10 +138,12 @@
       return (neg ? '-$' : '$') + grouped + (decPart != null ? ',' + decPart : '');
     };
     const money4 = (n) => money(n, 4);
+    // Breakdown columns always round to 2 decimals; small non-zero amounts
+    // collapse to "<$0,01" instead of exposing 8 fraction digits.
     const moneyBreakdown = (n) => {
       const v = Number(n) || 0;
-      if (Math.abs(v) === 0 || Math.abs(v) >= 0.01) return money(v);
-      return money(v, 8).replace(/0+$/, '').replace(/,$/, '');
+      if (v !== 0 && Math.abs(v) < 0.01) return (v < 0 ? '-<$0,01' : '<$0,01');
+      return money(v);
     };
 
     function escapeHtml(s) {
