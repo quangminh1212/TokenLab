@@ -678,6 +678,7 @@ function zoneOffsetMs(epochMs: number, timezone: string): number | null {
 }
 
 const OFFICIAL_OPENROUTER_HIGH_MODEL_IDS = new Set(["o3-mini-high", "o4-mini-high"]);
+// These labels describe a source or incomplete usage row, not a model ID.
 const NON_MODEL_USAGE_LABELS = new Set([
   "9router-usage-backup",
   "9router-daily-summary",
@@ -685,6 +686,7 @@ const NON_MODEL_USAGE_LABELS = new Set([
   "mixed",
   "default",
   "gpt",
+  "unattributed",
 ]);
 
 export function normalizeModelName(model: string | null | undefined): string | null {
@@ -766,7 +768,6 @@ export function normalizeModelName(model: string | null | undefined): string | n
   // Common vendor spelling variants → canonical form for grouping + rates
   const lower = m.toLowerCase();
   if (lower === "deepseek-chat") m = "deepseek-v4-flash";
-  else if (lower === "unattributed") m = "gpt-5.5";
   else if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
   else if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.7";
   else if (lower === "mimo-auto") m = "mimo-v2.5";
@@ -792,19 +793,16 @@ export function normalizeModelName(model: string | null | undefined): string | n
   return m || null;
 }
 
-/** Apply the selected fallback only when the source has no usable model ID. */
+/** Apply a fallback only when the agent identifies one unambiguous model. */
 export function normalizeModelForAgent(
   model: string | null | undefined,
   agent: string | null | undefined,
 ): string | null {
   const normalized = normalizeModelName(model);
   if (normalized) return normalized;
-  // Apply explicit model-less RouterLab/9Router mappings; gateways may route many
-  // models, so leave other agents unattributed.
+  // Gateways can route many upstream models. Keep model-less usage attributed
+  // to its source agent instead of guessing which model the provider served.
   switch (String(normalizeAgentId(agent))) {
-    case "9router":
-    case "routerlab":
-      return "gpt-5.5";
     case "devin":
     case "swe-agent":
     case "swe agent":

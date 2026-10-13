@@ -367,8 +367,8 @@
       const lower = m.toLowerCase();
       const displayAlias = MODEL_DISPLAY_ALIASES.get(lower);
       if (displayAlias) return displayAlias;
+      if (lower === 'unattributed') return '';
       if (lower === 'deepseek-chat') return 'deepseek-v4-flash';
-      if (lower === 'unattributed') return 'gpt-5.5';
       if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
       if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.7';
       if (lower === 'mimo-auto') return 'mimo-v2.5';
@@ -392,7 +392,6 @@
       const normalized = normalizeModelName(model);
       if (normalized) return normalized;
       const agentId = String(agent || '').trim().toLowerCase();
-      if (['9router', 'routerlab'].includes(agentId)) return 'gpt-5.5';
       return ['devin', 'swe-agent', 'swe agent'].includes(agentId) ? 'swe-1.6' : '';
     }
 
@@ -501,8 +500,10 @@
       }
       if (state.groupBy === 'model') {
         const k = String(key ?? '');
-        // Keep "unknown (devin)" — do not strip agent suffix (looks like bare "unknown")
-        if (/^unknown\s*\(/i.test(k)) return k;
+        // Keep the source name on unknown rows so the missing model is still
+        // traceable to the provider feed.
+        const unknown = /^unknown\s*\((.*)\)$/i.exec(k);
+        if (unknown) return `Unknown (${agentLabel(unknown[1]) || unknown[1]})`;
         return displayModelLabel(normalizeModelName(k) || k);
       }
       if (state.groupBy === 'agent') {
