@@ -1053,8 +1053,8 @@ export function filterByPeriodSortedDetailed(
   };
 }
 
-/** Format USD with thousand dots and decimal comma: $197.527,9600 */
-export function formatUsd(n: number, digits = 4): string {
+/** Format USD with thousand dots and decimal comma, rounded to 2 decimals: $197.527,96 */
+export function formatUsd(n: number, digits = 2): string {
   const v = Number(n) || 0;
   const neg = v < 0;
   const fixed = Math.abs(v).toFixed(digits);
