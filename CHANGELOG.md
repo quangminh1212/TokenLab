@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-10-13
+
 ### Fixed
 - **LiteLLM cache is now scanned and counted correctly** (the LiteLLM bucket
   reported ~4.50 B cache-read tokens of the ~8.50 B the VPS mirror actually
