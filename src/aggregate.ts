@@ -86,6 +86,19 @@ const MODEL_GROUP_ALIASES = new Map<string, string>([
 // Keep the aliasing display-only so the recorded event pricing is preserved.
 const ALL_TIME_GPT55_MODEL_ALIASES = new Set(["9r or openrouter", "9r xlab"]);
 
+/** Keep unresolved usage in account/provider totals without inventing a model. */
+function hasUnresolvedModel(
+  e: UsageEvent,
+  allTimeModelAliases = false,
+): boolean {
+  if (normalizeModelForAgent(e.model, e.agent) != null) return false;
+  // The user confirmed that the missing-model 9Router/RouterLab all-time rows
+  // are GPT-5.5. This display-only alias does not apply to other periods.
+  return !(
+    allTimeModelAliases && (e.agent === "routerlab" || e.agent === "9router")
+  );
+}
+
 function modelGroupKey(
   e: UsageEvent,
   allTimeModelAliases = false,
@@ -97,7 +110,7 @@ function modelGroupKey(
   // display grouping so these rows keep their original pricing.
   if (
     allTimeModelAliases &&
-    ((!model && agent === "routerlab") ||
+    ((!model && (agent === "routerlab" || agent === "9router")) ||
       (modelAlias != null && ALL_TIME_GPT55_MODEL_ALIASES.has(modelAlias)))
   ) {
     return "gpt 5.5";
@@ -151,6 +164,9 @@ export function aggregate(
       e.estimatedCost,
     );
     addWithParts(totals, e, parts);
+    if (groupBy === "model" && hasUnresolvedModel(e, allTimeModelAliases)) {
+      continue;
+    }
     const key = groupKey(
       e,
       groupBy,
@@ -273,7 +289,9 @@ export function precomputeDashboardPeriods(
       const a = acc.get(pk)!;
       addWithParts(a.totals, e, parts);
       bump(a.agent, agentKey, e, parts);
-      bump(a.model, pk === "all" ? allTimeModelKey : modelKey, e, parts);
+      if (!hasUnresolvedModel(e, pk === "all")) {
+        bump(a.model, pk === "all" ? allTimeModelKey : modelKey, e, parts);
+      }
       bump(a.day, dayKey, e, parts);
       // Hour series only needed for today/24h charts
       if (pk === "today" || pk === "24h") bump(a.hour, hourKey, e, parts);
