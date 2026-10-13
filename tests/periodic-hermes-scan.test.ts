@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -387,6 +387,8 @@ test("dsh light scan reads a changed session once and skips the next identical p
 
 test("codex light scan does not walk an old session tree again", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tokenlab-codex-light-"));
+  const dataDir = await mkdtemp(path.join(tmpdir(), "tokenlab-codex-light-data-"));
+  const previousDataDir = process.env.TOKENLAB_DATA_DIR;
   const now = new Date();
   const day = path.join(
     root,
@@ -403,6 +405,7 @@ test("codex light scan does not walk an old session tree again", async () => {
       payload: { type: "token_usage_record", usage: { input_tokens: input, output_tokens: 2 } },
     });
   try {
+    process.env.TOKENLAB_DATA_DIR = dataDir;
     await mkdir(day, { recursive: true });
     await mkdir(oldDir, { recursive: true });
     const current = path.join(day, "rollout-2026-10-08T10-00-00-current.jsonl");
@@ -429,7 +432,112 @@ test("codex light scan does not walk an old session tree again", async () => {
     const third = await parseCodexLight([root]);
     assert.deepEqual(third.map((event) => event.inputTokens).sort((a, b) => a - b), [5, 8]);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    if (previousDataDir === undefined) delete process.env.TOKENLAB_DATA_DIR;
+    else process.env.TOKENLAB_DATA_DIR = previousDataDir;
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(dataDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("cold Codex light scan skips history outside the two-day window", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tokenlab-codex-cold-light-"));
+  const dataDir = await mkdtemp(path.join(tmpdir(), "tokenlab-codex-cold-data-"));
+  const oldDay = new Date(Date.now() - 10 * 24 * 60 * 60_000);
+  const today = new Date();
+  const oldFile = path.join(
+    root,
+    "sessions",
+    String(oldDay.getFullYear()),
+    String(oldDay.getMonth() + 1).padStart(2, "0"),
+    String(oldDay.getDate()).padStart(2, "0"),
+    "rollout-older-session.jsonl",
+  );
+  const currentFile = path.join(
+    root,
+    "sessions",
+    String(today.getFullYear()),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+    "rollout-current-session.jsonl",
+  );
+  const previousDataDir = process.env.TOKENLAB_DATA_DIR;
+  const rootKey = process.platform === "win32" ? root.toLowerCase() : root;
+  try {
+    await mkdir(path.dirname(oldFile), { recursive: true });
+    await mkdir(path.dirname(currentFile), { recursive: true });
+    await writeFile(
+      oldFile,
+      `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        type: "token_usage_record",
+        payload: { type: "token_usage_record", usage: { input_tokens: 99, output_tokens: 2 } },
+      })}\n`,
+    );
+    await writeFile(
+      currentFile,
+      `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        type: "token_usage_record",
+        payload: { type: "token_usage_record", usage: { input_tokens: 5, output_tokens: 2 } },
+      })}\n`,
+    );
+    process.env.TOKENLAB_DATA_DIR = dataDir;
+
+    const events = await parseCodexLight([root]);
+    const index = JSON.parse(await readFile(path.join(dataDir, "codex-light-index.json"), "utf8"));
+
+    assert.deepEqual(events.map((event) => event.inputTokens), [5]);
+    assert.deepEqual(index.roots[rootKey], [currentFile]);
+  } finally {
+    if (previousDataDir === undefined) delete process.env.TOKENLAB_DATA_DIR;
+    else process.env.TOKENLAB_DATA_DIR = previousDataDir;
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(dataDir, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("Codex light scan reloads hot rollout paths across process restarts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tokenlab-codex-hot-light-"));
+  const dataDir = await mkdtemp(path.join(tmpdir(), "tokenlab-codex-hot-data-"));
+  const sessionDir = path.join(root, "sessions", "2020", "01", "01");
+  const previousDataDir = process.env.TOKENLAB_DATA_DIR;
+  const rootKey = process.platform === "win32" ? root.toLowerCase() : root;
+  try {
+    await mkdir(sessionDir, { recursive: true });
+    const activeFile = path.join(sessionDir, "rollout-2020-01-01T00-00-00-active.jsonl");
+    await writeFile(
+      activeFile,
+      `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        type: "token_usage_record",
+        payload: { type: "token_usage_record", usage: { input_tokens: 99, output_tokens: 2 } },
+      })}\n`,
+    );
+    for (const name of ["01-extra", "02-extra", "03-extra", "04-extra"]) {
+      await writeFile(path.join(sessionDir, `rollout-2020-01-01T${name}.jsonl`), "");
+    }
+    const oldTime = new Date("2020-01-01T00:00:00.000Z");
+    await utimes(activeFile, oldTime, oldTime);
+    await writeFile(
+      path.join(dataDir, "codex-light-index.json"),
+      JSON.stringify({ version: 1, roots: { [rootKey]: [activeFile] } }),
+    );
+    process.env.TOKENLAB_DATA_DIR = dataDir;
+
+    const events = await parseCodexLight([root]);
+
+    assert.deepEqual(events.map((event) => event.inputTokens), [99]);
+  } finally {
+    if (previousDataDir === undefined) delete process.env.TOKENLAB_DATA_DIR;
+    else process.env.TOKENLAB_DATA_DIR = previousDataDir;
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(dataDir, { recursive: true, force: true }),
+    ]);
   }
 });
 

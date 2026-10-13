@@ -1,11 +1,12 @@
 import type { AgentModule } from "../shared/types.js";
 import { pathEnv, unique } from "../shared/env.js";
 
-import { readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { applyPricing } from "../../pricing.js";
 import type { UsageEvent } from "../../types.js";
 import {
+  appDataDir,
   cachedEventsForFile,
   pathExists,
   readJsonlCached,
@@ -116,20 +117,103 @@ interface TurnBucket {
  * signature does not open the file. The periodic full scan does not use this map.
  */
 const lightFileSignatures = new Map<string, string>();
-/** Roots whose historical session trees were listed once. Later light ticks skip them. */
+/** Roots whose light index was loaded from disk or built during this process. */
 const codexLightIndexedRoots = new Set<string>();
 /** Rollout files kept warm: Windows may not bump mtime while Codex holds the file open. */
 const codexLightHotByRoot = new Map<string, string[]>();
+const codexLightIndexesByPath = new Map<string, Map<string, string[]>>();
+
+const CODEX_LIGHT_INDEX_VERSION = 1;
+const CODEX_LIGHT_LOOKBACK_DAYS = 2;
+
+function codexLightIndexPath(): string {
+  const configured =
+    process.env.TOKENLAB_DATA_DIR?.trim() || process.env.XLAB_TOKEN_DATA_DIR?.trim();
+  return path.join(configured || path.join(appDataDir(), "tokenlab"), "codex-light-index.json");
+}
+
+async function loadCodexLightIndex(indexPath: string): Promise<Map<string, string[]>> {
+  const cached = codexLightIndexesByPath.get(indexPath);
+  if (cached) return cached;
+
+  const roots = new Map<string, string[]>();
+  try {
+    const parsed = JSON.parse(await readFile(indexPath, "utf8")) as {
+      version?: unknown;
+      roots?: unknown;
+    };
+    if (
+      parsed.version === CODEX_LIGHT_INDEX_VERSION &&
+      parsed.roots &&
+      typeof parsed.roots === "object" &&
+      !Array.isArray(parsed.roots)
+    ) {
+      for (const [rootKey, files] of Object.entries(parsed.roots)) {
+        if (Array.isArray(files)) {
+          roots.set(
+            rootKey,
+            files.filter((file): file is string => typeof file === "string").slice(-4),
+          );
+        }
+      }
+    }
+  } catch {
+    // A missing or malformed index only costs one bounded recent-day listing.
+  }
+  codexLightIndexesByPath.set(indexPath, roots);
+  return roots;
+}
+
+function isUnderRoot(root: string, file: string): boolean {
+  const name = path.basename(file).toLowerCase();
+  if (!path.isAbsolute(file) || !name.startsWith("rollout-") || !name.endsWith(".jsonl")) return false;
+  const relative = path.relative(path.resolve(root), path.resolve(file));
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+async function loadCodexLightHotFiles(root: string, rootKey: string): Promise<void> {
+  const roots = await loadCodexLightIndex(codexLightIndexPath());
+  const files = roots.get(rootKey);
+  if (!files) return;
+  const safeFiles = files.filter((file) => isUnderRoot(root, file));
+  if (files.length > 0 && safeFiles.length === 0) return;
+  codexLightHotByRoot.set(rootKey, safeFiles);
+  codexLightIndexedRoots.add(rootKey);
+}
+
+async function saveCodexLightHotFiles(rootKey: string, files: string[]): Promise<void> {
+  const indexPath = codexLightIndexPath();
+  const roots = await loadCodexLightIndex(indexPath);
+  const previous = roots.get(rootKey);
+  if (
+    previous &&
+    previous.length === files.length &&
+    previous.every((file, index) => file === files[index])
+  ) {
+    return;
+  }
+  roots.set(rootKey, files.slice(-4));
+  try {
+    await mkdir(path.dirname(indexPath), { recursive: true });
+    await writeFile(
+      indexPath,
+      JSON.stringify({ version: CODEX_LIGHT_INDEX_VERSION, roots: Object.fromEntries(roots) }),
+      "utf8",
+    );
+  } catch {
+    // Cache persistence is best-effort; bounded recent-day scans still work.
+  }
+}
 
 function codexRootKey(root: string): string {
   const resolved = path.resolve(root);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-/** Local and UTC today and yesterday, as sessions/YYYY/MM/DD segments. */
-function recentCodexDayRels(now = Date.now()): string[] {
+/** Local and UTC session days, as sessions/YYYY/MM/DD segments. */
+function recentCodexDayRels(now = Date.now(), dayCount = 2): string[] {
   const rels: string[] = [];
-  for (const offset of [0, 1]) {
+  for (let offset = 0; offset < dayCount; offset += 1) {
     const at = new Date(now - offset * 24 * 60 * 60 * 1000);
     const push = (year: number, month: number, day: number) => {
       rels.push(
@@ -249,18 +333,20 @@ async function parseCodexInternal(
     }
 
     const rootKey = codexRootKey(root);
+    if (options.recentOnly && !codexLightIndexedRoots.has(rootKey)) {
+      await loadCodexLightHotFiles(root, rootKey);
+    }
     const indexed = Boolean(options.recentOnly && codexLightIndexedRoots.has(rootKey));
     const discoveredHot: string[] = [];
     const sessionsRoot = path.join(root, "sessions");
 
-    // After one light listing, do not walk archived history again. New usage
-    // lands in today's or yesterday's session folder, or in a file already
-    // kept warm. The periodic full scan still walks every tree, including mirrors.
+    // Light scans list today's and yesterday's session folders plus remembered
+    // hot rollouts. The periodic full scan still walks all historical trees.
     let scanRoots: string[];
-    if (indexed) {
+    if (options.recentOnly) {
       scanRoots = [root];
       if (await pathExists(sessionsRoot)) {
-        for (const rel of recentCodexDayRels()) {
+        for (const rel of recentCodexDayRels(Date.now(), CODEX_LIGHT_LOOKBACK_DAYS)) {
           const dir = path.join(sessionsRoot, ...rel.split("/"));
           if (await pathExists(dir)) scanRoots.push(dir);
         }
@@ -366,9 +452,9 @@ async function parseCodexInternal(
       if (!(await pathExists(base))) continue;
       if (isNoisePath(base)) continue;
       const files = await walkFiles(base, {
-        // Light mode lists the root and, after the first pass, only a day folder.
-        // The first light pass and every full scan still walk the deep trees.
-        maxDepth: !options.recentOnly ? 12 : base === root ? 1 : indexed ? 2 : 12,
+        // Light scans list the root plus a bounded set of recent day folders.
+        // Historical trees are reserved for full scans.
+        maxDepth: !options.recentOnly ? 12 : base === root ? 1 : 2,
         match: (n, full) => {
           if (isNoisePath(full)) return false;
           return (
@@ -408,8 +494,10 @@ async function parseCodexInternal(
       const merged = [
         ...new Set([...(codexLightHotByRoot.get(rootKey) ?? []), ...discoveredHot]),
       ].sort();
-      codexLightHotByRoot.set(rootKey, merged.slice(-4));
+      const hotFiles = merged.slice(-4);
+      codexLightHotByRoot.set(rootKey, hotFiles);
       codexLightIndexedRoots.add(rootKey);
+      await saveCodexLightHotFiles(rootKey, hotFiles);
     }
   }
 
