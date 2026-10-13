@@ -68,6 +68,10 @@ import {
 } from "../openrouter-models.js";
 import { BUNDLED_RATES, RATES_VERSION, getRateForModel, guessProvider, listPricingCatalog, repriceEvents } from "../pricing.js";
 import { computeFlagReport, resolveFlagThresholds, type FlagThresholds } from "../flag-report.js";
+import {
+  resolvePhanmemvipUsage,
+  type PhanmemvipUsage,
+} from "./phanmemvip-usage.js";
 import { replayThroughGuard, resolveRateSpec } from "../rate-guard.js";
 import { writeHeartbeat } from "../process-guard.js";
 import type { AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent } from "../types.js";
@@ -90,8 +94,6 @@ function configuredTimeZone(): string {
   return (tz && String(tz).trim()) || "local";
 }
 
-const PHANMEMVIP_DAILY_LIMIT_MINUTES = 17 * 60 + 50;
-
 function vietnamDateKey(date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Ho_Chi_Minh",
@@ -103,48 +105,25 @@ function vietnamDateKey(date = new Date()): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-async function readPhanmemvipUsage(): Promise<{
-  date: string;
-  usedMinutes: number | null;
-  limitMinutes: number;
-  updatedAt: string | null;
-}> {
+async function readPhanmemvipUsage(events: readonly UsageEvent[]): Promise<PhanmemvipUsage> {
   const date = vietnamDateKey();
-  let previousUpdatedAt: string | null = null;
+  let mirror: Record<string, unknown> | null = null;
 
   for (const root of liteLlmRoots()) {
     try {
-      const raw = JSON.parse(
+      const candidate = JSON.parse(
         await readFile(path.join(root, "phanmemvip-minute-usage.json"), "utf8"),
       ) as Record<string, unknown>;
-      const sourceDate = typeof raw.date === "string" ? raw.date : null;
-      const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : null;
-      if (sourceDate !== date) {
-        previousUpdatedAt ??= updatedAt;
-        continue;
+      if (candidate.date === date) {
+        mirror = candidate;
+        break;
       }
-
-      const rawMinutes = Array.isArray(raw.minutes)
-        ? new Set(raw.minutes.filter((minute): minute is string => typeof minute === "string")).size
-        : Number(raw.usedMinutes);
-      if (!Number.isFinite(rawMinutes) || rawMinutes < 0) continue;
-      return {
-        date,
-        usedMinutes: Math.min(PHANMEMVIP_DAILY_LIMIT_MINUTES, Math.round(rawMinutes)),
-        limitMinutes: PHANMEMVIP_DAILY_LIMIT_MINUTES,
-        updatedAt,
-      };
     } catch {
       // Try the next configured LiteLLM data root.
     }
   }
 
-  return {
-    date,
-    usedMinutes: null,
-    limitMinutes: PHANMEMVIP_DAILY_LIMIT_MINUTES,
-    updatedAt: previousUpdatedAt,
-  };
+  return resolvePhanmemvipUsage(mirror, events, date);
 }
 
 /**
@@ -1478,7 +1457,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
     }
 
     if (req.method === "GET" && pathname === "/api/phanmemvip-usage") {
-      return json(res, 200, await readPhanmemvipUsage());
+      const date = vietnamDateKey();
+      const dayStart = Date.parse(`${date}T00:00:00+07:00`);
+      const todayEvents = Number.isFinite(dayStart)
+        ? eventsInPeriod(
+            new Date(dayStart).toISOString(),
+            new Date(dayStart + 24 * 60 * 60 * 1000 - 1).toISOString(),
+          )
+        : [];
+      return json(res, 200, await readPhanmemvipUsage(todayEvents));
     }
 
     if (req.method === "GET" && pathname === "/api/rate-audit") {
