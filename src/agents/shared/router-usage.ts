@@ -522,26 +522,13 @@ interface DailyModelTotals {
 }
 
 /**
- * Collapse a daily `byModel` map into one entry per exported model group.
+ * Collapse a daily `byModel` map into one entry per resolved public model.
  *
- * LiteLLM exports the same day under several `byModel` keys that are NOT additive
- * fragments — they are overlapping views of one another, so summing them double
- * counts. Measured on the live mirror for 2026-10-05:
- *
- *   anthropic/claude-fable-5|openai  in=470,461,648  req=4426
- *   openai/Claude-Fable|openai       in=475,049,638  req=4533
- *   day                              in=474,522,782  req=4674
- *
- * Both rows describe the whole day; their SUM is 945.5M / 8959 (~2x day), while
- * the LARGER one alone is within 0.1% of the day. Same shape on 10-04 and 10-06.
- * Keying by provider plus normalized `rawModel` takes the largest overlapping
- * alias within one provider while retaining additive rows from other providers.
- * This reconstructs a day without summing duplicate views or dropping a second
- * connection that happens to use the same public model name.
- *
- * The display name must NOT be the identity: normalization maps
- * `claude-fable-5` and `Claude-Fable` to different strings for one model, and
- * two keys can also share one display label.
+ * For LiteLLM, duplicate provider/raw-model views use the most complete row;
+ * distinct raw aliases that resolve to the same public model are added. On
+ * 2026-10-12 this reconciles exactly with the refreshed daily total: 3,504
+ * requests, 118,571,202 input tokens, 2,664,609 output tokens, and $634.82.
+ * Other router sources keep their canonical-key deduplication behavior.
  */
 function groupDailyByModel(
   agent: AgentId,
@@ -550,6 +537,7 @@ function groupDailyByModel(
   interface Group extends DailyModelTotals {
     /** Best display name seen for this group across all keys. */
     display: string;
+    canonicalKey: string;
   }
   const grouped = new Map<string, Group>();
   for (const [modelKey, mraw] of Object.entries(byModel)) {
@@ -566,7 +554,15 @@ function groupDailyByModel(
             ? rawModel.slice(0, rawModel.indexOf("/")).trim()
             : "";
     const normalized = normalizeModelName(rawModel) || rawModel;
-    const key = `${provider.toLowerCase()}|${normalized}`;
+    const providerKey = provider.toLowerCase();
+    // LiteLLM can repeat one raw model under several group keys while also
+    // exporting separate raw aliases that should add into one public model.
+    // Keep the prior canonical-key behavior for the other router sources.
+    const canonicalKey = `${providerKey}|${agent === "litellm" ? normalized.toLowerCase() : normalized}`;
+    const key =
+      agent === "litellm"
+        ? `${providerKey}|${rawModel.trim().toLowerCase()}`
+        : canonicalKey;
 
     const row = {
       requests: num(m.requests),
@@ -577,6 +573,7 @@ function groupDailyByModel(
       rawModel,
       provider: typeof m.provider === "string" ? m.provider : provider || undefined,
       display: model,
+      canonicalKey,
     };
 
     const prev = grouped.get(key);
@@ -607,17 +604,44 @@ function groupDailyByModel(
         // 9router/routerlab (cache not inside prompt) it is likewise the larger
         // measured hit count. Never additive in either case.
         cachedTokens: Math.max(prev.cachedTokens, row.cachedTokens),
+        cost: Math.max(prev.cost, row.cost),
       });
-    } else if (model.length > prev.display.length || row.cachedTokens > prev.cachedTokens) {
+    } else if (
+      model.length > prev.display.length ||
+      row.cachedTokens > prev.cachedTokens ||
+      row.cost > prev.cost
+    ) {
       if (row.cachedTokens > prev.cachedTokens) prev.cachedTokens = row.cachedTokens;
       if (model.length > prev.display.length) prev.display = model;
+      if (row.cost > prev.cost) prev.cost = row.cost;
     }
+  }
+
+  const resolved = new Map<string, Group>();
+  for (const row of grouped.values()) {
+    const prev = resolved.get(row.canonicalKey);
+    if (!prev) {
+      resolved.set(row.canonicalKey, { ...row });
+      continue;
+    }
+    const keepRowLabel = row.display.length > prev.display.length;
+    resolved.set(row.canonicalKey, {
+      requests: prev.requests + row.requests,
+      promptTokens: prev.promptTokens + row.promptTokens,
+      completionTokens: prev.completionTokens + row.completionTokens,
+      cachedTokens: prev.cachedTokens + row.cachedTokens,
+      cost: prev.cost + row.cost,
+      rawModel: keepRowLabel ? row.rawModel : prev.rawModel,
+      provider: prev.provider || row.provider,
+      display: keepRowLabel ? row.display : prev.display,
+      canonicalKey: row.canonicalKey,
+    });
   }
 
   // Key by the resolved raw model so downstream model labels, rate lookups and
   // stable ids all agree on one identity per real model.
   const out = new Map<string, DailyModelTotals>();
-  for (const [key, g] of grouped) {
+  for (const [key, g] of resolved) {
     out.set(key, {
       requests: g.requests,
       promptTokens: g.promptTokens,

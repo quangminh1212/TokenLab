@@ -33,6 +33,7 @@ import {
   loadScanCacheMainOnly,
   dropPreviousAgentSourceEvents,
   dropPreviousAgentSessionEvents,
+  dropPreviousLiteLlmDailyRollups,
   getMachineId,
   gistCoverageKey,
   isGistRollupEvent,
@@ -953,7 +954,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
        */
       const monotonicBaseline = (scanned: UsageEvent[]): UsageEvent[] =>
         pruneStaleSourceEvents(
-          dropLegacyRouterMirrorRows(previousForMonotonic(), scanned),
+          dropLegacyRouterMirrorRows(
+            dropPreviousLiteLlmDailyRollups(previousForMonotonic(), scanned),
+            scanned,
+          ),
           scanned,
         );
 
@@ -1433,7 +1437,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           if (!scanning) ensureCacheSorted();
           const { events, timestampsMs } = eventsInPeriodDetailed(since, until);
           writeHeartbeat();
-          const stats = aggregate(events, groupBy, sort, since, until, timestampsMs);
+          const stats = aggregate(
+            events,
+            groupBy,
+            sort,
+            since,
+            until,
+            timestampsMs,
+            pk === "all" && groupBy === "model",
+          );
           // Period RPM: busiest single minute in the period (peak, not a mean)
           const usageRpm = computeActiveUsageRpm(events);
           periodPart = { stats, usageRpm };

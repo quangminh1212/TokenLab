@@ -1485,6 +1485,52 @@ export function enforceMonotonicAgentDays(
 }
 
 /**
+ * Remove prior local LiteLLM daily rows when a fresh scan rebuilds the same
+ * mirror root and day. Daily and request history can change overlap, so
+ * retaining the previous row by stable id can preserve an obsolete remainder.
+ */
+export function dropPreviousLiteLlmDailyRollups(
+  previous: UsageEvent[],
+  fresh: UsageEvent[],
+): UsageEvent[] {
+  const coverageKey = (event: UsageEvent): string | null => {
+    if (normalizeAgentId(event?.agent) !== "litellm") return null;
+    const source =
+      typeof event.sourcePath === "string"
+        ? event.sourcePath.replace(/\\/g, "/").toLowerCase()
+        : "";
+    const day = String(event.timestamp || "").slice(0, 10);
+    if (!source || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+    const mirror = routerMirrorScope(event).trim().toLowerCase();
+    return mirror ? `${mirror}|${day}` : null;
+  };
+  const previousDailyKey = (event: UsageEvent): string | null => {
+    if (
+      event?.estimated !== true ||
+      usageMachineScope(event) !== LOCAL_MACHINE_SCOPE
+    ) {
+      return null;
+    }
+    const source =
+      typeof event.sourcePath === "string"
+        ? event.sourcePath.replace(/\\/g, "/").toLowerCase()
+        : "";
+    if (!source.startsWith("daily-rollup|")) return null;
+    return coverageKey(event);
+  };
+  const freshDays = new Set<string>();
+  for (const event of fresh || []) {
+    const key = coverageKey(event);
+    if (key) freshDays.add(key);
+  }
+  if (freshDays.size === 0) return previous || [];
+  return (previous || []).filter((event) => {
+    const key = previousDailyKey(event);
+    return !key || !freshDays.has(key);
+  });
+}
+
+/**
  * Reconcile a freshly scanned cache with the persisted high-water snapshot.
  *
  * Full saves already use this rule before writing to disk. Keeping it as a
@@ -1498,7 +1544,11 @@ export function reconcileScanCacheHighWater(
 ): UsageEvent[] {
   if (!existing?.length) return next || [];
   const baseline = dropLegacyRouterMirrorRows(
-    dropPreviousAgentSourceEvents(existing, next, "claude-code"),
+    dropPreviousAgentSourceEvents(
+      dropPreviousLiteLlmDailyRollups(existing, next),
+      next,
+      "claude-code",
+    ),
     next || [],
   );
   const merged = enforceMonotonicAgentDays(
