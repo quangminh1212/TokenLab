@@ -495,6 +495,7 @@ def _to_iso_z(ts: str) -> str:
     return s
 
 daily_ll = {}
+spend_logs_days = set()
 
 
 def _litellm_display_model(raw_model: str, model_group: str = "") -> str:
@@ -625,6 +626,7 @@ if raw_logs_day:
             cache_r = int(float(parts[5] or 0)) if len(parts) > 5 else 0
         except Exception:
             continue
+        spend_logs_days.add(date_key)
         daily_ll[date_key] = {
             "requests": reqs, "promptTokens": pt, "completionTokens": ct,
             "cachedTokens": max(0, cache_r), "cost": cost, "byModel": {},
@@ -687,7 +689,10 @@ if raw_by_model:
             "provider": provider or None,
         }
 
-# Overlay DailyUserSpend cache only when SpendLogs metadata path under-counts
+# DailyUserSpend overlaps SpendLogs. Retain its cache measurements when they
+# exceed the per-request metadata totals, while using max-per-source values
+# instead of adding the same requests and tokens twice.
+daily_user_totals = {}
 raw_daily = _psql(
     'SELECT date, COALESCE(model, \'\'), COALESCE(custom_llm_provider, \'\'), '
     "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
@@ -721,6 +726,15 @@ if raw_daily:
             reqs = ok
         if pt + ct + cache_r <= 0 and cost <= 0 and reqs <= 0:
             continue
+        totals = daily_user_totals.setdefault(date_key, {
+            "requests": 0, "promptTokens": 0, "completionTokens": 0,
+            "cachedTokens": 0, "cost": 0.0,
+        })
+        totals["requests"] += max(0, reqs)
+        totals["promptTokens"] += max(0, pt)
+        totals["completionTokens"] += max(0, ct)
+        totals["cachedTokens"] += max(0, cache_r)
+        totals["cost"] += max(0.0, cost)
         day = daily_ll.setdefault(date_key, {
             "requests": 0, "promptTokens": 0, "completionTokens": 0,
             "cachedTokens": 0, "cost": 0.0, "byModel": {},
@@ -736,21 +750,32 @@ if raw_daily:
             "rawModel": raw_model,
             "provider": provider or None,
         })
-        row["requests"] = int(row.get("requests") or 0) + max(0, reqs)
-        row["promptTokens"] = int(row.get("promptTokens") or 0) + max(0, pt)
-        row["completionTokens"] = int(row.get("completionTokens") or 0) + max(0, ct)
-        row["cost"] = float(row.get("cost") or 0) + max(0.0, cost)
+        row["requests"] = max(int(row.get("requests") or 0), max(0, reqs))
+        row["promptTokens"] = max(int(row.get("promptTokens") or 0), max(0, pt))
+        row["completionTokens"] = max(
+            int(row.get("completionTokens") or 0), max(0, ct)
+        )
+        row["cost"] = max(float(row.get("cost") or 0), max(0.0, cost))
         prev_c = int(row.get("cachedTokens") or 0)
-        # Prefer SpendLogs metadata sum; only raise if DailyUserSpend reports more
+        # The two tables overlap; use the more complete cache value.
         row["cachedTokens"] = max(prev_c, max(0, cache_r))
 
-# Day-level totals MUST equal the sum of their byModel rows, otherwise the day
-# row and its own breakdown disagree and TokenLab's period filters ("today")
-# read a bogus frozen value. This runs at module scope rather than inside the
-# `if raw_daily:` block above: DailyUserSpend is a batched rollup that can be
-# empty or mid-rotation, and the SpendLogs-only paths can diverge without it.
+# Keep the larger daily view when both sources report a date. Their totals
+# overlap, so adding the byModel rows to those totals creates a false
+# unattributed remainder. Reconstruct totals from byModel only when neither
+# source supplied a daily total.
+for _dk, _totals in daily_user_totals.items():
+    day = daily_ll.setdefault(_dk, {
+        "requests": 0, "promptTokens": 0, "completionTokens": 0,
+        "cachedTokens": 0, "cost": 0.0, "byModel": {},
+    })
+    for _field in ("requests", "promptTokens", "completionTokens", "cachedTokens", "cost"):
+        day[_field] = max(day.get(_field) or 0, _totals[_field])
+
 for _dk, day in daily_ll.items():
     if not isinstance(day, dict):
+        continue
+    if _dk in spend_logs_days or _dk in daily_user_totals:
         continue
     bm = day.get("byModel") or {}
     if not isinstance(bm, dict) or not bm:

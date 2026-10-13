@@ -394,7 +394,8 @@
       const normalized = normalizeModelName(model);
       if (normalized) return normalized;
       const agentId = String(agent || '').trim().toLowerCase();
-      return ['devin', 'swe-agent', 'swe agent'].includes(agentId) ? 'swe-1.6' : '';
+      if (['devin', 'swe-agent', 'swe agent'].includes(agentId)) return 'swe-1.6';
+      return '';
     }
 
     /** Agent id → display name (XLab Router → RouterLab, etc.) */
@@ -488,7 +489,8 @@
       const format = (name) => {
         const spaced = String(name).replace(/-/g, ' ');
         return spaced.replace(/(^|\s)([a-z])/g, (_match, prefix, letter) => prefix + letter.toUpperCase())
-          .replace(/\bgpt\b/gi, 'GPT');
+          .replace(/\bgpt\b/gi, 'GPT')
+          .replace(/\bglm\b/gi, 'GLM');
       };
       if (lower === 'big-pickle') return format('big pickle');
       if (lower === 'claude-fable-5') return format('claude fable 5');

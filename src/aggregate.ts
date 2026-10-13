@@ -1,6 +1,6 @@
 import type { GroupBy, GroupRow, StatsResult, TokenTotals, UsageEvent } from "./types.js";
 import { priceCostParts, getRateForModel } from "./pricing.js";
-import { normalizeModelForAgent } from "./util.js";
+import { normalizeAgentId, normalizeModelForAgent } from "./util.js";
 
 function emptyTotals(currency = "USD"): TokenTotals {
   return {
@@ -82,15 +82,32 @@ const MODEL_GROUP_ALIASES = new Map<string, string>([
   ["qwen 3.8 max", "qwen3.8-max"],
 ]);
 
-function modelGroupKey(e: UsageEvent): string {
+function modelGroupKey(
+  e: UsageEvent,
+  allTimeRouterLabDefault = false,
+): string {
   const model = normalizeModelForAgent(e.model, e.agent);
+  // The user confirmed this specific All-time bucket is GPT-5.5. Keep it a
+  // display grouping so model-less RouterLab rows keep their original pricing.
+  if (
+    !model &&
+    allTimeRouterLabDefault &&
+    normalizeAgentId(e.agent) === "routerlab"
+  ) {
+    return "gpt 5.5";
+  }
   const key = (model || `unknown (${e.agent})`).toLowerCase();
   return (MODEL_GROUP_ALIASES.get(key) || key).replace(/-/g, " ");
 }
 
-function groupKey(e: UsageEvent, by: GroupBy, tsMs?: number): string {
+function groupKey(
+  e: UsageEvent,
+  by: GroupBy,
+  tsMs?: number,
+  allTimeRouterLabDefault = false,
+): string {
   if (by === "agent") return e.agent;
-  if (by === "model") return modelGroupKey(e);
+  if (by === "model") return modelGroupKey(e, allTimeRouterLabDefault);
   const t = tsMs != null && Number.isFinite(tsMs) ? tsMs : Date.parse(e.timestamp);
   if (!Number.isFinite(t)) return "unknown";
   const d = new Date(t);
@@ -106,6 +123,7 @@ export function aggregate(
   until: string | null = null,
   /** Optional parallel ms timestamps (same length) — avoids re-parse for day/hour keys */
   timestampsMs?: number[] | null,
+  allTimeRouterLabDefault = false,
 ): StatsResult {
   const totals = emptyTotals();
   const map = new Map<string, GroupRow>();
@@ -124,7 +142,12 @@ export function aggregate(
       e.estimatedCost,
     );
     addWithParts(totals, e, parts);
-    const key = groupKey(e, groupBy, useTs ? timestampsMs![i] : undefined);
+    const key = groupKey(
+      e,
+      groupBy,
+      useTs ? timestampsMs![i] : undefined,
+      allTimeRouterLabDefault,
+    );
     let row = map.get(key);
     if (!row) {
       row = { key, ...emptyTotals() };
@@ -142,7 +165,13 @@ export function aggregate(
   // A group with no live rows keeps `rpm` undefined (rendered as "—") rather
   // than 0 — 0 would read as "measured, and it was zero", recreating the
   // "157 requests, 0 RPM" contradiction this column already had once.
-  const rpmMap = rpmByGroup(events, groupBy, timestampsMs);
+  const rpmMap = rpmByGroup(
+    events,
+    groupBy,
+    timestampsMs,
+    "table",
+    allTimeRouterLabDefault,
+  );
   for (const g of groups) {
     const peak = rpmMap.get(g.key);
     if (peak != null) g.rpm = peak;
@@ -224,6 +253,7 @@ export function precomputeDashboardPeriods(
     );
     const agentKey = e.agent;
     const modelKey = modelGroupKey(e);
+    const allTimeModelKey = modelGroupKey(e, true);
     const dayKey = new Date(t).toISOString().slice(0, 10);
     const hourKey = `${new Date(t).toISOString().slice(0, 13)}:00`;
 
@@ -234,7 +264,7 @@ export function precomputeDashboardPeriods(
       const a = acc.get(pk)!;
       addWithParts(a.totals, e, parts);
       bump(a.agent, agentKey, e, parts);
-      bump(a.model, modelKey, e, parts);
+      bump(a.model, pk === "all" ? allTimeModelKey : modelKey, e, parts);
       bump(a.day, dayKey, e, parts);
       // Hour series only needed for today/24h charts
       if (pk === "today" || pk === "24h") bump(a.hour, hourKey, e, parts);
@@ -280,7 +310,13 @@ export function precomputeDashboardPeriods(
       [dayStats, "day"],
       [hourStats, "hour"],
     ] as const) {
-      const rpmMap = rpmByGroup(a.rpmEvents, by);
+      const rpmMap = rpmByGroup(
+        a.rpmEvents,
+        by,
+        undefined,
+        "table",
+        pk === "all" && by === "model",
+      );
       for (const g of stats.groups) {
         const peak = rpmMap.get(g.key);
         if (peak != null) g.rpm = peak;
@@ -445,6 +481,7 @@ export function rpmByGroup(
   by: GroupBy,
   timestampsMs?: number[] | null,
   scope: "table" | "live" = "table",
+  allTimeRouterLabDefault = false,
 ): Map<string, number> {
   const n = events.length;
   const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
@@ -472,7 +509,7 @@ export function rpmByGroup(
       if (tok <= 0 && !(Number(e.estimatedCost) > 0)) continue;
     }
 
-    const key = groupKey(e, by, t);
+    const key = groupKey(e, by, t, allTimeRouterLabDefault);
     let minutes = acc.get(key);
     if (!minutes) {
       minutes = new Map<number, number>();
