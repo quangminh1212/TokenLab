@@ -82,17 +82,23 @@ const MODEL_GROUP_ALIASES = new Map<string, string>([
   ["qwen 3.8 max", "qwen3.8-max"],
 ]);
 
+// These legacy 9r route labels represent GPT-5.5 in the All-time model view.
+// Keep the aliasing display-only so the recorded event pricing is preserved.
+const ALL_TIME_GPT55_MODEL_ALIASES = new Set(["9r or openrouter", "9r xlab"]);
+
 function modelGroupKey(
   e: UsageEvent,
-  allTimeRouterLabDefault = false,
+  allTimeModelAliases = false,
 ): string {
   const model = normalizeModelForAgent(e.model, e.agent);
+  const agent = normalizeAgentId(e.agent);
+  const modelAlias = model?.toLowerCase().replace(/-/g, " ");
   // The user confirmed this specific All-time bucket is GPT-5.5. Keep it a
-  // display grouping so model-less RouterLab rows keep their original pricing.
+  // display grouping so these rows keep their original pricing.
   if (
-    !model &&
-    allTimeRouterLabDefault &&
-    normalizeAgentId(e.agent) === "routerlab"
+    allTimeModelAliases &&
+    ((!model && agent === "routerlab") ||
+      (modelAlias != null && ALL_TIME_GPT55_MODEL_ALIASES.has(modelAlias)))
   ) {
     return "gpt 5.5";
   }
@@ -104,10 +110,10 @@ function groupKey(
   e: UsageEvent,
   by: GroupBy,
   tsMs?: number,
-  allTimeRouterLabDefault = false,
+  allTimeModelAliases = false,
 ): string {
   if (by === "agent") return e.agent;
-  if (by === "model") return modelGroupKey(e, allTimeRouterLabDefault);
+  if (by === "model") return modelGroupKey(e, allTimeModelAliases);
   const t = tsMs != null && Number.isFinite(tsMs) ? tsMs : Date.parse(e.timestamp);
   if (!Number.isFinite(t)) return "unknown";
   const d = new Date(t);
@@ -123,7 +129,7 @@ export function aggregate(
   until: string | null = null,
   /** Optional parallel ms timestamps (same length) — avoids re-parse for day/hour keys */
   timestampsMs?: number[] | null,
-  allTimeRouterLabDefault = false,
+  allTimeModelAliases = false,
 ): StatsResult {
   const totals = emptyTotals();
   const map = new Map<string, GroupRow>();
@@ -146,7 +152,7 @@ export function aggregate(
       e,
       groupBy,
       useTs ? timestampsMs![i] : undefined,
-      allTimeRouterLabDefault,
+      allTimeModelAliases,
     );
     let row = map.get(key);
     if (!row) {
@@ -170,7 +176,7 @@ export function aggregate(
     groupBy,
     timestampsMs,
     "table",
-    allTimeRouterLabDefault,
+    allTimeModelAliases,
   );
   for (const g of groups) {
     const peak = rpmMap.get(g.key);
@@ -481,7 +487,7 @@ export function rpmByGroup(
   by: GroupBy,
   timestampsMs?: number[] | null,
   scope: "table" | "live" = "table",
-  allTimeRouterLabDefault = false,
+  allTimeModelAliases = false,
 ): Map<string, number> {
   const n = events.length;
   const useTs = Array.isArray(timestampsMs) && timestampsMs.length === n;
@@ -509,7 +515,7 @@ export function rpmByGroup(
       if (tok <= 0 && !(Number(e.estimatedCost) > 0)) continue;
     }
 
-    const key = groupKey(e, by, t, allTimeRouterLabDefault);
+    const key = groupKey(e, by, t, allTimeModelAliases);
     let minutes = acc.get(key);
     if (!minutes) {
       minutes = new Map<number, number>();
