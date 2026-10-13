@@ -680,12 +680,14 @@ function zoneOffsetMs(epochMs: number, timezone: string): number | null {
 const OFFICIAL_OPENROUTER_HIGH_MODEL_IDS = new Set(["o3-mini-high", "o4-mini-high"]);
 // These labels describe a source or incomplete usage row, not a model ID.
 const NON_MODEL_USAGE_LABELS = new Set([
+  "unknown",
   "9router-usage-backup",
   "9router-daily-summary",
   "9router-api-chart",
   "mixed",
   "default",
   "gpt",
+  "qwencoder",
   "unattributed",
 ]);
 

@@ -369,7 +369,7 @@
       const lower = m.toLowerCase();
       const displayAlias = MODEL_DISPLAY_ALIASES.get(lower);
       if (displayAlias) return displayAlias;
-      if (lower === 'unattributed') return '';
+      if (lower === 'unattributed' || lower === 'unknown' || lower === 'qwencoder') return '';
       if (lower === 'deepseek-chat') return 'deepseek-v4-flash';
       if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
       if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.7';
@@ -506,8 +506,12 @@
         const k = String(key ?? '');
         // Keep the source name on unknown rows so the missing model is still
         // traceable to the provider feed.
-        const unknown = /^unknown\s*\((.*)\)$/i.exec(k);
-        if (unknown) return `Unknown (${agentLabel(unknown[1]) || unknown[1]})`;
+        const unattributed = /^(?:unknown|unattributed)\s*\((.*)\)$/i.exec(k);
+        if (unattributed) {
+          return `Unattributed (${agentLabel(unattributed[1]) || unattributed[1]})`;
+        }
+        if (/^(?:unknown|unattributed)$/i.test(k)) return 'Unattributed';
+        if (/^qwencoder$/i.test(k)) return 'Unattributed (QwenCoder Cloud)';
         return displayModelLabel(normalizeModelName(k) || k);
       }
       if (state.groupBy === 'agent') {

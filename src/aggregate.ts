@@ -102,7 +102,10 @@ function modelGroupKey(
   ) {
     return "gpt 5.5";
   }
-  const key = (model || `unknown (${e.agent})`).toLowerCase();
+  // A missing/synthetic source label has no single model to attribute it to.
+  // Keep it grouped by provider, but describe it as unattributed rather than
+  // presenting it as an unknown model ID.
+  const key = (model || `unattributed (${e.agent})`).toLowerCase();
   return (MODEL_GROUP_ALIASES.get(key) || key).replace(/-/g, " ");
 }
 
