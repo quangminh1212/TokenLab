@@ -914,14 +914,13 @@
 
     function renderTable() {
       const costs = state.viewMode === 'costs';
-      // RPM column is always present (it is meaningful for every group: each
-      // row is measured against its own active minutes). No cache column: cache
-      // reads bill at the same rate as input for every tracked model, so the
-      // bucket carries no information the total does not already have, and a
-      // caveat-free column of near-zero numbers is worse than no column.
+      const showRpm = ['today', '24h', '7d', '30d'].includes(state.period);
+      const rpmHeader = showRpm ? ['RPM'] : [];
+      // Cache reads bill at the same rate as input, so they remain folded into
+      // Input instead of adding a redundant column.
       const head = costs
-        ? ['Key', 'Requests', 'RPM', 'Input $', 'Output $', 'Total $']
-        : ['Key', 'Requests', 'RPM', 'Input', 'Output', 'Total'];
+        ? ['Key', 'Requests', ...rpmHeader, 'Input $', 'Output $', 'Total $']
+        : ['Key', 'Requests', ...rpmHeader, 'Input', 'Output', 'Total'];
       $('tableHead').innerHTML = `<tr>${head.map((h, i) =>
         `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr>`;
 
@@ -984,7 +983,7 @@
           return `<tr>
             <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
             <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
-            <td class="num muted">${rpmCell}</td>
+            ${showRpm ? `<td class="num muted">${rpmCell}</td>` : ''}
             <td class="num muted">${moneyBreakdown(inputCost)}</td>
             <td class="num muted">${moneyBreakdown(outCost)}</td>
             <td class="num toned-cost"><strong>${moneyBreakdown(cost)}</strong></td>
@@ -993,7 +992,7 @@
         return `<tr>
           <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
           <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
-          <td class="num muted">${rpmCell}</td>
+          ${showRpm ? `<td class="num muted">${rpmCell}</td>` : ''}
           <td class="num muted">${fmtFull(input + cache)}</td>
           <td class="num muted">${fmtFull(output)}</td>
           <td class="num"><strong>${fmtFull(g.totalTokens || 0)}</strong></td>
