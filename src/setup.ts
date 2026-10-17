@@ -1,5 +1,5 @@
 /**
- * First-run bootstrap after global npm install:
+ * First-run bootstrap after global pnpm install:
  * enable Windows login autostart + start serve (detached) if not already up.
  */
 import { spawn } from "node:child_process";

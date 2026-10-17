@@ -77,7 +77,7 @@ Backup options:
   --public     Make the Gist public (default: secret)
   --save-token Save the token to local config
 
-Setup (also runs after global npm install):
+Setup (also runs after global pnpm install):
   Enables Windows login autostart, creates a Desktop shortcut, and starts the dashboard if not already running.
   --no-open       Do not open the browser
   --no-autostart  Skip login autostart registration
@@ -293,7 +293,7 @@ async function main(): Promise<void> {
       }
       if (!result.ok) process.exitCode = 1;
     } catch (err) {
-      // Never break npm install when invoked from postinstall
+      // Never break pnpm install when invoked from postinstall
       const msg = err instanceof Error ? err.message : String(err);
       if (fromPostinstall) {
         console.warn(`tokenlab: setup skipped (${msg})`);

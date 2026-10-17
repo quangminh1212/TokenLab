@@ -26,7 +26,7 @@ If applicable, add screenshots to help explain your problem.
 - OS: [e.g. Windows 10, macOS 12, Ubuntu 20.04]
 - Node.js version: [e.g. 20.0.0]
 - TokenLab version: [e.g. 1.0.4]
-- Installation method: [npm global, desktop app, local clone]
+- Installation method: [pnpm global, desktop app, local clone]
 
 ## Additional context
 Add any other context about the problem here.

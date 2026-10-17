@@ -15,8 +15,8 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v npm >/dev/null 2>&1; then
-  echo "[ERROR] npm not found. Install Node.js 20+ then retry."
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "[ERROR] pnpm not found. Install Node.js 20+ then retry."
   exit 1
 fi
 
@@ -28,14 +28,14 @@ fi
 
 echo "[1/2] Installing dependencies..."
 if [ ! -d node_modules ]; then
-  npm install
+  pnpm install
 else
   echo "      node_modules OK"
 fi
 
 if [ ! -d node_modules/tsx ]; then
   echo "      Installing tsx..."
-  npm install
+  pnpm install
 fi
 
 PORT="${TOKENLAB_PORT:-3737}"
@@ -59,4 +59,4 @@ echo ""
 ) &
 
 export TOKENLAB_OPEN=0
-npm run serve:watch
+pnpm run serve:watch

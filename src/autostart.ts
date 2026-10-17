@@ -66,7 +66,7 @@ export function resolveServeInvocation(): { node: string; cli: string; args: str
   ].filter(Boolean);
   const cli = candidates.find((candidate) => fs.existsSync(candidate));
   if (!cli) {
-    throw new Error(`Built TokenLab CLI not found next to ${here}; run npm run build first`);
+    throw new Error(`Built TokenLab CLI not found next to ${here}; run pnpm run build first`);
   }
   log("Resolved serve invocation:", { node, cli });
   return { node, cli, args: [cli, "serve"] };
@@ -756,7 +756,7 @@ function osHomedirFallback(): string {
 
 /**
  * Create/refresh "TokenLab.lnk" on the user Desktop (Windows).
- * Called from setup / global npm postinstall so users can double-click to start the app.
+ * Called from setup / global pnpm postinstall so users can double-click to start the app.
  */
 export async function installDesktopShortcut(): Promise<{
   ok: boolean;

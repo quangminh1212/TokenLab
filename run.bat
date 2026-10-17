@@ -15,18 +15,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
-where npm >nul 2>&1
+where pnpm >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] npm not found. Install Node.js 20+ then retry.
+  echo [ERROR] pnpm not found. Install Node.js 20+ then retry.
   pause
   exit /b 1
 )
 
 echo [1/2] Installing dependencies...
 if not exist "node_modules\" (
-  call npm install
+  call pnpm install
   if errorlevel 1 (
-    echo [ERROR] npm install failed.
+    echo [ERROR] pnpm install failed.
     pause
     exit /b 1
   )
@@ -36,9 +36,9 @@ if not exist "node_modules\" (
 
 if not exist "node_modules\tsx\" (
   echo       Installing tsx...
-  call npm install
+  call pnpm install
   if errorlevel 1 (
-    echo [ERROR] npm install failed.
+    echo [ERROR] pnpm install failed.
     pause
     exit /b 1
   )
@@ -51,7 +51,7 @@ echo       Press Ctrl+C to stop.
 echo.
 
 start "" cmd /c "timeout /t 2 /nobreak >nul & start http://127.0.0.1:3737"
-call npm run serve:watch
+call pnpm run serve:watch
 set EXITCODE=%ERRORLEVEL%
 
 if not "%EXITCODE%"=="0" (

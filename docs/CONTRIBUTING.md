@@ -14,7 +14,7 @@ Thank you for your interest in contributing to TokenLab! This document provides 
 ### Prerequisites
 
 - Node.js 20+
-- npm or yarn
+- pnpm or yarn
 - Git
 
 ### Setup
@@ -27,11 +27,11 @@ Thank you for your interest in contributing to TokenLab! This document provides 
    ```
 3. Install dependencies:
    ```bash
-   npm install
+   pnpm install
    ```
 4. Build the project:
    ```bash
-   npm run build
+   pnpm run build
    ```
 
 ## Development Workflow
@@ -78,8 +78,8 @@ feat(claude-code): add support for new session format
 
 1. Update documentation if needed
 2. Add tests for new features or bug fixes
-3. Ensure all tests pass: `npm test`
-4. Run type checking: `npm run typecheck`
+3. Ensure all tests pass: `pnpm test`
+4. Run type checking: `pnpm run typecheck`
 5. Update CHANGELOG.md
 6. Submit a pull request with a clear description
 
@@ -96,7 +96,7 @@ feat(claude-code): add support for new session format
 ### Running Tests
 
 ```bash
-npm test
+pnpm test
 ```
 
 ### Writing Tests

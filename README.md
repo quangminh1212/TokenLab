@@ -2,7 +2,7 @@
 
 **Local-first token API usage & cost tracker for every AI agent on one machine.**
 
-TokenLab is an npm package that runs a lightweight **localhost** service and dashboard. It aggregates **token API consumption** and **estimated spend (cost)** from all AI coding agents and CLIs installed on the host — including **Cursor**, **Grok**, **Windsurf**, **Codex**, **Claude Code**, and more — so you always know **how many tokens each agent used and how much it cost**.
+TokenLab is an pnpm package that runs a lightweight **localhost** service and dashboard. It aggregates **token API consumption** and **estimated spend (cost)** from all AI coding agents and CLIs installed on the host — including **Cursor**, **Grok**, **Windsurf**, **Codex**, **Claude Code**, and more — so you always know **how many tokens each agent used and how much it cost**.
 
 No cloud account required by default. Data stays on your machine.
 
@@ -75,7 +75,7 @@ TokenLab scans **local agent usage artifacts**, normalizes them into one schema,
 - **Live refresh** — filesystem watchers + periodic rescan
 - **Breakdowns & rankings** — top agents, top models, spend over time
 - **Stable JSON API** — automate budgets, status bars, scripts
-- **npm-first UX** — `npx` / `bunx` / global binary
+- **pnpm-first UX** — `npx` / `bunx` / global binary
 - **Offline-friendly pricing** — bundled price table; optional refresh
 
 ---
@@ -236,7 +236,7 @@ The desktop app automatically handles server startup and provides a native windo
 ### One-shot
 
 ```bash
-npx tokenlab@latest serve
+pnpm dlx tokenlab@latest serve
 # or
 bunx tokenlab@latest serve
 ```
@@ -244,7 +244,7 @@ bunx tokenlab@latest serve
 ### Global install
 
 ```bash
-npm install -g tokenlab
+pnpm install -g tokenlab
 tokenlab serve
 # optional: open default browser
 tokenlab serve --open
@@ -261,7 +261,7 @@ http://127.0.0.1:3737
 ```bash
 git clone https://github.com/quangminh1212/XLab_Token.git
 cd XLab_Token
-npm install
+pnpm install
 
 # Windows
 run.bat
@@ -271,7 +271,7 @@ chmod +x run.sh
 ./run.sh
 
 # or cross-platform
-npm run serve:watch
+pnpm run serve:watch
 ```
 
 ### Token + cost snapshot (CLI)
@@ -592,10 +592,10 @@ Do not bind to `0.0.0.0` on untrusted networks. Treat the DB as sensitive if wor
 ```bash
 git clone https://github.com/quangminh1212/XLab_Token.git
 cd XLab_Token
-npm install
-npm test
-npm run build
-npm start
+pnpm install
+pnpm test
+pnpm run build
+pnpm start
 ```
 
 ### Building Desktop App
@@ -603,7 +603,7 @@ npm start
 #### Generate placeholder icons
 
 ```bash
-npm run generate-icons
+pnpm run generate-icons
 ```
 
 For production, convert the generated SVG to proper formats:
@@ -614,30 +614,30 @@ For production, convert the generated SVG to proper formats:
 #### Build for current platform
 
 ```bash
-npm run electron:build
+pnpm run electron:build
 ```
 
 #### Build for specific platforms
 
 **Windows:**
 ```bash
-npm run electron:build:win
+pnpm run electron:build:win
 ```
 
 **macOS:**
 ```bash
-npm run electron:build:mac
+pnpm run electron:build:mac
 ```
 
 **Linux:**
 ```bash
-npm run electron:build:linux
+pnpm run electron:build:linux
 ```
 
 #### Development mode
 
 ```bash
-npm run electron:dev
+pnpm run electron:dev
 ```
 
 See [installer/electron/README.md](installer/electron/README.md) for detailed Electron documentation.
@@ -659,7 +659,7 @@ Additional documentation is available in the [docs/](docs/) directory:
 |----|----------------|
 | Windows | `run.bat` |
 | macOS / Linux | `./run.sh` |
-| Any | `npm run serve:watch` |
+| Any | `pnpm run serve:watch` |
 
 Agent data paths are resolved per platform (`%APPDATA%` / `~/Library/Application Support` / XDG). Extension-based agents also scan VS Code, Cursor, VSCodium, Code - OSS, and Windsurf `globalStorage`.
 
@@ -702,13 +702,13 @@ Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (
 ### Dev commands
 
 ```bash
-npm install
-npm run build
-npm test
-npx tsx src/cli.ts doctors
-npx tsx src/cli.ts stats --since 7d
-npx tsx src/cli.ts cost --since 7d
-npx tsx src/cli.ts serve --port 3737
+pnpm install
+pnpm run build
+pnpm test
+pnpm dlx tsx src/cli.ts doctors
+pnpm dlx tsx src/cli.ts stats --since 7d
+pnpm dlx tsx src/cli.ts cost --since 7d
+pnpm dlx tsx src/cli.ts serve --port 3737
 ```
 
 ## Roadmap

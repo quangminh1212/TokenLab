@@ -1,6 +1,6 @@
 /**
  * System tray icon while serve is running.
- * Windows: PowerShell NotifyIcon (no native npm deps).
+ * Windows: PowerShell NotifyIcon (no native pnpm deps).
  * Other platforms: no-op (returns null).
  */
 import { spawn, type ChildProcess } from "node:child_process";
