@@ -770,6 +770,7 @@ export function normalizeModelName(model: string | null | undefined): string | n
   // Common vendor spelling variants → canonical form for grouping + rates
   const lower = m.toLowerCase();
   if (lower === "deepseek-chat") m = "deepseek-v4-flash";
+  else if (/^claude[- ]fable[- ]3\.7[- ]flash$/.test(lower)) m = "gemini-3.7-flash";
   else if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.6";
   else if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) m = "kimi-k2.7";
   else if (lower === "mimo-auto") m = "mimo-v2.5";
