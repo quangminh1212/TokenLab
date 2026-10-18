@@ -135,6 +135,7 @@
       }
       m = m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
       const lower = m.toLowerCase();
+      if (/^claude[- ]fable 3\.7 flash$/.test(lower)) return 'gemini-3.7-flash';
       if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
       if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.7';
       if (lower === 'vip-kimi') return 'kimi-k3';
@@ -160,6 +161,7 @@
           .replace(/\bgpt\b/gi, 'GPT');
       };
       const lower = cleaned.toLowerCase();
+      if (/^claude[- ]fable 3\.7 flash$/.test(lower)) return format('gemini-3.7-flash');
       if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return format('kimi-k2.6');
       if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return format('kimi-k2.7');
       if (lower === 'vip-kimi') return format('kimi-k3');

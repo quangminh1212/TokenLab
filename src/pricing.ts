@@ -24,7 +24,7 @@ import { normalizeModelName } from "./util.js";
  * breakdown truthful, not about the dollar figure, which the rescan changes only
  * marginally.
  */
-export const RATES_VERSION = 9;
+export const RATES_VERSION = 10;
 
 /**
  * Bundled offline rates (USD per 1M tokens).
@@ -95,6 +95,12 @@ export const BUNDLED_RATES: Record<string, ModelRate> = {
   "o4-mini": { inputPer1M: 1.1, outputPer1M: 4.4, cacheReadPer1M: 0.275 },
 
   // --- Google (ai.google.dev pricing, short context) ---
+  // Gemini 3.7 Flash routes to 3.8; current standard rates are $0.75/$3.75.
+  "gemini-3.7-flash": {
+    inputPer1M: 0.75,
+    outputPer1M: 3.75,
+    cacheReadPer1M: 0.075,
+  },
   "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10, cacheReadPer1M: 0.125 },
   "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5, cacheReadPer1M: 0.03 },
   "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4, cacheReadPer1M: 0.025 },
