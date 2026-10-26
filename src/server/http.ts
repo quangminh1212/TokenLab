@@ -2571,54 +2571,6 @@ function contentTypeFor(name: string): string {
   return "application/octet-stream";
 }
 
-/** Kill other processes listening on `port` (Windows/Linux) so hot-reload can rebind. */
-async function forceFreePort(port: number): Promise<boolean> {
-  const { execSync } = await import("node:child_process");
-  let freed = false;
-  try {
-    if (process.platform === "win32") {
-      const out = execSync("netstat -ano", { encoding: "utf8" });
-      const pids = new Set<number>();
-      for (const line of out.split(/\r?\n/)) {
-        if (!line.includes(`:${port}`) || !/LISTENING/i.test(line)) continue;
-        const m = line.trim().match(/(\d+)\s*$/);
-        if (!m) continue;
-        const pid = Number(m[1]);
-        if (pid > 0 && pid !== process.pid) pids.add(pid);
-      }
-      for (const pid of pids) {
-        try {
-          execSync(`taskkill /F /PID ${pid}`, { stdio: "ignore" });
-          console.warn(`[tokenlab] freed port ${port} (stopped PID ${pid})`);
-          freed = true;
-        } catch {
-          // ignore access denied / already gone
-        }
-      }
-    } else {
-      try {
-        const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN`, { encoding: "utf8" });
-        for (const raw of out.split(/\s+/)) {
-          const pid = Number(raw.trim());
-          if (!pid || pid === process.pid) continue;
-          try {
-            process.kill(pid, "SIGKILL");
-            console.warn(`[tokenlab] freed port ${port} (stopped PID ${pid})`);
-            freed = true;
-          } catch {
-            // ignore
-          }
-        }
-      } catch {
-        // lsof empty / missing
-      }
-    }
-  } catch {
-    // netstat/lsof failed
-  }
-  return freed;
-}
-
 async function listenWithRetry(
   server: ReturnType<typeof createServer>,
   port: number,
@@ -2627,7 +2579,6 @@ async function listenWithRetry(
   delayMs: number,
 ): Promise<void> {
   let lastErr: unknown;
-  let freedOnce = false;
   for (let i = 0; i < attempts; i++) {
     try {
       await new Promise<void>((resolve, reject) => {
@@ -2659,18 +2610,12 @@ async function listenWithRetry(
           `[tokenlab] port ${host}:${port} busy (EADDRINUSE), retry ${i + 1}/${attempts}…`,
         );
       }
-      // After a few failures, force-kill the occupant (stale node from previous watch run)
-      if (!freedOnce && i >= 2) {
-        freedOnce = true;
-        await forceFreePort(port);
-        await new Promise((r) => setTimeout(r, 300));
-      }
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
   const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
   throw new Error(
-    `Cannot bind ${host}:${port} — ${msg}. Run: netstat -ano | findstr :${port}  then taskkill /F /PID <pid>`,
+    `Cannot bind ${host}:${port} — ${msg}. Port is in use; stop only the TokenLab server that owns it, then retry.`,
   );
 }
 
