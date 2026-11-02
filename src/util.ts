@@ -4,6 +4,36 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentId, UsageEvent } from "./types.js";
 
+/** A temporary path context used to discover data roots on another platform. */
+export interface PathEnvOverride {
+  platform: NodeJS.Platform;
+  home: string;
+  appData: string;
+  localApp: string;
+  cache: string;
+  xdgData: string;
+  xdgConfig: string;
+  xdgCache: string;
+  path: typeof path;
+}
+
+let pathEnvOverride: PathEnvOverride | null = null;
+
+/** Run a synchronous root-discovery callback with a different OS path layout. */
+export function withPathEnvOverride<T>(override: PathEnvOverride, fn: () => T): T {
+  const previous = pathEnvOverride;
+  pathEnvOverride = override;
+  try {
+    return fn();
+  } finally {
+    pathEnvOverride = previous;
+  }
+}
+
+export function getPathEnvOverride(): PathEnvOverride | null {
+  return pathEnvOverride;
+}
+
 export function stableId(...parts: string[]): string {
   return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 24);
 }
@@ -47,6 +77,7 @@ export function agentDisplayName(agent: string | null | undefined): string {
 
 /** User home — platform-aware (USERPROFILE on Windows, HOME on Unix). */
 export function homeDir(): string {
+  if (pathEnvOverride) return pathEnvOverride.home;
   if (process.platform === "win32") {
     return process.env.USERPROFILE || process.env.HOME || process.cwd();
   }
@@ -60,6 +91,7 @@ export function homeDir(): string {
  * - Linux: $XDG_CONFIG_HOME || ~/.config
  */
 export function appDataDir(): string {
+  if (pathEnvOverride) return pathEnvOverride.appData;
   if (process.platform === "win32") {
     return process.env.APPDATA || path.join(homeDir(), "AppData", "Roaming");
   }
@@ -76,6 +108,7 @@ export function appDataDir(): string {
  * - Linux: $XDG_DATA_HOME || ~/.local/share
  */
 export function localAppDataDir(): string {
+  if (pathEnvOverride) return pathEnvOverride.localApp;
   if (process.platform === "win32") {
     return process.env.LOCALAPPDATA || path.join(homeDir(), "AppData", "Local");
   }
@@ -92,6 +125,7 @@ export function localAppDataDir(): string {
  * - Linux: $XDG_CACHE_HOME || ~/.cache
  */
 export function cacheDir(): string {
+  if (pathEnvOverride) return pathEnvOverride.cache;
   if (process.platform === "win32") {
     return process.env.LOCALAPPDATA || path.join(homeDir(), "AppData", "Local");
   }
@@ -131,6 +165,12 @@ export function openBrowser(url: string): void {
 }
 
 export function expandHome(p: string): string {
+  if (pathEnvOverride) {
+    if (p.startsWith("~/") || p === "~") {
+      return pathEnvOverride.path.join(pathEnvOverride.home, p.slice(2));
+    }
+    return p;
+  }
   if (p.startsWith("~/") || p === "~") {
     return path.join(homeDir(), p.slice(2));
   }
