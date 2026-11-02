@@ -1,5 +1,6 @@
 import type { AgentId, AgentStatus, UsageEvent } from "../types.js";
-import { pathExists } from "../util.js";
+import path from "node:path";
+import { pathExists, withPathEnvOverride } from "../util.js";
 import { agent as claude_code } from "./claude-code/index.js";
 import { agent as codex } from "./codex/index.js";
 import { agent as cursor } from "./cursor/index.js";
@@ -125,8 +126,47 @@ export function agentPathSpecs(): AgentPathSpec[] {
   }));
 }
 
+/** Discover the same parser roots using a Linux home, for remote snapshots. */
+export function agentPathSpecsForLinuxHome(home: string): AgentPathSpec[] {
+  const posix = path.posix;
+  const normalizedHome = posix.resolve(home);
+  const appData = posix.join(normalizedHome, ".config");
+  const localApp = posix.join(normalizedHome, ".local", "share");
+  const cache = posix.join(normalizedHome, ".cache");
+  const specs = withPathEnvOverride(
+    {
+      platform: "linux",
+      home: normalizedHome,
+      appData,
+      localApp,
+      cache,
+      xdgData: localApp,
+      xdgConfig: appData,
+      xdgCache: cache,
+      path: posix as typeof path,
+    },
+    () => AGENTS.map((mod) => ({ id: mod.id, label: mod.label, roots: mod.roots() })),
+  );
+
+  return specs.map((spec) => ({
+    ...spec,
+    roots: spec.roots.filter((root) => {
+      if (!posix.isAbsolute(root)) return false;
+      const relative = posix.relative(normalizedHome, posix.normalize(root));
+      if (!relative || relative === "." || relative.startsWith("..") || posix.isAbsolute(relative)) return false;
+      const normalizedRelative = relative.replace(/\\/g, "/");
+      if ([".config", ".local", ".local/share", ".cache", "Dev", "Library"].includes(normalizedRelative)) return false;
+      if (normalizedRelative.startsWith("Library/")) return false;
+      if (normalizedRelative.split("/").includes("mirrors")) return false;
+      return true;
+    }),
+  }));
+}
+
 export type ScanAllOptions = {
   enabled?: Partial<Record<AgentId, boolean>>;
+  /** Extra source roots to parse under a separate machine provenance scope. */
+  additionalRoots?: Partial<Record<AgentId, { roots: string[]; machineScope: string }>>;
   /** Max agents parsed at once (default 4). */
   concurrency?: number;
   /**
@@ -211,6 +251,7 @@ export function dedupeMirroredOpenClawEvents(
     const fullInput = event.inputTokens + event.cacheReadTokens + event.cacheWriteTokens;
     return !candidates.some(
       ({ timestamp: hermesTimestamp, event: hermes }) =>
+        (event.machineScope || "local") === (hermes.machineScope || "local") &&
         Math.abs(timestamp - hermesTimestamp) <= 1_000 &&
         event.outputTokens === hermes.outputTokens &&
         event.totalTokens === hermes.totalTokens &&
@@ -236,7 +277,7 @@ export async function scanAll(
   enabledOrOpts?: Partial<Record<AgentId, boolean>> | ScanAllOptions,
 ): Promise<UsageEvent[]> {
   const opts: ScanAllOptions =
-    enabledOrOpts && ("enabled" in enabledOrOpts || "concurrency" in enabledOrOpts || "timeoutMs" in enabledOrOpts || "light" in enabledOrOpts || "onAgentDone" in enabledOrOpts)
+    enabledOrOpts && ("enabled" in enabledOrOpts || "concurrency" in enabledOrOpts || "timeoutMs" in enabledOrOpts || "light" in enabledOrOpts || "onAgentDone" in enabledOrOpts || "additionalRoots" in enabledOrOpts)
       ? (enabledOrOpts as ScanAllOptions)
       : { enabled: enabledOrOpts as Partial<Record<AgentId, boolean>> | undefined };
 
@@ -246,7 +287,14 @@ export async function scanAll(
   const timeoutMs = opts.timeoutMs === undefined ? DEFAULT_PARSER_TIMEOUT_MS : opts.timeoutMs;
   const onAgentDone = opts.onAgentDone;
 
-  type Job = { id: AgentId; label: string; roots: string[]; parse: (roots: string[]) => Promise<UsageEvent[]> };
+  type Job = {
+    id: AgentId;
+    label: string;
+    roots: string[];
+    remoteRoots: string[];
+    machineScope?: string;
+    parse: (roots: string[]) => Promise<UsageEvent[]>;
+  };
   // Probe agent roots in parallel so scan setup is not N sequential disk checks
   const jobs = (
     await Promise.all(
@@ -254,14 +302,24 @@ export async function scanAll(
         if (enabled && enabled[mod.id] === false) return null;
         if (!mod.parse && !(opts.light && mod.parseLight)) return null;
         const candidateRoots = mod.roots().filter(Boolean);
-        const checks = await Promise.all(
-          candidateRoots.map(async (r) => ((await pathExists(r)) ? r : "")),
-        );
-        const roots = checks.filter(Boolean);
+        const extra = opts.additionalRoots?.[mod.id];
+        const remoteCandidates = (extra?.roots || []).filter(Boolean);
+        const [checks, remoteChecks] = await Promise.all([
+          Promise.all(candidateRoots.map(async (r) => ((await pathExists(r)) ? r : ""))),
+          Promise.all(remoteCandidates.map(async (r) => ((await pathExists(r)) ? r : ""))),
+        ]);
+        const roots = [...checks, ...remoteChecks].filter(Boolean);
         if (roots.length === 0) return null;
         const parse = opts.light && mod.parseLight ? mod.parseLight : mod.parse;
         if (!parse) return null;
-        return { id: mod.id, label: mod.label, roots, parse };
+        return {
+          id: mod.id,
+          label: mod.label,
+          roots,
+          remoteRoots: remoteChecks.filter(Boolean),
+          machineScope: extra?.machineScope,
+          parse,
+        };
       }),
     )
   ).filter((j): j is Job => j != null);
@@ -286,7 +344,18 @@ export async function scanAll(
       const job = jobs[i]!;
       const t0 = Date.now();
       try {
-        const batch = await withTimeout(job.parse(job.roots), timeoutMs, `parser ${job.id}`);
+        const parsed = await withTimeout(job.parse(job.roots), timeoutMs, `parser ${job.id}`);
+        const batch =
+          job.machineScope && job.remoteRoots.length > 0
+            ? parsed.map((event) =>
+                job.remoteRoots.some((root) => {
+                  const relative = path.relative(path.resolve(root), path.resolve(event.sourcePath));
+                  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+                })
+                  ? { ...event, machineScope: job.machineScope }
+                  : event,
+              )
+            : parsed;
         if (collectAll) {
           for (const e of batch) all.push(e);
         }
@@ -341,7 +410,7 @@ export async function detectAgents(events: UsageEvent[] = []): Promise<AgentStat
       return {
         id: mod.id,
         label: mod.label,
-        detected: paths.length > 0,
+        detected: paths.length > 0 || (counts.get(mod.id) ?? 0) > 0,
         enabled: true,
         paths,
         lastEventAt: lastAt.get(mod.id) ?? null,

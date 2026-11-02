@@ -5,6 +5,7 @@ import {
   expandHome,
   homeDir,
   localAppDataDir,
+  getPathEnvOverride,
 } from "../../util.js";
 
 /** VS Code–family product folder names used for User/globalStorage discovery. */
@@ -23,14 +24,16 @@ const VSCODE_PRODUCT_NAMES = [
 ] as const;
 
 export function pathEnv() {
-  const home = homeDir();
-  const appData = appDataDir();
-  const localApp = localAppDataDir();
-  const cache = cacheDir();
-  const xdgData = process.env.XDG_DATA_HOME || path.join(home, ".local", "share");
-  const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
-  const xdgCache = process.env.XDG_CACHE_HOME || path.join(home, ".cache");
-  const platform = process.platform;
+  const override = getPathEnvOverride();
+  const p = override?.path ?? path;
+  const home = override?.home ?? homeDir();
+  const appData = override?.appData ?? appDataDir();
+  const localApp = override?.localApp ?? localAppDataDir();
+  const cache = override?.cache ?? cacheDir();
+  const xdgData = override?.xdgData ?? process.env.XDG_DATA_HOME ?? p.join(home, ".local", "share");
+  const xdgConfig = override?.xdgConfig ?? process.env.XDG_CONFIG_HOME ?? p.join(home, ".config");
+  const xdgCache = override?.xdgCache ?? process.env.XDG_CACHE_HOME ?? p.join(home, ".cache");
+  const platform = override?.platform ?? process.platform;
   return {
     home,
     appData,
@@ -40,7 +43,7 @@ export function pathEnv() {
     xdgConfig,
     xdgCache,
     platform,
-    path,
+    path: p,
     expandHome,
   };
 }
@@ -55,7 +58,7 @@ export function unique(items: string[]): string[] {
  * and Linux (XDG config + data).
  */
 export function vscodeUserDataRoots(extraProducts: string[] = []): string[] {
-  const { home, appData, localApp, xdgConfig, xdgData, path: p } = pathEnv();
+  const { home, appData, localApp, xdgConfig, xdgData, path: p, platform } = pathEnv();
   const names = [...VSCODE_PRODUCT_NAMES, ...extraProducts];
   const roots: string[] = [];
 
@@ -64,7 +67,7 @@ export function vscodeUserDataRoots(extraProducts: string[] = []): string[] {
     roots.push(p.join(localApp, name));
     // Linux: also probe XDG paths explicitly (appData already = xdgConfig, but
     // some distros / portable installs use data home).
-    if (process.platform === "linux") {
+    if (platform === "linux") {
       roots.push(p.join(xdgConfig, name));
       roots.push(p.join(xdgData, name));
     }

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { appendFileSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -14,6 +14,7 @@ import {
 import { buildRecentLiveEvents, computeDashboardLiveRate } from "../live-rate.js";
 import {
   AGENTS,
+  agentPathSpecsForLinuxHome,
   dedupeMirroredOpenClawEvents,
   detectAgents,
   scanAll,
@@ -80,6 +81,7 @@ import {
   filterByPeriod,
   filterByPeriodSorted,
   filterByPeriodSortedDetailed,
+  appDataDir,
   normalizeModelForAgent,
   normalizeModelName,
   parseSince,
@@ -1033,6 +1035,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
         const lightTickStarted = Date.now();
         await scanAll({
           enabled,
+          additionalRoots: snapshotUbuntuAdditionalRoots(),
           light: !full,
           // One light parser at a time. Codex's session walk plus DSH decompress
           // on two workers stalled the disk and the event loop for minutes.
@@ -2249,9 +2252,126 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   let mirrorSyncPromise: Promise<boolean> | null = null;
   let lastMirrorSyncAt = 0;
   const MIRROR_SYNC_INTERVAL_MINUTES = 60;
+  let ubuntuMirrorSyncPromise: Promise<boolean> | null = null;
+  let lastUbuntuMirrorSyncAt = 0;
+  const UBUNTU_REMOTE_HOME = "/home/ubuntu";
+  const UBUNTU_MIRROR_BASE = path.join(appDataDir(), "tokenlab", "mirrors", "ubuntu");
+  const UBUNTU_MIRROR_HOME = path.join(UBUNTU_MIRROR_BASE, "home", "ubuntu");
+  const ubuntuRemoteRoots: Record<string, string[]> = {};
+  let ubuntuAdditionalRoots: Partial<
+    Record<AgentId, { roots: string[]; machineScope: string }>
+  > = {};
+  for (const spec of agentPathSpecsForLinuxHome(UBUNTU_REMOTE_HOME)) {
+    for (const remoteRoot of spec.roots) {
+      const relative = path.posix.relative(UBUNTU_REMOTE_HOME, remoteRoot);
+      if (!relative || relative === "." || relative.startsWith("..")) continue;
+      const remoteRoots = (ubuntuRemoteRoots[spec.id] ||= []);
+      if (!remoteRoots.includes(remoteRoot)) remoteRoots.push(remoteRoot);
+    }
+  }
+  function setUbuntuAdditionalRoots(value: unknown): void {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const next: typeof ubuntuAdditionalRoots = {};
+    for (const [agentId, roots] of Object.entries(value as Record<string, unknown>)) {
+      if (!AGENTS.some((agent) => agent.id === agentId) || !Array.isArray(roots)) continue;
+      const localRoots: string[] = [];
+      for (const candidate of roots) {
+        if (typeof candidate !== "string" || !path.posix.isAbsolute(candidate)) continue;
+        const relative = path.posix.relative(UBUNTU_REMOTE_HOME, path.posix.normalize(candidate));
+        if (!relative || relative === "." || relative.startsWith("..") || path.posix.isAbsolute(relative)) continue;
+        const localRoot = path.join(UBUNTU_MIRROR_HOME, ...relative.split("/"));
+        if (!localRoots.includes(localRoot)) localRoots.push(localRoot);
+      }
+      if (localRoots.length > 0) {
+        next[agentId as AgentId] = { roots: localRoots, machineScope: "ubuntu" };
+      }
+    }
+    ubuntuAdditionalRoots = next;
+  }
+  async function restoreUbuntuAdditionalRoots(): Promise<void> {
+    try {
+      const activeRoots = JSON.parse(
+        await readFile(path.join(UBUNTU_MIRROR_BASE, "remote-roots-active.json"), "utf8"),
+      ) as unknown;
+      setUbuntuAdditionalRoots(activeRoots);
+    } catch {
+      /* no successful Ubuntu scan has completed yet */
+    }
+  }
+  function snapshotUbuntuAdditionalRoots(): typeof ubuntuAdditionalRoots {
+    return Object.fromEntries(
+      Object.entries(ubuntuAdditionalRoots).map(([agentId, source]) => [
+        agentId,
+        source ? { ...source, roots: [...source.roots] } : source,
+      ]),
+    ) as typeof ubuntuAdditionalRoots;
+  }
   // Must outlast the remote export (~175s) plus transfer time, or the sync is
   // killed mid-scan and the mirror is left stale while the run looks finished.
   const MIRROR_SYNC_TIMEOUT_MS = 300_000;
+  async function resolveUbuntuSyncScript(): Promise<string | null> {
+    const candidates = [
+      path.join(__dirname, "../../scripts/sync-ubuntu-usage.py"),
+      path.join(__dirname, "../../../scripts/sync-ubuntu-usage.py"),
+      path.join(process.cwd(), "scripts/sync-ubuntu-usage.py"),
+    ];
+    for (const candidate of candidates) {
+      if (await pathExists(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  async function syncUbuntuUsage(reason: string): Promise<boolean> {
+    if (ubuntuMirrorSyncPromise) return ubuntuMirrorSyncPromise;
+    ubuntuMirrorSyncPromise = (async () => {
+      try {
+        const { spawn } = await import("node:child_process");
+        const script = await resolveUbuntuSyncScript();
+        if (!script) return false;
+        const rootsManifest = path.join(UBUNTU_MIRROR_BASE, "remote-roots.json");
+        await mkdir(UBUNTU_MIRROR_BASE, { recursive: true });
+        await writeFile(rootsManifest, JSON.stringify(ubuntuRemoteRoots), "utf8");
+        const ok = await new Promise<boolean>((resolve) => {
+          const python = process.platform === "win32" ? "pythonw.exe" : "python";
+          const child = spawn(python, [script, rootsManifest], {
+            stdio: "ignore",
+            windowsHide: true,
+            env: { ...process.env },
+          });
+          let settled = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const done = (value: boolean) => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            resolve(value);
+          };
+          child.on("error", () => done(false));
+          child.on("exit", (code) => done(code === 0));
+          timer = setTimeout(() => {
+            try {
+              child.kill();
+            } catch {
+              /* ignore */
+            }
+            done(false);
+          }, MIRROR_SYNC_TIMEOUT_MS);
+          timer.unref?.();
+        });
+        if (ok) {
+          lastUbuntuMirrorSyncAt = Date.now();
+          await restoreUbuntuAdditionalRoots();
+          console.log(`[tokenlab] Ubuntu usage mirror synced (${reason})`);
+        }
+        return ok;
+      } catch {
+        return false;
+      } finally {
+        ubuntuMirrorSyncPromise = null;
+      }
+    })();
+    return ubuntuMirrorSyncPromise;
+  }
   async function resolveSyncScript(): Promise<string | null> {
     // src/server → ../../scripts ; installer/dist/server → ../../../scripts ; cwd fallback
     const candidates = [
@@ -2383,21 +2503,23 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
           type: "scan",
           revision: scanRevision,
           updatedAt: Date.now(),
-          reason: "start-vps-sync",
+          reason: "start-remote-sync",
           eventCount: cache.length,
           scanning: true,
           pricingRevision,
         });
       };
       announceVpsSync();
-      slog("[tokenlab] manual full scan syncing VPS BNIX mirrors first");
+      slog("[tokenlab] manual full scan syncing VPS and Ubuntu mirrors first");
 
-      const [vpsSynced, pmvSynced] = await Promise.all([
+      const [vpsSynced, pmvSynced, ubuntuSynced] = await Promise.all([
         syncVpsMirrors("manual-scan"),
         syncPhanmemvipUsageMirror("manual-scan"),
+        syncUbuntuUsage("manual-scan"),
       ]);
       if (!vpsSynced) console.warn("[tokenlab] manual scan could not refresh VPS BNIX mirrors; continuing with existing mirror files");
       if (!pmvSynced) console.warn("[tokenlab] manual scan could not refresh PhanmemVIP usage; keeping the last mirrored value");
+      if (!ubuntuSynced) console.warn("[tokenlab] manual scan could not refresh Ubuntu usage over SSH; keeping the last mirrored snapshot");
 
       const scanDuringSync = scanPromise;
       if (scanDuringSync) {
@@ -2427,8 +2549,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
   // Boot: serve the warm cache first. A full local scan can take minutes on a
   // machine with large Codex/Claude/Grok histories, so do not compete with the
   // first dashboard paint when a valid scan cache already exists.
-  void syncVpsMirrors("boot")
-    .catch(() => false)
+  await restoreUbuntuAdditionalRoots();
+  void Promise.all([syncVpsMirrors("boot"), syncUbuntuUsage("boot")])
+    .catch(() => [false, false] as const)
     .finally(() => {
       if (cache.length === 0) {
         void rescan({ full: true }).catch((err) => {
@@ -2473,8 +2596,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ close: ()
       // regardless of `periodicOn`: the dashboard reads mirrors directly, and
       // skipping this when scanning is off would freeze multi-machine totals.
       const mirrorDue = now - lastMirrorSyncAt >= MIRROR_SYNC_INTERVAL_MINUTES * 60_000;
-      if (mirrorDue) {
-        await syncVpsMirrors(fullDue ? "periodic-full" : "periodic");
+      const ubuntuMirrorDue =
+        now - lastUbuntuMirrorSyncAt >= MIRROR_SYNC_INTERVAL_MINUTES * 60_000;
+      if (mirrorDue || ubuntuMirrorDue) {
+        await Promise.all([
+          mirrorDue ? syncVpsMirrors(fullDue ? "periodic-full" : "periodic") : Promise.resolve(true),
+          ubuntuMirrorDue ? syncUbuntuUsage(fullDue ? "periodic-full" : "periodic") : Promise.resolve(true),
+        ]);
       }
       if (!periodicOn) return;
       // Skip starting another scan if one is already running (rescan coalesces too).
