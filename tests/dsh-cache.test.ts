@@ -70,6 +70,60 @@ test("parseDsh keeps cache reads from the cache-aware usage shape", async () => 
   }
 });
 
+test("parseDsh follows DSH usage precedence for messages, attempts, and compaction", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "xlab-dsh-stream-"));
+  try {
+    await writeSession(root, "demo", "session.jsonl", [
+      { type: "request/context", seq: 0, cwd: "/work/demo", data: { model: "anthropic/claude-fable-5" } },
+      {
+        type: "assistant/message",
+        seq: 1,
+        data: {
+          stream: [
+            { type: "chunk", chunk: { type: "usage", usage: { inputTokens: 10, outputTokens: 2 } } },
+            { type: "chunk", chunk: { type: "usage", usage: { inputTokens: 12, outputTokens: 3 } } },
+          ],
+        },
+      },
+      {
+        type: "assistant/message",
+        seq: 2,
+        data: {
+          usage: { inputTokens: 20, outputTokens: 4 },
+          stream: [{ type: "chunk", chunk: { type: "usage", usage: { inputTokens: 200, outputTokens: 40 } } }],
+        },
+      },
+      {
+        type: "assistant/attempt",
+        seq: 3,
+        data: {
+          usage: { inputTokens: 300, outputTokens: 30 },
+          stream: [{ type: "chunk", chunk: { type: "usage", usage: { inputTokens: 30, outputTokens: 5 } } }],
+        },
+      },
+      {
+        type: "compaction/summary",
+        seq: 4,
+        data: { usage: { inputTokens: 40, outputTokens: 6 } },
+      },
+    ]);
+
+    const events = await parseDsh([root]);
+    assert.equal(events.length, 4);
+    assert.deepEqual(
+      events.map(({ inputTokens, outputTokens }) => ({ inputTokens, outputTokens })),
+      [
+        { inputTokens: 12, outputTokens: 3 },
+        { inputTokens: 20, outputTokens: 4 },
+        { inputTokens: 30, outputTokens: 5 },
+        { inputTokens: 40, outputTokens: 6 },
+      ],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("parseDsh does NOT invent a cache read for legacy rows", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "xlab-dsh-legacy-"));
   try {
