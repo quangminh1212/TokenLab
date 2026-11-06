@@ -907,6 +907,7 @@ export function normalizeModelName(model: string | null | undefined): string | n
   else if (lower === "claude-opus") m = "claude-opus-5.5";
   else if (lower === "claude-sonnet") m = "claude-sonnet-5.5";
   else if (lower === "digigo") m = "gpt-5.5";
+  else if (/^qwencoder[- ]qwen3\.8[- ]max$/.test(lower)) m = "qwen3.8 max";
   else if (lower === "free") m = "big-pickle";
   if (lower.startsWith("deep-seek")) m = "deepseek" + m.slice("deep-seek".length);
   if (lower.startsWith("deep_seek")) m = "deepseek" + m.slice("deep_seek".length);

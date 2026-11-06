@@ -64,6 +64,18 @@ test("aggregate eventCount sums requestCount (daily rollup style)", () => {
   assert.equal(r.groups.find((g) => g.key === "grok-4.5")?.eventCount, 10);
 });
 
+test("aggregate by model merges QwenCoder Qwen3.8 Max usage into Qwen3.8 Max", () => {
+  const events: UsageEvent[] = [
+    { ...sample[0]!, id: "qwen", model: "qwen3.8 max", requestCount: 5, totalTokens: 100 },
+    { ...sample[0]!, id: "qwencoder", model: "qwencoder-qwen3.8-max", requestCount: 3, totalTokens: 60 },
+  ];
+  const r = aggregate(events, "model", "cost");
+  assert.equal(r.groups.length, 1);
+  assert.equal(r.groups[0]?.key, "qwen3.8 max");
+  assert.equal(r.groups[0]?.eventCount, 8);
+  assert.equal(r.groups[0]?.totalTokens, 160);
+});
+
 test("costReport matches agent and normalized-model aggregates in one report", () => {
   const events: UsageEvent[] = [
     ...sample,

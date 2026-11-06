@@ -80,6 +80,7 @@ const MODEL_GROUP_ALIASES = new Map<string, string>([
   ["qwen3guard-gen-8b", "qwen3.8-max"],
   ["qwenheavy", "qwen3.8-max"],
   ["qwen 3.8 max", "qwen3.8-max"],
+  ["qwencoder qwen3.8 max", "qwen3.8-max"],
 ]);
 
 // These legacy 9r route labels represent GPT-5.5 in the All-time model view.
