@@ -46,11 +46,11 @@
     <!-- Toolbar: period + actions (9router Usage style) -->
     <div class="usage-toolbar">
       <div class="seg" id="periodSeg" role="tablist" aria-label="Time range">
-        <button type="button" class="seg-btn active" data-period="today">Today</button>
+        <button type="button" class="seg-btn" data-period="today">Today</button>
         <button type="button" class="seg-btn" data-period="24h">24h</button>
         <button type="button" class="seg-btn" data-period="7d">7D</button>
         <button type="button" class="seg-btn" data-period="30d">30D</button>
-        <button type="button" class="seg-btn" data-period="">All</button>
+        <button type="button" class="seg-btn active" data-period="">All</button>
       </div>
       <div class="usage-actions">
         <span class="fetch-spin hidden" id="fetchSpin" aria-hidden="true"></span>
@@ -188,7 +188,7 @@
 
     const hiddenModelNames = new Set(['9r or openrouter', '9r xlab']);
     const state = {
-      period: 'today',
+      period: '',
       groupBy: 'agent',
       sortBy: 'value',
       viewMode: 'costs',
@@ -587,7 +587,7 @@
     }
 
     function periodLabel() {
-      const p = state.period || 'today';
+      const p = state.period ?? 'today';
       if (p === 'today') return 'today';
       if (p === '24h') return '24h';
       if (p === '7d') return '7d';
