@@ -34,7 +34,6 @@
         <a class="nav-link" href="/model">Model</a>
       </nav>
       <div class="top-actions">
-        <span class="meta-chip" id="phanmemvipChip"></span>
         <span class="meta-chip" id="meta">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
         <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings"></a>
@@ -201,8 +200,6 @@
       live: null,
       /** Period peak RPM (busiest minute) from /api/stats.usageRpm */
       usageRpm: null,
-      /** Daily PhanmemVIP minute usage from the LiteLLM hook mirror. */
-      phanmemvipUsage: null,
       /** Server version for the header chip — kept so a bare updateMeta() (no
        *  full /api/stats pass) can still rewrite the version text intact. */
       version: '',
@@ -608,11 +605,6 @@
       return rest ? `${h}h ${rest}m` : `${h}h`;
     }
 
-    function fmtPhanmemvipDuration(mins) {
-      const m = Math.max(0, Math.round(Number(mins) || 0));
-      return `${Math.floor(m / 60)} giờ ${m % 60} phút`;
-    }
-
     /**
      * Period PEAK RPM — the busiest single minute in the period:
      *   RPM = max over minutes of (requests landing in that calendar minute)
@@ -676,31 +668,22 @@
       const v = version || state.version || '';
       $('meta').textContent = `v${v}${scanHint}`;
 
-      const pmvChip = $('phanmemvipChip');
-      const pmv = state.phanmemvipUsage;
-      if (pmv && typeof pmv.usedMinutes === 'number' && Number.isFinite(pmv.usedMinutes)) {
-        const used = Math.max(0, Math.round(pmv.usedMinutes));
-        const limit = Math.max(1, Math.round(Number(pmv.limitMinutes) || 1070));
-        const percent = Math.min(100, (used / limit) * 100);
-        const percentLabel = `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 }).format(percent)}%`;
-        pmvChip.textContent = `PhanmemVIP ${percentLabel}`;
-        const updated = pmv.updatedAt ? ` Cập nhật: ${new Date(pmv.updatedAt).toLocaleString('vi-VN')}.` : '';
-        pmvChip.title = `Hôm nay (${pmv.date}): ${fmtPhanmemvipDuration(used)} / ${fmtPhanmemvipDuration(limit)} (${used.toLocaleString('vi-VN')}/${limit.toLocaleString('vi-VN')} phút; ${percentLabel}). Một phút có từ một request được tính là một phút.${updated}`;
-      } else {
-        pmvChip.textContent = 'PhanmemVIP —';
-        pmvChip.title = 'Chưa đồng bộ được số phút PhanmemVIP hôm nay từ LiteLLM. Giới hạn là 17 giờ 50 phút/ngày.';
-      }
     }
 
-    async function refreshPhanmemvipUsage() {
-      try {
-        const response = await fetch('/api/phanmemvip-usage', { cache: 'no-store' });
-        if (!response.ok) throw new Error('PhanmemVIP usage request failed');
-        state.phanmemvipUsage = await response.json();
-        updateMeta();
-      } catch {
-        // Keep the last known value visible while the mirror/API is unavailable.
-      }
+    function cacheWasReported(t) {
+      return Number(t && t.cacheReportedEvents) > 0 ||
+        Number(t && t.cacheReadTokens) > 0 || Number(t && t.cacheWriteTokens) > 0;
+    }
+
+    function fmtCacheTokens(t, field) {
+      return cacheWasReported(t) ? fmtFull(t && t[field]) : '\u2014';
+    }
+
+    function cacheMetricTitle(t) {
+      const records = Number(t && t.cacheReportedEvents) || 0;
+      if (!cacheWasReported(t)) return 'No usage record in this period reported cache token fields.';
+      const source = records > 0 ? `Reported on ${fmtFull(records)} usage record${records === 1 ? '' : 's'}. ` : '';
+      return `${source}Cache values are separate details and may already be included in prompt or total tokens.`;
     }
 
     function renderOverview(t, live) {
@@ -712,27 +695,26 @@
       });
       // Peak metric — no subtitle under RPM
       const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
-      // Active time occupies the slot the cache card used to hold. It is only
-      // meaningful within a single day, so it appears for the "today" period and
-      // stays away for wider ones, where summing days would mix idle hours in.
+      // Active time is only meaningful within a single day, so it appears for
+      // the "today" period and stays away from wider periods.
       const active = state.period === 'today' ? activeTimeLabel() : null;
       const activeCard = active
         ? overviewCard('Active time', active.value, 'tone-primary', undefined, active.title)
         : '';
-      // Today adds Active time as a sixth card; other periods show five cards.
-      // Cache tokens are deliberately not shown: for every model TokenLab tracks
-      // the cached bucket bills at the same rate as fresh input (and is a
-      // rounding error next to it), so a separate card only invites the reader to
-      // add it to input and double-count the same prompt tokens.
+      // Cache fields are provider-reported details and can overlap prompt input.
+      // Keep them visible without changing the existing input/total calculations.
+      const cacheTitle = cacheMetricTitle(t);
+      const cacheHint = cacheWasReported(t) ? 'Provider reported' : 'No cache data';
       const cards = [
         overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
+        overviewCard('Cache read', fmtCacheTokens(t, 'cacheReadTokens'), 'tone-primary', cacheHint, cacheTitle),
+        overviewCard('Cache write', fmtCacheTokens(t, 'cacheWriteTokens'), 'tone-primary', cacheHint, cacheTitle),
         overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         rpmCard,
         overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing'),
         activeCard,
       ].filter(Boolean);
-      $('overview').classList.toggle('overview-grid--five-cards', cards.length === 5);
       $('overview').innerHTML = cards.join('');
     }
 
@@ -921,13 +903,15 @@
       const costs = state.viewMode === 'costs';
       const showRpm = ['today', '24h', '7d', '30d'].includes(state.period);
       const rpmHeader = showRpm ? ['RPM'] : [];
-      // Cache reads bill at the same rate as input, so they remain folded into
-      // Input instead of adding a redundant column.
       const head = costs
         ? ['Key', 'Requests', ...rpmHeader, 'Input $', 'Output $', 'Total $']
-        : ['Key', 'Requests', ...rpmHeader, 'Input', 'Output', 'Total'];
-      $('tableHead').innerHTML = `<tr>${head.map((h, i) =>
-        `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr>`;
+        : ['Key', 'Requests', ...rpmHeader, 'Input + cache', 'Cache read', 'Cache write', 'Output', 'Total'];
+      $('tableHead').innerHTML = `<tr>${head.map((h, i) => {
+        const title = h === 'Cache read' || h === 'Cache write'
+          ? 'Provider-reported cache detail; may overlap Input + cache and Total.'
+          : '';
+        return `<th class="${i ? 'num' : ''}"${title ? ` title="${title}"` : ''}>${h}</th>`;
+      }).join('')}</tr>`;
 
       const collator = state.sortBy === 'name'
         ? new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
@@ -981,9 +965,6 @@
               maximumFractionDigits: 1,
             })
           : '\u2014';
-        // No cache cell: a measured $0.00 was indistinguishable from missing
-        // data, and neither is worth a column when the bucket is priced at the
-        // same rate as the input column beside it.
         if (costs) {
           return `<tr>
             <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
@@ -999,6 +980,8 @@
           <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
           ${showRpm ? `<td class="num muted">${rpmCell}</td>` : ''}
           <td class="num muted">${fmtFull(input + cache)}</td>
+          <td class="num muted" title="${escapeHtml(cacheMetricTitle(g))}">${fmtCacheTokens(g, 'cacheReadTokens')}</td>
+          <td class="num muted" title="${escapeHtml(cacheMetricTitle(g))}">${fmtCacheTokens(g, 'cacheWriteTokens')}</td>
           <td class="num muted">${fmtFull(output)}</td>
           <td class="num"><strong>${fmtFull(g.totalTokens || 0)}</strong></td>
         </tr>`;
@@ -1249,10 +1232,6 @@
     };
 
     requestLoad();
-    void refreshPhanmemvipUsage();
-    setInterval(() => {
-      void refreshPhanmemvipUsage();
-    }, 60_000);
     // Background refresh once per minute — skip while scanning (SSE + scan poll handle that)
     setInterval(() => {
       if (state.scanning) return;
@@ -1309,8 +1288,7 @@
                   requestLoad({ quiet: true });
                 } else {
                   // Cheap header refresh without re-fetching all charts. Goes
-                  // through updateMeta so both chips stay on one code path —
-                  // the old string-replace could only ever patch the version chip.
+                  // through updateMeta so the status stays on one code path.
                   state.scanning = true;
                   updateMeta();
                 }
@@ -1322,7 +1300,6 @@
                 state.scanning = false;
                 state.awaitingData = false;
                 periodLoadCache.clear();
-                if (msg.reason === 'complete' || msg.reason === 'error') void refreshPhanmemvipUsage();
                 requestLoad({ quiet: true, force: true });
               }
             }
