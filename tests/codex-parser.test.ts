@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as zlib from "node:zlib";
 import { describe, it, after } from "node:test";
 import { parseCodex } from "../src/agents/codex/index.js";
 
@@ -296,6 +297,72 @@ describe("parseCodex", () => {
       2_355,
       "full prompt totals should be preserved without duplicate snapshots",
     );
+  });
+
+  it("reads concatenated Zstandard Codex rollout frames", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tokenlab-codex-zstd-"));
+    temps.push(root);
+    const sessions = path.join(root, "sessions", "2026", "08", "02");
+    await mkdir(sessions, { recursive: true });
+    const rollout = path.join(sessions, "rollout-zstd.jsonl.zst");
+    const compress = (zlib as unknown as {
+      zstdCompressSync?: (input: Buffer) => Buffer;
+    }).zstdCompressSync;
+    assert.ok(compress, "the test runtime must support Zstandard compression");
+
+    const sessionMeta = JSON.stringify({
+      timestamp: "2026-08-02T03:00:00.000Z",
+      type: "session_meta",
+      payload: { session_id: "compressed", model: "gpt-5", cwd: "/work/demo" },
+    }) + "\n";
+    const tokenCount = JSON.stringify({
+      timestamp: "2026-08-02T03:00:01.000Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { total_token_usage: { input_tokens: 100, output_tokens: 25 } },
+      },
+    }) + "\n";
+    await writeFile(
+      rollout,
+      Buffer.concat([
+        compress(Buffer.from(sessionMeta)),
+        compress(Buffer.from(tokenCount)),
+      ]),
+    );
+
+    const events = await parseCodex([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.inputTokens, 100);
+    assert.equal(events[0]!.outputTokens, 25);
+    assert.equal(events[0]!.estimated, undefined);
+  });
+
+  it("prefers a plain rollout when Codex leaves a compressed sibling", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "tokenlab-codex-zstd-sibling-"));
+    temps.push(root);
+    const sessions = path.join(root, "sessions", "2026", "08", "02");
+    await mkdir(sessions, { recursive: true });
+    const rollout = path.join(sessions, "rollout-sibling.jsonl");
+    const compress = (zlib as unknown as {
+      zstdCompressSync?: (input: Buffer) => Buffer;
+    }).zstdCompressSync;
+    assert.ok(compress, "the test runtime must support Zstandard compression");
+
+    const row = (input: number) => JSON.stringify({
+      timestamp: "2026-08-02T03:00:01.000Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { total_token_usage: { input_tokens: input, output_tokens: 25 } },
+      },
+    }) + "\n";
+    await writeFile(rollout, row(100), "utf8");
+    await writeFile(`${rollout}.zst`, compress(Buffer.from(row(200))));
+
+    const events = await parseCodex([root]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.inputTokens, 100);
   });
 
   it("keeps Codex cache fields and removes token_usage_record mirror duplicates", async () => {

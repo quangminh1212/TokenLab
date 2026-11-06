@@ -8,7 +8,7 @@ import type { UsageEvent } from "../../types.js";
 import { pathEnv, unique } from "../shared/env.js";
 import type { AgentModule } from "../shared/types.js";
 import { extractModel, extractTimestamp, extractTokenBuckets } from "../shared/usage-fields.js";
-import { stableId, walkFiles } from "../../util.js";
+import { scanZstdFrames, stableId, walkFiles } from "../../util.js";
 
 type DshEvent = Record<string, unknown> & {
   type?: unknown;
@@ -18,8 +18,23 @@ type DshEvent = Record<string, unknown> & {
   data?: unknown;
 };
 
+function extractStreamUsage(stream: unknown): unknown {
+  if (!Array.isArray(stream)) return undefined;
+  for (let index = stream.length - 1; index >= 0; index -= 1) {
+    const record = stream[index];
+    if (!record || typeof record !== "object") continue;
+    const item = record as Record<string, unknown>;
+    const chunk =
+      item.chunk && typeof item.chunk === "object"
+        ? (item.chunk as Record<string, unknown>)
+        : null;
+    if (chunk?.type === "usage" && chunk.usage != null) return chunk.usage;
+    if (item.type === "usage" && item.usage != null) return item.usage;
+  }
+  return undefined;
+}
+
 const SESSION_FILE = /^session(?:\.v(\d+))?\.jsonl(?:\.zstd)?$/i;
-const ZSTD_MAGIC = 0xfd2fb528;
 const LIGHT_HISTORY_MS = 30 * 24 * 60 * 60 * 1_000;
 /** Unchanged session files are not decompressed again on the next minute tick. */
 const dshLightSig = new Map<string, string>();
@@ -70,68 +85,6 @@ async function dshLightFiles(roots: string[], cutoff: number): Promise<string[]>
 
 function dshSigKey(file: string): string {
   return process.platform === "win32" ? file.toLowerCase() : file;
-}
-
-interface ZstdFrameRange {
-  start: number;
-  end: number;
-}
-
-/** Find complete frames in DSH's concatenated-frame session format. */
-function scanZstdFrames(buffer: Buffer): ZstdFrameRange[] {
-  const frames: ZstdFrameRange[] = [];
-  let offset = 0;
-
-  while (offset < buffer.length) {
-    const start = offset;
-    if (buffer.length - offset < 4) break;
-    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
-      throw new Error(`Invalid DSH Zstandard frame at byte ${offset}`);
-    }
-    offset += 4;
-    if (offset === buffer.length) break;
-
-    const descriptor = buffer.readUInt8(offset++);
-    if ((descriptor & 0x18) !== 0) {
-      throw new Error(`Invalid DSH Zstandard frame header at byte ${offset - 1}`);
-    }
-    const contentSizeFlag = descriptor >>> 6;
-    const singleSegment = (descriptor & 0x20) !== 0;
-    const hasChecksum = (descriptor & 0x04) !== 0;
-    const dictionaryFlag = descriptor & 0x03;
-    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag;
-    const contentSizeBytes = contentSizeFlag === 0
-      ? (singleSegment ? 1 : 0)
-      : 1 << contentSizeFlag;
-    const frameHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes;
-    if (buffer.length - offset < frameHeaderBytes) break;
-    offset += frameHeaderBytes;
-
-    let complete = false;
-    while (!complete) {
-      if (buffer.length - offset < 3) return frames;
-      const blockHeader = buffer.readUIntLE(offset, 3);
-      offset += 3;
-      const isLastBlock = (blockHeader & 1) !== 0;
-      const blockType = (blockHeader >>> 1) & 0x03;
-      const blockSize = blockHeader >>> 3;
-      if (blockType === 0x03) {
-        throw new Error(`Invalid DSH Zstandard block at byte ${offset - 3}`);
-      }
-      const payloadBytes = blockType === 0x01 ? 1 : blockSize;
-      if (buffer.length - offset < payloadBytes) return frames;
-      offset += payloadBytes;
-      complete = isLastBlock;
-    }
-
-    if (hasChecksum) {
-      if (buffer.length - offset < 4) return frames;
-      offset += 4;
-    }
-    frames.push({ start, end: offset });
-  }
-
-  return frames;
 }
 
 type ZstdApi = { zstdDecompressSync?: (buffer: Buffer) => Buffer };
@@ -265,7 +218,15 @@ async function parseSessionFile(
       data.message && typeof data.message === "object"
         ? (data.message as Record<string, unknown>)
         : null;
-    const buckets = extractTokenBuckets(data.usage ?? message?.usage);
+    const explicitUsage = data.usage ?? message?.usage;
+    const streamUsage = extractStreamUsage(data.stream);
+    const usage =
+      parsed.type === "assistant/message"
+        ? data.usage ?? message?.usage ?? streamUsage
+        : parsed.type === "assistant/attempt"
+          ? streamUsage ?? explicitUsage
+          : explicitUsage;
+    const buckets = extractTokenBuckets(usage);
     if (!buckets) continue;
 
     const source =

@@ -61,6 +61,36 @@ function isMirrorCodexRoot(full: string): boolean {
   return n.includes("/codex-runtime-home/");
 }
 
+function isCompressedCodexRollout(file: string): boolean {
+  return /\.jsonl\.(?:zst|zstd)$/i.test(file);
+}
+
+function codexPlainRolloutSibling(file: string): string {
+  return file.replace(/\.(?:zst|zstd)$/i, "");
+}
+
+function codexRolloutIdentity(file: string): string {
+  return path.basename(file).toLowerCase().replace(/\.(?:zst|zstd)$/i, "");
+}
+
+/** Resolve the physical rollout file, preferring a plain file over its archive. */
+async function resolveCodexRolloutPath(candidate: string): Promise<string | null> {
+  if (/\.jsonl$/i.test(candidate)) {
+    if (await pathExists(candidate)) return candidate;
+    for (const suffix of [".zst", ".zstd"]) {
+      const compressed = `${candidate}${suffix}`;
+      if (await pathExists(compressed)) return compressed;
+    }
+    return null;
+  }
+
+  if (isCompressedCodexRollout(candidate)) {
+    const plain = codexPlainRolloutSibling(candidate);
+    if (await pathExists(plain)) return plain;
+  }
+  return (await pathExists(candidate)) ? candidate : null;
+}
+
 /**
  * Drop already-collected events that came from `filePath` (and any rows that
  * point at it via the "path ← extra" source form). Used when a later, preferred
@@ -375,6 +405,13 @@ async function parseCodexInternal(
     };
 
     const consume = async (file: string, hotRolloutFiles: Set<string>): Promise<void> => {
+      if (
+        isCompressedCodexRollout(file) &&
+        (await pathExists(codexPlainRolloutSibling(file)))
+      ) {
+        seen.add(file);
+        return;
+      }
       if (seen.has(file) || seenRollouts.has(file.toLowerCase())) return;
       seen.add(file);
       let fileMtime = new Date(0);
@@ -404,7 +441,7 @@ async function parseCodexInternal(
       // Mirror-root dedupe by session identity, before any parse work.
       // Keeps one copy of a session seen under multiple roots (an Orca runtime
       // home mirrors ~/.codex/sessions with byte-identical content).
-      const identity = path.basename(file).toLowerCase();
+      const identity = codexRolloutIdentity(file);
       const knownIdentity = sessionIdentity.get(identity);
       if (knownIdentity) {
         const keepExisting = preferCodexCopy(knownIdentity, { path: file, size: fileSize });
@@ -660,7 +697,10 @@ async function parseCodexSqliteState(
               ? String(row[rolloutCol]).trim()
               : "";
           // Normalize Windows extended path \\?\C:\...
-          const rolloutPath = rp.replace(/^\\\\\?\\/, "");
+          const rolloutCandidate = rp.replace(/^\\\\\?\\/, "");
+          const rolloutPath = rolloutCandidate
+            ? await resolveCodexRolloutPath(rolloutCandidate)
+            : null;
           if (rolloutPath && !isNoisePath(rolloutPath)) {
             const key = rolloutPath.toLowerCase();
             if (!seenRollouts.has(key)) {

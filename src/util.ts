@@ -2,7 +2,85 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import * as zlib from "node:zlib";
 import type { AgentId, UsageEvent } from "./types.js";
+
+export interface ZstdFrameRange {
+  start: number;
+  end: number;
+}
+
+const ZSTD_MAGIC = 0xfd2fb528;
+
+/** Find complete frames in a possibly concatenated Zstandard stream. */
+export function scanZstdFrames(buffer: Buffer): ZstdFrameRange[] {
+  const frames: ZstdFrameRange[] = [];
+  let offset = 0;
+
+  while (offset < buffer.length) {
+    const start = offset;
+    if (buffer.length - offset < 4) break;
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
+      throw new Error(`Invalid Zstandard frame at byte ${offset}`);
+    }
+    offset += 4;
+    if (offset === buffer.length) break;
+
+    const descriptor = buffer.readUInt8(offset++);
+    if ((descriptor & 0x18) !== 0) {
+      throw new Error(`Invalid Zstandard frame header at byte ${offset - 1}`);
+    }
+    const contentSizeFlag = descriptor >>> 6;
+    const singleSegment = (descriptor & 0x20) !== 0;
+    const hasChecksum = (descriptor & 0x04) !== 0;
+    const dictionaryFlag = descriptor & 0x03;
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag;
+    const contentSizeBytes = contentSizeFlag === 0
+      ? (singleSegment ? 1 : 0)
+      : 1 << contentSizeFlag;
+    const frameHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes;
+    if (buffer.length - offset < frameHeaderBytes) break;
+    offset += frameHeaderBytes;
+
+    let complete = false;
+    while (!complete) {
+      if (buffer.length - offset < 3) return frames;
+      const blockHeader = buffer.readUIntLE(offset, 3);
+      offset += 3;
+      const isLastBlock = (blockHeader & 1) !== 0;
+      const blockType = (blockHeader >>> 1) & 0x03;
+      const blockSize = blockHeader >>> 3;
+      if (blockType === 0x03) {
+        throw new Error(`Invalid Zstandard block at byte ${offset - 3}`);
+      }
+      const payloadBytes = blockType === 0x01 ? 1 : blockSize;
+      if (buffer.length - offset < payloadBytes) return frames;
+      offset += payloadBytes;
+      complete = isLastBlock;
+    }
+
+    if (hasChecksum) {
+      if (buffer.length - offset < 4) return frames;
+      offset += 4;
+    }
+    frames.push({ start, end: offset });
+  }
+
+  return frames;
+}
+
+/** Decompress every complete frame; Node's sync API stops after the first. */
+export function decompressZstdFrames(buffer: Buffer): Buffer[] {
+  const decompress = (zlib as unknown as {
+    zstdDecompressSync?: (input: Buffer) => Buffer;
+  }).zstdDecompressSync;
+  if (!decompress) {
+    throw new Error("Reading Zstandard files requires Node.js 22.15 or newer");
+  }
+  return scanZstdFrames(buffer).map(({ start, end }) =>
+    decompress(buffer.subarray(start, end)),
+  );
+}
 
 /** A temporary path context used to discover data roots on another platform. */
 export interface PathEnvOverride {
@@ -544,7 +622,10 @@ export async function readJsonlCached(
   }
 
   jsonlCacheMisses += 1;
-  const text = await readText(file);
+  const isZstd = /\.(?:zst|zstd)$/i.test(file);
+  const text = isZstd
+    ? Buffer.concat(decompressZstdFrames(await readFile(file))).toString("utf8")
+    : await readText(file);
   if (text == null) return null;
   const rows = parseJsonl(text);
   const entry: JsonlCacheEntry = { stamp, rows, bytes: text.length };

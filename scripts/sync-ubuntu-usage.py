@@ -11,6 +11,7 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -141,6 +142,50 @@ def _safe_target(base: Path, archive_name: str) -> Path | None:
     return target
 
 
+def _has_symlink_component(base: Path, relative_name: str) -> bool:
+    current = base
+    for part in PurePosixPath(relative_name).parts:
+        current = current / part
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+    return False
+
+
+def _remove_stale_mirror_files(
+    mirror_home: Path,
+    previous: dict,
+    current: dict,
+) -> tuple[int, int]:
+    """Remove only regular files from the old remote manifest, after a new snapshot arrives."""
+    removed = 0
+    failed = 0
+    for relative in previous.keys() - current.keys():
+        target = _safe_target(mirror_home, relative)
+        if target is None or _has_symlink_component(mirror_home, relative):
+            continue
+        candidate = mirror_home.joinpath(*PurePosixPath(relative).parts)
+        try:
+            if not stat.S_ISREG(os.lstat(candidate).st_mode):
+                continue
+            candidate.unlink()
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError:
+            failed += 1
+    return removed, failed
+
+
+def _missing_changed_files(previous: dict, current: dict, received: set[str]) -> set[str]:
+    expected = {name for name, record in current.items() if previous.get(name) != record}
+    return expected - received
+
+
 def _load_json(path: Path, fallback):
     try:
         with path.open("r", encoding="utf-8") as stream:
@@ -205,6 +250,7 @@ def main() -> int:
             tar_stream.seek(0)
             mirror_home.mkdir(parents=True, exist_ok=True)
             updated = 0
+            updated_names = set()
             transferred_bytes = 0
             remote_manifest = None
             with tarfile.open(fileobj=tar_stream, mode="r:") as archive:
@@ -231,6 +277,7 @@ def main() -> int:
                         shutil.copyfileobj(content, destination, length=1024 * 1024)
                     os.replace(temporary, target)
                     updated += 1
+                    updated_names.add(member.name)
                     transferred_bytes += member.size
 
             if not isinstance(remote_manifest, dict):
@@ -238,6 +285,18 @@ def main() -> int:
                 return 1
             if not isinstance(active_roots, dict):
                 _report("SYNC_FAILED missing active root list")
+                return 1
+            missing_updates = _missing_changed_files(
+                previous, remote_manifest, updated_names
+            )
+            if missing_updates:
+                _report("SYNC_FAILED changed files missing=%d" % len(missing_updates))
+                return 1
+            removed, prune_failures = _remove_stale_mirror_files(
+                mirror_home, previous, remote_manifest
+            )
+            if prune_failures:
+                _report("SYNC_FAILED stale mirror cleanup failures=%d" % prune_failures)
                 return 1
             mirror_base.mkdir(parents=True, exist_ok=True)
             temporary_manifest = local_manifest_path.with_name(local_manifest_path.name + ".tmp")
@@ -248,8 +307,8 @@ def main() -> int:
             temporary_roots.write_text(json.dumps(active_roots, separators=(",", ":")), encoding="utf-8")
             os.replace(temporary_roots, active_roots_path)
             _report(
-                "SYNC_OK files=%d updated=%d bytes=%d" %
-                (len(remote_manifest), updated, transferred_bytes)
+                "SYNC_OK files=%d updated=%d removed=%d bytes=%d" %
+                (len(remote_manifest), updated, removed, transferred_bytes)
             )
             return 0
     except subprocess.TimeoutExpired:
