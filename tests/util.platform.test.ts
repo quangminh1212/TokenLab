@@ -109,6 +109,10 @@ describe("normalizeModelName", () => {
     assert.equal(normalizeModelName("gpt-5.5|openai-compatible-chat-aa9b"), "gpt-5.5");
     assert.equal(normalizeModelName("openai/gpt-4.1"), "gpt-4.1");
   });
+  it("merges the QwenCoder-prefixed Qwen3.8 Max alias", () => {
+    assert.equal(normalizeModelName("QwenCoder Qwen3.8 Max"), "qwen3.8 max");
+    assert.equal(normalizeModelName("Qwencoder-Qwen3.8-Max"), "qwen3.8 max");
+  });
   it("returns null for empty", () => {
     assert.equal(normalizeModelName(""), null);
     assert.equal(normalizeModelName(null), null);
