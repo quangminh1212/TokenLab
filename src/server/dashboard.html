@@ -368,6 +368,11 @@
       m = m.replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
       m = m.replace(/[-_:|/\s]+free$/i, '');
       m = m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
+      m = m.replace(
+        /^(claude-(?:opus|sonnet|haiku)-\d+\.\d+)(?:-\d+\.\d+)+$/i,
+        '$1',
+      );
+      m = m.replace(/^(claude-(?:opus|sonnet|haiku)-\d+)-(\d+)$/i, '$1.$2');
       const lower = m.toLowerCase();
       const displayAlias = MODEL_DISPLAY_ALIASES.get(lower);
       if (displayAlias) return displayAlias;
