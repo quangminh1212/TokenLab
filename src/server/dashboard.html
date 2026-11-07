@@ -45,11 +45,11 @@
     <!-- Toolbar: period + actions (9router Usage style) -->
     <div class="usage-toolbar">
       <div class="seg" id="periodSeg" role="tablist" aria-label="Time range">
-        <button type="button" class="seg-btn" data-period="today">Today</button>
+        <button type="button" class="seg-btn active" data-period="today">Today</button>
         <button type="button" class="seg-btn" data-period="24h">24h</button>
         <button type="button" class="seg-btn" data-period="7d">7D</button>
         <button type="button" class="seg-btn" data-period="30d">30D</button>
-        <button type="button" class="seg-btn active" data-period="">All</button>
+        <button type="button" class="seg-btn" data-period="">All</button>
       </div>
       <div class="usage-actions">
         <span class="fetch-spin hidden" id="fetchSpin" aria-hidden="true"></span>
@@ -187,7 +187,7 @@
 
     const hiddenModelNames = new Set(['9r or openrouter', '9r xlab']);
     const state = {
-      period: '',
+      period: 'today',
       groupBy: 'agent',
       sortBy: 'value',
       viewMode: 'costs',
@@ -581,8 +581,8 @@
       });
     }
 
-    function overviewCard(label, value, tone, hint, title) {
-      return `<div class="ov-card"${title ? ` title="${title}"` : ''}>
+    function overviewCard(label, value, tone, hint, title, className) {
+      return `<div class="ov-card${className ? ` ${className}` : ''}"${title ? ` title="${title}"` : ''}>
         <span class="ov-label">${label}</span>
         <span class="ov-value ${tone || ''}">${value}</span>
         ${hint ? `<span class="ov-hint">${hint}</span>` : ''}
@@ -656,7 +656,11 @@
       // buckets, but a fractional value must not slip through as "0m".
       const m = Math.round(Number(state.usageRpm && state.usageRpm.activeMinutes));
       if (!Number.isFinite(m) || m <= 0) return null;
-      return { value: fmtActiveMins(m), title: activeTimeTitle(m) };
+      const periodDays = state.period === '7d' ? 7 : state.period === '30d' ? 30 : 0;
+      const hint = periodDays
+        ? `Daily avg. ${((m / (periodDays * 24 * 60)) * 100).toFixed(1)}% of 24h`
+        : undefined;
+      return { value: fmtActiveMins(m), hint, title: activeTimeTitle(m) };
     }
 
     function activeTimeTitle(m) {
@@ -700,11 +704,11 @@
       });
       // Peak metric — no subtitle under RPM
       const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
-      // Active time is only meaningful within a single day, so it appears for
-      // the "today" period and stays away from wider periods.
-      const active = state.period === 'today' ? activeTimeLabel() : null;
+      // Show measured active minutes for Today and wider weekly/monthly periods.
+      // For 7d/30d, the hint normalizes usage to a daily share of 24 hours.
+      const active = ['today', '7d', '30d'].includes(state.period) ? activeTimeLabel() : null;
       const activeCard = active
-        ? overviewCard('Active time', active.value, 'tone-primary', undefined, active.title)
+        ? overviewCard('Active time', active.value, 'tone-primary', active.hint, active.title)
         : '';
       // Cache fields are provider-reported details and can overlap prompt input.
       // Keep them visible without changing the existing input/total calculations.
@@ -717,7 +721,7 @@
         overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         rpmCard,
-        overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing'),
+        overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing', undefined, 'ov-card--cost'),
         activeCard,
       ].filter(Boolean);
       $('overview').innerHTML = cards.join('');
