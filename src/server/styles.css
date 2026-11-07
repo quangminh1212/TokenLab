@@ -629,12 +629,15 @@ html.dark {
 }
 @media (min-width: 641px) and (max-width: 1199px) {
   .overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ov-card--cost { grid-column: span 2; }
 }
 @media (max-width: 640px) {
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-card--cost { grid-column: span 2; }
 }
 @media (max-width: 400px) {
   .overview-grid { grid-template-columns: 1fr; }
+  .ov-card--cost { grid-column: auto; }
 }
 .ov-card {
   display: flex; flex-direction: column; gap: 0.25rem;
