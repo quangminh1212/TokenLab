@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -501,9 +502,12 @@ spend_logs_days = set()
 def _litellm_display_model(raw_model: str, model_group: str = "") -> str:
     """Use LiteLLM's public model group, with the current OpenClaw alias fallback."""
     display = (model_group or raw_model or "mixed").strip() or "mixed"
+    display = re.sub(
+        r"^darkapi(?=$|[-_:|/\s])[-_:|/\s]*", "", display, flags=re.I
+    ).strip()
     if display.lower() in ("openclaw", "openai/openclaw"):
         return "glm-5.3"
-    return display
+    return display or "mixed"
 
 # Cache lives in SpendLogs.metadata JSON (not cache_read_input_tokens columns):
 #   metadata.usage_object.prompt_tokens_details.cached_tokens
