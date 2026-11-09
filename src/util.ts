@@ -845,6 +845,8 @@ export function normalizeModelName(model: string | null | undefined): string | n
 
   // Collapse internal whitespace
   m = m.replace(/\s+/g, " ").trim();
+  // DarkAPI is the gateway/provider label, not part of the public model name.
+  m = m.replace(/^darkapi(?=$|[-_:|/\s])[-_:|/\s]*/i, "");
 
   // Mirror the model-label cleanup used in the dashboard. These are routing or
   // reasoning variants, not separate OpenRouter models. In this usage catalog,

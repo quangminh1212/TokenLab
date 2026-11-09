@@ -365,6 +365,7 @@
         const last = parts[parts.length - 1] || m;
         if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
       }
+      m = m.replace(/^darkapi(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
       m = m.replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
       m = m.replace(/[-_:|/\s]+free$/i, '');
       m = m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();

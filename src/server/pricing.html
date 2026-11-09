@@ -133,6 +133,7 @@
         const last = parts[parts.length - 1] || m;
         if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
       }
+      m = m.replace(/^darkapi(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
       m = m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
       const lower = m.toLowerCase();
       if (/^(?:claude[- ]fable 3\.7 flash|gemini[- ]3\.7[- ]flash)$/.test(lower)) return 'gemini-3.8-flash';
@@ -150,6 +151,7 @@
 
     function cleanModelDisplayName(model) {
       const cleaned = String(model ?? '')
+        .replace(/^darkapi(?=$|[-_:|/\s])[-_:|/\s]*/i, '')
         .replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '')
         .replace(/[-_:|/\s]+free$/i, '')
         .replace(/\s+/g, ' ')
