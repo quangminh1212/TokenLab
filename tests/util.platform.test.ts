@@ -117,6 +117,13 @@ describe("normalizeModelName", () => {
     assert.equal(normalizeModelName(""), null);
     assert.equal(normalizeModelName(null), null);
   });
+  it("restores the decimal in grok-5-2 without touching mode suffixes", () => {
+    assert.equal(normalizeModelName("grok-5-2"), "grok-5.2");
+    assert.equal(normalizeModelName("grok-4-5"), "grok-4.5");
+    assert.equal(normalizeModelName("grok-4.5"), "grok-4.5");
+    assert.equal(normalizeModelName("grok-4-fast"), "grok-4-fast");
+    assert.equal(normalizeModelName("grok-3-mini"), "grok-3-mini");
+  });
 });
 
 function sampleEvt(id: string, ts: string): UsageEvent {

@@ -374,6 +374,7 @@
         '$1',
       );
       m = m.replace(/^(claude-(?:opus|sonnet|haiku)-\d+)-(\d+)$/i, '$1.$2');
+      m = m.replace(/^(glm|swe|grok)-(\d+)-(\d+)$/i, '$1-$2.$3');
       const lower = m.toLowerCase();
       const displayAlias = MODEL_DISPLAY_ALIASES.get(lower);
       if (displayAlias) return displayAlias;
