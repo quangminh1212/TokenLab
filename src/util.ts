@@ -879,7 +879,9 @@ export function normalizeModelName(model: string | null | undefined): string | n
   );
   m = m.replace(/^(claude-(?:opus|sonnet|haiku)-\d+)-(\d+)$/i, "$1.$2");
   m = m.replace(/^(gpt-\d+)-(\d+)-(luna|sol|terra)$/i, "$1.$2-$3");
-  m = m.replace(/^(glm|swe|grok)-(\d+)-(\d+)$/i, "$1-$2.$3");
+  m = m.replace(/^(glm|swe)-(\d+)-(\d+)$/i, "$1-$2.$3");
+  // Slugs write 5.2 as 5-2 (claude-fable-5-2, gpt-5-2, …). Keep the decimal.
+  m = m.replace(/-5-2(?!\d)/g, "-5.2");
   m = m.replace(/^glm-(\d+)\.0$/i, "glm-$1");
   m = m.replace(/^gemini-3\.1-pro$/i, "gemini-3.1-pro-preview");
   m = m.replace(/^(grok-\d+\.\d+)-build$/i, "$1");

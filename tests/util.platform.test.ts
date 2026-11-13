@@ -117,12 +117,17 @@ describe("normalizeModelName", () => {
     assert.equal(normalizeModelName(""), null);
     assert.equal(normalizeModelName(null), null);
   });
-  it("restores the decimal in grok-5-2 without touching mode suffixes", () => {
-    assert.equal(normalizeModelName("grok-5-2"), "grok-5.2");
-    assert.equal(normalizeModelName("grok-4-5"), "grok-4.5");
-    assert.equal(normalizeModelName("grok-4.5"), "grok-4.5");
+  it("keeps a 5.2 version decimal, including fable", () => {
+    assert.equal(normalizeModelName("claude-fable-5-2"), "claude-fable-5.2");
+    assert.equal(normalizeModelName("fable-5-2"), "fable-5.2");
+    assert.equal(normalizeModelName("anthropic/claude-fable-5-2"), "claude-fable-5.2");
+    assert.equal(normalizeModelName("gpt-5-2"), "gpt-5.2");
+    assert.equal(normalizeModelName("glm-5-2"), "glm-5.2");
+    assert.equal(normalizeModelName("claude-fable-5.2"), "claude-fable-5.2");
+    assert.equal(normalizeModelName("claude-fable-5"), "claude-fable-5");
+    assert.equal(normalizeModelName("model-5-20"), "model-5-20");
     assert.equal(normalizeModelName("grok-4-fast"), "grok-4-fast");
-    assert.equal(normalizeModelName("grok-3-mini"), "grok-3-mini");
+    assert.equal(normalizeModelName("grok-4-5"), "grok-4-5");
   });
 });
 
