@@ -1,0 +1,335 @@
+---
+import Base from '../layouts/Base.astro';
+import settingsMain from '../scripts/settings-main.js?raw';
+---
+<Base title="Settings" active="settings" mainClass="settings-page">
+  <header class="settings-page-header">
+    <h1>Settings</h1>
+    <p>Preferences for this machine. Changes apply as soon as you save.</p>
+  </header>
+
+  <form class="settings-form" id="settingsForm" onsubmit="return false;">
+    <div class="settings-grid">
+    <!-- Preferences: appearance, timezone, cost -->
+    <section class="settings-section u-card">
+      <div class="settings-section-head">
+        <h2>Preferences</h2>
+        <p>Interface, calendar day, and how estimated cost is calculated.</p>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="settingsThemeBtn">Appearance</label>
+          <span class="settings-help">Saved in this browser only.</span>
+        </div>
+        <button type="button" class="btn" id="settingsThemeBtn">Light</button>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="timezoneSelect">Timezone</label>
+          <span class="settings-help" id="todayStartsLabel">Sets when <strong>Today</strong> begins.</span>
+        </div>
+        <select id="timezoneSelect" class="settings-select" aria-label="Timezone"></select>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="preferRouterCost">Prefer router cost</label>
+          <span class="settings-help">Use cost reported by 9router / RouterLab / LiteLLM when available.</span>
+        </div>
+        <label class="settings-toggle">
+          <input type="checkbox" id="preferRouterCost" />
+          <span class="settings-toggle-ui" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <span class="settings-label">Model rates</span>
+          <span class="settings-help">
+            Currency <code id="currencyLabel">USD</code> · edit per-model token rates.
+          </span>
+        </div>
+        <a class="btn" href="/model">Open models</a>
+      </div>
+    </section>
+
+    <!-- Scanning -->
+    <section class="settings-section u-card">
+      <div class="settings-section-head">
+        <h2>Scanning</h2>
+        <p>How often the server re-reads agent logs in the background.</p>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="scanPeriodicEnabled">Background scan</label>
+          <span class="settings-help">Off = only the <strong>Rescan</strong> button refreshes usage.</span>
+        </div>
+        <label class="settings-toggle">
+          <input type="checkbox" id="scanPeriodicEnabled" checked />
+          <span class="settings-toggle-ui" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="scanIntervalSelect">Scan frequency</label>
+          <span class="settings-help" id="scanIntervalHint">Background light scans.</span>
+        </div>
+        <select id="scanIntervalSelect" class="settings-select" aria-label="Scan frequency"></select>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="scanFullIntervalSelect">Full rescan</label>
+          <span class="settings-help">Deep pass over every agent's history. Runs in the background.</span>
+        </div>
+        <select
+          id="scanFullIntervalSelect"
+          class="settings-select"
+          aria-label="Full rescan interval"
+        ></select>
+      </div>
+
+      <div class="settings-row settings-row-last">
+        <div class="settings-row-text">
+          <span class="settings-help" id="scanLastLabel">&mdash;</span>
+        </div>
+        <div class="settings-inline-actions">
+          <span class="settings-status" id="scanNextLabel"></span>
+          <button type="button" class="btn btn-sm btn-with-icon" id="rescanBtn">Rescan now</button>
+        </div>
+      </div>
+    </section>
+
+    <!--
+      Rate limits. Two independent controls: the sliding windows TokenLab
+      reproduces from LiteLLM's own pre-call guard, and the thresholds that
+      decide when a day is reported as "tool/bot"-like.
+    -->
+    <section class="settings-section u-card">
+      <div class="settings-section-head">
+        <h2>Rate limits</h2>
+        <p>
+          Windows TokenLab reproduces from LiteLLM's own <code>pre_call_hook</code>, plus the
+          thresholds used to explain a provider's "tool/bot" warning.
+        </p>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="rateLimitWindows">Request windows</label>
+          <span class="settings-help">
+            Comma-separated <code>limit/window</code> pairs, e.g. <code>1/1s,60/60s</code>
+            (LiteLLM's own) or <code>5/30s,2/1s</code> (provider-style). Leave empty for the
+            LiteLLM default.
+          </span>
+        </div>
+        <input
+          type="text"
+          id="rateLimitWindows"
+          class="settings-input"
+          placeholder="1/1s,60/60s"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="rateLimitModels">Models</label>
+          <span class="settings-help">
+            Model ids the windows apply to, comma-separated. Use <code>*</code> for every model.
+            Leave empty for the LiteLLM default (<code>glm-5.3</code>, <code>glm-5.53</code>).
+          </span>
+        </div>
+        <input
+          type="text"
+          id="rateLimitModels"
+          class="settings-input"
+          placeholder="glm-5.3,glm-5.53"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="rateFlagSpanHours">Flag: span hours</label>
+          <span class="settings-help">
+            Flag a day when first→last request span reaches this many hours. Loose by design —
+            it counts idle gaps.
+          </span>
+        </div>
+        <input type="number" id="rateFlagSpanHours" class="settings-input settings-input-num"
+          min="0" max="24" step="0.5" placeholder="18" />
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <label for="rateFlagActiveHours">Flag: active hours</label>
+          <span class="settings-help">
+            Flag a day when request-bearing minutes reach this many hours. Excludes idle time,
+            so it is the honest counterpart to the span figure.
+          </span>
+        </div>
+        <input type="number" id="rateFlagActiveHours" class="settings-input settings-input-num"
+          min="0" max="24" step="0.5" placeholder="12" />
+      </div>
+
+      <div class="settings-row settings-row-last">
+        <div class="settings-row-text">
+          <label for="rateFlagGapShare">Flag: automated cadence</label>
+          <span class="settings-help">
+            Flag a day when this share of gaps between requests is ≤ 60s. This is the actual
+            tool/bot signature — a human does not send a request every few seconds.
+          </span>
+        </div>
+        <input type="number" id="rateFlagGapShare" class="settings-input settings-input-num"
+          min="0" max="1" step="0.05" placeholder="0.9" />
+      </div>
+    </section>
+
+    <!-- Backup & restore: export / import / Gist -->
+    <section class="settings-section u-card">
+      <div class="settings-section-head">
+        <h2>Backup &amp; restore</h2>
+        <p>
+          One <code>tokenlab.json</code> format for export, import, and GitHub Gist.
+        </p>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <span class="settings-label">Export</span>
+          <span class="settings-help">Settings + compact usage rollups. No raw request rows.</span>
+        </div>
+        <div class="settings-inline-actions">
+          <button type="button" class="btn btn-primary" id="backupDownloadFull">Full</button>
+          <button type="button" class="btn" id="backupDownloadSettings">Settings</button>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <div class="settings-row-text">
+          <span class="settings-label">Import</span>
+          <span class="settings-help">Accepts any <code>tokenlab-*.json</code> export or Gist file.</span>
+        </div>
+        <div class="settings-inline-actions">
+          <input type="file" id="backupRestoreFile" accept="application/json,.json" hidden />
+          <button type="button" class="btn" id="backupRestoreBtn">Choose file&hellip;</button>
+          <span class="settings-status" id="backupRestoreStatus" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <details class="settings-details">
+        <summary>
+          <span class="settings-label">GitHub Gist</span>
+          <span class="settings-help" id="gistSummary">
+            Off-site backup to one secret Gist &mdash; each save is a new revision.
+          </span>
+        </summary>
+        <div class="settings-details-body">
+          <label class="settings-field">
+            <span class="settings-help">Personal access token (<code>gist</code> scope)</span>
+            <input
+              type="password"
+              id="gistToken"
+              class="settings-input"
+              placeholder="ghp_… (optional if XLAB_GITHUB_TOKEN is set)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+
+          <div class="settings-check-row">
+            <label class="settings-check">
+              <input type="checkbox" id="gistSaveToken" />
+              <span>Remember token locally</span>
+            </label>
+            <label class="settings-check">
+              <input type="checkbox" id="gistAutoDaily" checked />
+              <span>Auto backup daily</span>
+            </label>
+          </div>
+
+          <p class="settings-help">
+            Same Gist link stays; each backup replaces the file as a new revision.
+            Multi-machine: the same Gist merges hosts and sums usage.
+            The token is never written into the backup file.
+          </p>
+
+          <div class="settings-inline-actions">
+            <button type="button" class="btn btn-primary" id="backupGistBtn">Backup to Gist</button>
+            <span class="settings-status" id="backupGistStatus" aria-live="polite"></span>
+          </div>
+
+          <p class="settings-help" id="gistLinkRow" hidden>
+            Last backup:
+            <a id="gistLink" href="#" target="_blank" rel="noopener noreferrer">—</a>
+            <span id="gistMeta" class="settings-help muted"></span>
+          </p>
+        </div>
+      </details>
+    </section>
+
+    <!-- System -->
+    <section class="settings-section u-card">
+      <div class="settings-section-head">
+        <h2>System</h2>
+        <p>Local server status and file locations.</p>
+      </div>
+
+      <div class="settings-kv-grid">
+        <div>
+          <span class="settings-kv-label">Version</span>
+          <strong id="versionLabel">&mdash;</strong>
+        </div>
+        <div>
+          <span class="settings-kv-label">Events</span>
+          <strong id="eventsLabel">&mdash;</strong>
+        </div>
+        <div>
+          <span class="settings-kv-label">Scan</span>
+          <strong id="scanningLabel">&mdash;</strong>
+        </div>
+        <div>
+          <span class="settings-kv-label">Pricing</span>
+          <strong id="pricingRevLabel">&mdash;</strong>
+        </div>
+      </div>
+
+      <details class="settings-details">
+        <summary>
+          <span class="settings-label">Details</span>
+          <span class="settings-help">Config path, runtime, browser timezone.</span>
+        </summary>
+        <div class="settings-details-body">
+          <div class="settings-field">
+            <span class="settings-help">Config file</span>
+            <code class="settings-path-code" id="configPath">&mdash;</code>
+          </div>
+          <div class="settings-field">
+            <span class="settings-help">Runtime</span>
+            <span class="settings-path-code" id="runtimeLabel">&mdash;</span>
+          </div>
+          <div class="settings-field">
+            <span class="settings-help">Browser timezone</span>
+            <span class="settings-path-code" id="browserTzLabel">&mdash;</span>
+          </div>
+        </div>
+      </details>
+    </section>
+    </div><!-- /.settings-grid -->
+
+    <div class="settings-actions-bar">
+      <button type="button" class="btn btn-primary" id="savePrefs">Save changes</button>
+      <span class="settings-status" id="prefsStatus" aria-live="polite"></span>
+    </div>
+  </form>
+  <Fragment slot="scripts">
+    <script is:inline set:html={settingsMain} />
+  </Fragment>
+</Base>

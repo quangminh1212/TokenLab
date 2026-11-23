@@ -1,0 +1,71 @@
+---
+import Base from '../layouts/Base.astro';
+import pricingMain from '../scripts/pricing-main.js?raw';
+---
+<Base title="Model" active="model" mainClass="model-page">
+  <div class="usage-toolbar model-toolbar-top">
+    <div>
+      <h1 class="page-title">Models</h1>
+      <p class="page-sub">OpenRouter &middot; $/1M tokens</p>
+    </div>
+    <div class="usage-actions">
+      <span class="pricing-status muted" id="pricingStatus">&mdash;</span>
+      <button class="btn btn-with-icon" id="pricingReload" type="button">Refresh</button>
+      <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save</button>
+    </div>
+  </div>
+
+  <section class="model-or-panel">
+    <div class="or-search-bar">
+      <svg class="or-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+      <input id="priceSearch" class="or-search-input" type="search" placeholder="Search models&hellip;" autocomplete="off" autofocus />
+    </div>
+
+    <div class="or-filters">
+      <div class="or-filter-group" role="group" aria-label="Quick filters">
+        <button type="button" class="or-chip active" data-filter="all">All</button>
+        <button type="button" class="or-chip" data-filter="free">Free</button>
+        <button type="button" class="or-chip" data-filter="seen">Seen</button>
+        <button type="button" class="or-chip" data-filter="custom">Custom</button>
+      </div>
+      <div class="or-prov-dd" id="providerFilterWrap">
+        <input type="hidden" id="providerFilter" value="" />
+        <button type="button" class="or-select or-prov-dd-btn" id="providerFilterBtn"
+          aria-haspopup="listbox" aria-expanded="false" aria-label="Provider" aria-controls="providerFilterMenu">
+          <span class="or-prov-dd-lead" id="providerFilterLead" aria-hidden="true"></span>
+          <span class="or-prov-dd-label" id="providerFilterLabel">All providers</span>
+          <span class="or-prov-dd-caret" aria-hidden="true">&#9662;</span>
+        </button>
+        <div class="or-prov-dd-menu" id="providerFilterMenu" role="listbox" hidden></div>
+      </div>
+      <select id="sortFilter" class="or-select" aria-label="Sort">
+        <option value="newest">Newest</option>
+        <option value="name">Name</option>
+        <option value="price-asc">Price &uarr;</option>
+        <option value="price-desc">Price &darr;</option>
+        <option value="context">Context</option>
+      </select>
+      <span class="or-count muted" id="resultCount">&mdash;</span>
+    </div>
+
+    <div class="or-list" id="modelList">
+      <div class="empty">Loading models&hellip;</div>
+    </div>
+
+    <div class="model-add-row">
+      <input type="text" id="priceModel" placeholder="Custom model id" />
+      <input type="number" id="priceIn" step="0.001" min="0" placeholder="In $/1M" />
+      <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
+      <input type="number" id="priceCache" step="0.0001" min="0" placeholder="Cache $/1M" />
+      <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
+    </div>
+  </section>
+
+  <footer>
+    <div>Rates from OpenRouter &middot; editable overrides apply to all agents</div>
+    <div>localhost only &middot; estimated cost, not billing</div>
+  </footer>
+  <Fragment slot="scripts">
+    <script is:inline set:html={pricingMain} />
+  </Fragment>
+</Base>

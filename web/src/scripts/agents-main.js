@@ -1,0 +1,434 @@
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => {
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(Math.round(n || 0));
+};
+/** USD with thousand dots and decimal comma, rounded to 2 decimals. */
+const money = (n, digits = 2) => {
+  const v = Number(n) || 0;
+  const neg = v < 0;
+  const fixed = Math.abs(v).toFixed(digits);
+  const [intPart, decPart] = fixed.split('.');
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return (neg ? '-$' : '$') + grouped + (decPart != null ? ',' + decPart : '');
+};
+
+const CATEGORIES = [
+  {
+    id: 'ide',
+    title: 'IDE & Desktop',
+    ids: ['cursor', 'windsurf', 'antigravity', 'trae', 'zed', 'warp', 'continue', 'void', 'devin'],
+  },
+  {
+    id: 'cli',
+    title: 'CLI Agents',
+    ids: [
+      'claude-code', 'codex', 'gemini', 'grok', 'opencode', 'dsh', 'hermes', 'openclaw',
+      'kimi', 'qwen', 'droid', 'amp', 'goose', 'pi', 'kiro', 'jcode', 'commandcode',
+      'zcode', 'opencodereview', 'aider', 'ollama', 'codewhale', 'mimocode', 'qoder',
+      'iflow', 'forge',
+    ],
+  },
+  {
+    id: 'ext',
+    title: 'Editor Extensions',
+    ids: ['copilot', 'cline', 'roocode', 'kilocode', 'codebuddy', 'workbuddy', 'junie', 'blackbox', 'amazon-q'],
+  },
+  {
+    id: 'other',
+    title: 'Other Providers',
+    ids: ['codebuff', 'mux', 'crush', 'gjc'],
+  },
+];
+
+const AVATAR_COLORS = [
+  '#00A19A', '#0d9488', '#2dd4bf', '#37C88F', '#0f766e',
+  '#14b8a6', '#5eead4', '#2CA072', '#115e59', '#06b6d4',
+  '#10B981', '#0ea5e9', '#64748b', '#334155', '#475569',
+];
+
+// Cache-bust when icons are replaced (browser was sticky on short max-age)
+const ICON_V = 'v=10';
+const AGENT_ICONS = {
+  'claude-code': '/assets/agents/claude-code.png?' + ICON_V,
+  codex: '/assets/agents/codex.png?' + ICON_V,
+  cursor: '/assets/agents/cursor.png?' + ICON_V,
+  windsurf: '/assets/agents/windsurf.png?' + ICON_V,
+  grok: '/assets/agents/grok.png?' + ICON_V,
+  gemini: '/assets/agents/gemini.png?' + ICON_V,
+  opencode: '/assets/agents/opencode.png?' + ICON_V,
+  copilot: '/assets/agents/copilot.png?' + ICON_V,
+  hermes: '/assets/agents/hermes.png?' + ICON_V,
+  openclaw: '/assets/agents/openclaw.png?' + ICON_V,
+  pi: '/assets/agents/pi.png?' + ICON_V,
+  kimi: '/assets/agents/kimi.png?' + ICON_V,
+  qwen: '/assets/agents/qwen.png?' + ICON_V,
+  droid: '/assets/agents/droid.png?' + ICON_V,
+  amp: '/assets/agents/amp.png?' + ICON_V,
+  goose: '/assets/agents/goose.png?' + ICON_V,
+  cline: '/assets/agents/cline.png?' + ICON_V,
+  roocode: '/assets/agents/roocode.png?' + ICON_V,
+  kilocode: '/assets/agents/kilocode.png?' + ICON_V,
+  antigravity: '/assets/agents/antigravity.png?' + ICON_V,
+  warp: '/assets/agents/warp.png?' + ICON_V,
+  trae: '/assets/agents/trae.png?' + ICON_V,
+  zed: '/assets/agents/zed.png?' + ICON_V,
+  codebuff: '/assets/agents/codebuff.png?' + ICON_V,
+  mux: '/assets/agents/mux.png?' + ICON_V,
+  crush: '/assets/agents/crush.png?' + ICON_V,
+  kiro: '/assets/agents/kiro.png?' + ICON_V,
+  gjc: '/assets/agents/gjc.png?' + ICON_V,
+  jcode: '/assets/agents/jcode.png?' + ICON_V,
+  commandcode: '/assets/agents/commandcode.png?' + ICON_V,
+  junie: '/assets/agents/junie.png?' + ICON_V,
+  zcode: '/assets/agents/zcode.png?' + ICON_V,
+  opencodereview: '/assets/agents/opencodereview.png?' + ICON_V,
+  codebuddy: '/assets/agents/codebuddy.png?' + ICON_V,
+  workbuddy: '/assets/agents/workbuddy.png?' + ICON_V,
+  aider: '/assets/agents/aider.png?' + ICON_V,
+  continue: '/assets/agents/continue.png?' + ICON_V,
+  devin: '/assets/agents/devin.png?' + ICON_V,
+  ollama: '/assets/agents/ollama.svg?' + ICON_V,
+  codewhale: '/assets/agents/codewhale.png?' + ICON_V,
+  mimocode: '/assets/agents/mimocode.png?' + ICON_V,
+  qoder: '/assets/agents/qoder.png?' + ICON_V,
+  iflow: '/assets/agents/iflow.png?' + ICON_V,
+  blackbox: '/assets/agents/blackbox.png?' + ICON_V,
+  forge: '/assets/agents/forge.png?' + ICON_V,
+  void: '/assets/agents/void.png?' + ICON_V,
+  'amazon-q': '/assets/agents/amazon-q.png?' + ICON_V,
+  '9router': '/assets/agents/9router.svg?' + ICON_V,
+  routerlab: '/assets/agents/xlabrouter.png?' + ICON_V,
+  xlabrouter: '/assets/agents/xlabrouter.png?' + ICON_V,
+  litellm: '/assets/agents/litellm.svg?' + ICON_V,
+};
+
+let agentState = [];
+let costByAgent = {};
+let tokensByAgent = {};
+let currentFilter = 'all';
+
+const ICONS = {
+  moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
+  sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+  settings: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a6.776 6.776 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg>',
+  refresh: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
+  scan: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>',
+};
+
+function applyTheme(mode) {
+  document.documentElement.classList.toggle('dark', mode === 'dark');
+  localStorage.setItem('tokenlab-theme', mode);
+  const btn = $('themeBtn');
+  btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
+  btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+  btn.setAttribute('aria-label', mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+}
+applyTheme(localStorage.getItem('tokenlab-theme') === 'dark' ? 'dark' : 'light');
+$('settingsBtn').innerHTML = ICONS.settings;
+function setRefreshIdle() {
+  $('refresh').disabled = false;
+  $('refresh').innerHTML = ICONS.refresh + '<span>Refresh</span>';
+}
+function setRefreshBusy(label) {
+  $('refresh').disabled = true;
+  $('refresh').innerHTML = ICONS.refresh + '<span>' + label + '</span>';
+}
+setRefreshIdle();
+$('themeBtn').onclick = () => {
+  applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+};
+function colorFor(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function monogram(label) {
+  const parts = String(label).replace(/[^a-zA-Z0-9 ]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return String(label).slice(0, 2).toUpperCase();
+}
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+function agentKind(a) {
+  if (a.detected && (a.eventCount || 0) > 0) return 'live';
+  if (a.detected) return 'detected';
+  return 'offline';
+}
+
+function avatarHtml(a) {
+  const icon = AGENT_ICONS[a.id];
+  const mono = escapeHtml(monogram(a.label));
+  const bg = colorFor(a.id);
+  const fallback = `this.parentElement.classList.add('avatar-fallback');this.parentElement.style.background='${bg}';this.parentElement.textContent='${mono}';this.remove();`;
+  if (icon) {
+    return `<div class="avatar" title="${escapeHtml(a.label)}">
+      <img src="${icon}" alt="${escapeHtml(a.label)}" loading="lazy" onerror="${fallback}" />
+    </div>`;
+  }
+  return `<div class="avatar avatar-fallback" style="background:${bg}" title="${escapeHtml(a.id)}">${mono}</div>`;
+}
+
+function statusHtml(a) {
+  const kind = agentKind(a);
+  const events = a.eventCount || 0;
+  const cost = costByAgent[a.id];
+  const tokens = tokensByAgent[a.id];
+  if (kind === 'live') {
+    return `<span class="dot-live"></span>
+      <span class="st-live">${events} event${events === 1 ? '' : 's'}</span>
+      ${tokens != null ? `<span class="badge-soft">${fmt(tokens)} tok</span>` : ''}
+      ${cost != null ? `<span class="badge-soft badge-cost">${money(cost)}</span>` : ''}`;
+  }
+  if (kind === 'detected') {
+    return `<span class="dot-detected"></span><span class="st-detected">Detected</span>
+      <span class="badge-soft">no events yet</span>`;
+  }
+  return `<span class="st-off">No local data</span>`;
+}
+
+function providerCard(a) {
+  const kind = agentKind(a);
+  const cls = kind === 'live' ? 'is-live' : kind === 'offline' ? 'is-offline' : '';
+  const paths = (a.paths || []).join('\n');
+  return `<article class="provider-card ${cls}" data-id="${escapeHtml(a.id)}" data-kind="${kind}" title="${escapeHtml(paths || a.id)}">
+    ${avatarHtml(a)}
+    <div class="provider-body">
+      <div class="provider-name">${escapeHtml(a.label)}</div>
+      <div class="provider-status">${statusHtml(a)}</div>
+    </div>
+  </article>`;
+}
+
+function matchesFilter(a, filter, q) {
+  const kind = agentKind(a);
+  if (filter === 'live' && kind !== 'live') return false;
+  if (filter === 'detected' && kind !== 'detected') return false;
+  if (filter === 'offline' && kind !== 'offline') return false;
+  if (q) {
+    const hay = `${a.label} ${a.id}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function renderProviders() {
+  const q = ($('providerSearch').value || '').trim().toLowerCase();
+  const list = agentState;
+  const live = list.filter((a) => agentKind(a) === 'live');
+  const detected = list.filter((a) => agentKind(a) === 'detected');
+  const offline = list.filter((a) => agentKind(a) === 'offline');
+
+  $('providerSummary').textContent =
+    `${live.length} live \u00B7 ${detected.length} detected \u00B7 ${offline.length} offline \u00B7 ${list.length} total`;
+
+  const top = [...live].sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0)).slice(0, 6);
+  $('activeStrip').innerHTML = top.length
+    ? top.map((a) => `
+      <div class="active-chip">
+        ${avatarHtml(a)}
+        <div class="meta">
+          <div class="name">${escapeHtml(a.label)}</div>
+          <div class="sub">
+            <span class="dot-live"></span>
+            <span class="st-live">${a.eventCount || 0} events</span>
+            ${costByAgent[a.id] != null ? `<span class="badge-soft badge-cost">${money(costByAgent[a.id])}</span>` : ''}
+          </div>
+        </div>
+      </div>`).join('')
+    : `<div class="empty" style="grid-column:1/-1">Chua co agent live. Dung AI tools roi Rescan.</div>`;
+
+  const used = new Set();
+  const sections = [];
+  for (const cat of CATEGORIES) {
+    const members = cat.ids
+      .map((id) => list.find((a) => a.id === id))
+      .filter(Boolean)
+      .filter((a) => {
+        used.add(a.id);
+        return matchesFilter(a, currentFilter, q);
+      });
+    members.sort((a, b) => {
+      const rank = { live: 0, detected: 1, offline: 2 };
+      const d = rank[agentKind(a)] - rank[agentKind(b)];
+      if (d !== 0) return d;
+      return (b.eventCount || 0) - (a.eventCount || 0);
+    });
+    if (!members.length) continue;
+    sections.push(sectionHtml(cat.title, members));
+  }
+
+  const rest = list.filter((a) => !used.has(a.id) && matchesFilter(a, currentFilter, q));
+  if (rest.length) {
+    rest.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
+    sections.push(sectionHtml('More', rest));
+  }
+
+  $('providerSections').innerHTML = sections.join('') ||
+    `<div class="empty">Khong co agent khop bo loc.</div>`;
+}
+
+/** Category sections default collapsed; expand on click. Auto-open when searching/filtering. */
+function sectionHtml(title, members) {
+  const id = 'sec-' + String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const q = ($('providerSearch').value || '').trim();
+  const forceOpen = q.length > 0 || currentFilter !== 'all';
+  const collapsed = forceOpen ? '' : ' is-collapsed';
+  const expanded = forceOpen ? 'true' : 'false';
+  const hidden = forceOpen ? '' : ' hidden';
+  // Chevron via HTML entity (avoids UTF-8 file corruption)
+  return `
+    <div class="provider-section${collapsed}" data-section="${escapeHtml(id)}">
+      <button type="button" class="provider-section-head" aria-expanded="${expanded}">
+        <span class="section-chevron" aria-hidden="true">&#8250;</span>
+        <h3>${escapeHtml(title)}</h3>
+        <span class="count">${members.length}</span>
+      </button>
+      <div class="provider-grid"${hidden}>${members.map(providerCard).join('')}</div>
+    </div>`;
+}
+
+/** "today" uses server Settings timezone */
+function sinceParam() {
+  return $('since').value || '';
+}
+
+let scanRevision = 0;
+let awaitingData = true;
+let scanPollTimer = 0;
+
+function scheduleScanPoll() {
+  if (scanPollTimer) clearTimeout(scanPollTimer);
+  if (!awaitingData) return;
+  scanPollTimer = setTimeout(() => {
+    scanPollTimer = 0;
+    void load();
+  }, 1200);
+}
+
+async function load() {
+  const since = sinceParam();
+  const agentStatsQ = new URLSearchParams({ groupBy: 'agent', sort: 'cost' });
+  if (since) agentStatsQ.set('since', since);
+  try {
+    const [agentStats, agents, health] = await Promise.all([
+      fetch('/api/stats?' + agentStatsQ).then((r) => r.json()),
+      fetch('/api/agents').then((r) => r.json()),
+      fetch('/api/health').then((r) => r.json()),
+    ]);
+    const eventCount = health.eventCount || 0;
+    if (typeof health.scanRevision === 'number') scanRevision = health.scanRevision;
+    const scanning = Boolean(health.scanning);
+    awaitingData = scanning || (eventCount === 0 && scanRevision === 0);
+    const scanHint = scanning ? ' \u00B7 scanning\u2026' : '';
+    $('meta').textContent = `v${health.version || ''}${scanHint}`;
+
+    costByAgent = {};
+    tokensByAgent = {};
+    for (const g of agentStats.groups || []) {
+      costByAgent[g.key] = g.estimatedCost || 0;
+      tokensByAgent[g.key] = g.totalTokens || 0;
+    }
+    agentState = agents.agents || [];
+    renderProviders();
+    if (awaitingData) scheduleScanPoll();
+  } catch (e) {
+    $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+    if (awaitingData) scheduleScanPoll();
+  }
+}
+
+$('filterTabs').onclick = (e) => {
+  const btn = e.target.closest('button[data-filter]');
+  if (!btn) return;
+  currentFilter = btn.dataset.filter;
+  for (const b of $('filterTabs').querySelectorAll('button')) {
+    b.classList.toggle('active', b === btn);
+  }
+  renderProviders();
+};
+$('providerSections').onclick = (e) => {
+  const head = e.target.closest('.provider-section-head');
+  if (!head) return;
+  const sec = head.closest('.provider-section');
+  if (!sec) return;
+  const open = sec.classList.toggle('is-collapsed') === false;
+  head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const grid = sec.querySelector('.provider-grid');
+  if (grid) grid.hidden = !open;
+};
+$('providerSearch').oninput = () => renderProviders();
+$('since').onchange = load;
+$('refresh').onclick = async () => {
+  setRefreshBusy('Scanning\u2026');
+  try {
+    // Background scan - do not block UI for 10-20s
+    await fetch('/api/scan?async=1', { method: 'POST' });
+    awaitingData = true;
+    scheduleScanPoll();
+    await load();
+  } finally {
+    setRefreshIdle();
+  }
+};
+load();
+setInterval(load, 30000);
+
+// Quiet reload on pricing changes + scan completion
+let pricingRevision = 0;
+try {
+  const es = new EventSource('/api/pricing/stream');
+  es.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'hello') {
+        pricingRevision = msg.pricingRevision || msg.revision || 0;
+        if (typeof msg.scanRevision === 'number') scanRevision = msg.scanRevision;
+        if (msg.scanning || (msg.eventCount || 0) === 0) {
+          awaitingData = true;
+          scheduleScanPoll();
+        }
+        return;
+      }
+      if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
+        pricingRevision = msg.revision;
+        void load();
+        return;
+      }
+      if (msg.type === 'scan') {
+        if (msg.reason === 'start') {
+          awaitingData = (msg.eventCount || 0) === 0;
+          scheduleScanPoll();
+          return;
+        }
+        if (msg.reason === 'progress') {
+          if ((msg.eventCount || 0) > 0) awaitingData = false;
+          void load();
+          return;
+        }
+        if (typeof msg.revision === 'number') scanRevision = msg.revision;
+        awaitingData = false;
+        void load();
+      }
+    } catch { /* ignore */ }
+  };
+} catch { /* ignore */ }
+
+document.querySelectorAll('a.nav-link, a.settings-btn, a.brand-logo-wrap').forEach((a) => {
+  a.addEventListener('pointerenter', () => {
+    const href = a.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.as = 'document';
+    link.href = href;
+    document.head.appendChild(link);
+  }, { once: true, passive: true });
+});

@@ -1,0 +1,64 @@
+---
+import '../styles/styles.css';
+
+interface Props {
+  title: string;
+  active?: 'dashboard' | 'agents' | 'model' | 'settings';
+  mainClass?: string;
+}
+const { title, active, mainClass } = Astro.props;
+const prefetch = [
+  ['/', 'dashboard'],
+  ['/agents', 'agents'],
+  ['/model', 'model'],
+  ['/settings', 'settings'],
+].filter(([, k]) => k !== active);
+---
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title} &middot; TokenLab</title>
+  <link rel="icon" type="image/png" href="/assets/logo.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
+  <link rel="shortcut icon" href="/assets/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
+  {prefetch.map(([href]) => <link rel="prefetch" href={href} as="document" />)}
+  <script is:inline>
+    try { if (localStorage.getItem('tokenlab-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <a class="brand-logo-wrap" href="/" title="TokenLab" aria-label="TokenLab">
+          <img class="brand-logo" src="/assets/logo.png" alt="TokenLab" width="140" height="56"
+            onerror="this.style.display='none'; document.querySelector('.brand-mark').style.display='flex';" />
+          <div class="brand-mark" aria-hidden="true"><span class="x">X</span><span class="lab">Lab</span></div>
+        </a>
+      </div>
+      <nav class="nav" aria-label="Main">
+        <a class:list={['nav-link', { active: active === 'dashboard' }]} href="/">Dashboard</a>
+        <a class:list={['nav-link', { active: active === 'agents' }]} href="/agents">Agents</a>
+        <a class:list={['nav-link', { active: active === 'model' }]} href="/model">Model</a>
+      </nav>
+      <div class="top-actions">
+        <span class="meta-chip" id="meta">Loading&hellip;</span>
+        <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
+        {active === 'settings'
+          ? <a class="icon-btn settings-btn is-active" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings" aria-current="page"></a>
+          : <a class="icon-btn settings-btn" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings"></a>}
+      </div>
+    </div>
+  </header>
+
+  <main class={`shell ${mainClass ?? ''}`.trim()}>
+    <slot />
+  </main>
+
+  <slot name="scripts" />
+</body>
+</html>

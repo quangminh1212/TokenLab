@@ -1,0 +1,82 @@
+---
+import Base from '../layouts/Base.astro';
+import dashboardMain from '../scripts/dashboard-main.js?raw';
+---
+<Base title="Dashboard" active="dashboard" mainClass="usage-page">
+  <!-- Toolbar: period + actions (9router Usage style) -->
+  <div class="usage-toolbar">
+    <div class="seg" id="periodSeg" role="tablist" aria-label="Time range">
+      <button type="button" class="seg-btn active" data-period="today">Today</button>
+      <button type="button" class="seg-btn" data-period="24h">24h</button>
+      <button type="button" class="seg-btn" data-period="7d">7D</button>
+      <button type="button" class="seg-btn" data-period="30d">30D</button>
+      <button type="button" class="seg-btn" data-period="">All</button>
+    </div>
+    <div class="usage-actions">
+      <span class="fetch-spin hidden" id="fetchSpin" aria-hidden="true"></span>
+      <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Sync VPS BNIX, rescan agents, and reload stats">Refresh</button>
+    </div>
+  </div>
+
+  <!-- Overview cards -->
+  <div class="overview-grid" id="overview"></div>
+
+  <!-- Chart + Recent -->
+  <div class="usage-mid">
+    <section class="u-card chart-card">
+      <div class="chart-head">
+        <div class="seg seg-sm" id="chartMode" role="tablist" aria-label="Chart metric">
+          <button type="button" class="seg-btn active" data-mode="tokens">Tokens</button>
+          <button type="button" class="seg-btn" data-mode="cost">Cost</button>
+          <button type="button" class="seg-btn" data-mode="rpm">RPM</button>
+        </div>
+      </div>
+      <div class="chart-body" id="chartBody">
+        <div class="chart-empty">Loading&hellip;</div>
+      </div>
+    </section>
+
+    <section class="u-card recent-card">
+      <div class="u-card-head">
+        <span class="u-card-title">Recent requests</span>
+      </div>
+      <div class="recent-scroll" id="recentBody">
+        <div class="chart-empty">Loading&hellip;</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Breakdown table -->
+  <div class="table-toolbar">
+    <div class="seg seg-sm" id="groupSeg" role="tablist" aria-label="Group by">
+      <button type="button" class="seg-btn active" data-group="agent">By agent</button>
+      <button type="button" class="seg-btn" data-group="model">By model</button>
+      <button type="button" class="seg-btn" data-group="day" id="groupTimeBtn">By day</button>
+    </div>
+    <div class="seg seg-sm" id="sortSeg" role="tablist" aria-label="Sort rows">
+      <button type="button" class="seg-btn active" data-sort="value" id="tableValueSortBtn">By cost</button>
+      <button type="button" class="seg-btn" data-sort="name">By name</button>
+    </div>
+    <div class="seg seg-sm" id="viewModeSeg" role="tablist" aria-label="Value mode">
+      <button type="button" class="seg-btn active" data-view="costs">Costs</button>
+      <button type="button" class="seg-btn" data-view="tokens">Tokens</button>
+    </div>
+  </div>
+
+  <section class="u-card table-card">
+    <div class="table-scroll">
+      <table class="usage-table" id="usageTable">
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <div>Layout inspired by <strong>9router Usage</strong> &middot; accent XLab teal</div>
+    <div>localhost only &middot; estimated cost, not billing</div>
+  </footer>
+  <Fragment slot="scripts">
+    <script is:inline set:html={dashboardMain} />
+  </Fragment>
+</Base>

@@ -1,0 +1,1252 @@
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) => {
+      const v = Number(n) || 0;
+      if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+      if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+      if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+      return String(Math.round(v));
+    };
+    const fmtFull = (n) => new Intl.NumberFormat().format(Math.round(Number(n) || 0));
+    /** USD with thousand separators: $197.527,96 (dot groups, comma decimals) */
+    const money = (n, digits = 2) => {
+      const v = Number(n) || 0;
+      const neg = v < 0;
+      const fixed = Math.abs(v).toFixed(digits);
+      const [intPart, decPart] = fixed.split('.');
+      const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      return (neg ? '-$' : '$') + grouped + (decPart != null ? ',' + decPart : '');
+    };
+    const money4 = (n) => money(n, 4);
+    // Breakdown columns always round to 2 decimals; small non-zero amounts
+    // collapse to "<$0,01" instead of exposing 8 fraction digits.
+    const moneyBreakdown = (n) => {
+      const v = Number(n) || 0;
+      if (v !== 0 && Math.abs(v) < 0.01) return (v < 0 ? '-<$0,01' : '<$0,01');
+      return money(v);
+    };
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+
+    /** Universal outline icons (Heroicons-style) \u2014 easy to recognize */
+    const ICONS = {
+      moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
+      sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+      settings: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a6.776 6.776 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg>',
+      refresh: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
+      scan: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>',
+    };
+
+    function applyTheme(mode) {
+      document.documentElement.classList.toggle('dark', mode === 'dark');
+      localStorage.setItem('tokenlab-theme', mode);
+      const btn = $('themeBtn');
+      btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
+      btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+      btn.setAttribute('aria-label', mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    }
+    applyTheme(localStorage.getItem('tokenlab-theme') === 'dark' ? 'dark' : 'light');
+    $('settingsBtn').innerHTML = ICONS.settings;
+    function setRefreshIdle() {
+      $('refresh').disabled = false;
+      $('refresh').innerHTML = ICONS.refresh + '<span>Refresh</span>';
+    }
+    function setRefreshBusy(label) {
+      $('refresh').disabled = true;
+      $('refresh').innerHTML = ICONS.refresh + '<span>' + label + '</span>';
+    }
+    setRefreshIdle();
+    $('themeBtn').onclick = () => {
+      applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    };
+
+    const hiddenModelNames = new Set(['9r or openrouter', '9r xlab']);
+    const state = {
+      period: 'today',
+      groupBy: 'agent',
+      sortBy: 'value',
+      viewMode: 'costs',
+      chartMode: 'tokens',
+      daySeries: [],
+      chartByHour: false,
+      groups: [],
+      totals: null,
+      /** Live 3m window (optional secondary) from /api/stats.live */
+      live: null,
+      /** Period peak RPM (busiest minute) from /api/stats.usageRpm */
+      usageRpm: null,
+      /** Server version for the header chip — kept so a bare updateMeta() (no
+       *  full /api/stats pass) can still rewrite the version text intact. */
+      version: '',
+      /** Server local-day start for "today" (ISO) */
+      todayStartsAt: null,
+      scanning: false,
+      awaitingData: true, // until first non-empty scan or confirmed idle empty
+      scanRevision: 0,
+      scanUpdatedAt: 0,
+      lastEventCount: 0,
+      /** Fingerprint of last rendered totals — detect token/cost changes even when eventCount stays same */
+      lastTotalsKey: '',
+      loading: false,
+      /** If a quiet reload was skipped while busy, run again right after */
+      pendingLoad: false,
+    };
+    let pricingRevision = 0;
+
+    function totalsKey(t) {
+      if (!t) return '';
+      return [
+        t.eventCount || 0,
+        t.inputTokens || 0,
+        t.outputTokens || 0,
+        t.cacheReadTokens || 0,
+        t.cacheWriteTokens || 0,
+        Math.round((t.estimatedCost || 0) * 1e6),
+      ].join('|');
+    }
+
+    /** Always-safe reload: never drop updates when a fetch is already in flight */
+    function requestLoad(opts = {}) {
+      const quiet = opts.quiet === true;
+      if (state.loading) {
+        state.pendingLoad = true;
+        if (!quiet) {
+          // User-facing action: show spinner intent even if coalesced
+          $('fetchSpin')?.classList.remove('hidden');
+        }
+        return;
+      }
+      void load(opts);
+    }
+
+    function isHourlyPeriod() {
+      return state.period === 'today' || state.period === '24h';
+    }
+
+    /** "today" is resolved on the server with Settings timezone (not browser-only). */
+    function sinceParam() {
+      if (state.period === 'today') return 'today';
+      return state.period || '';
+    }
+
+    /** Parse relative (7d/24h) or ISO since \u2014 mirrors server parseSince. */
+    function parseSinceMs(since) {
+      if (!since) return null;
+      const m = String(since).match(/^(\d+)([smhd])$/i);
+      if (m) {
+        const n = Number(m[1]);
+        const unit = m[2].toLowerCase();
+        const ms =
+          unit === 's' ? n * 1000 :
+          unit === 'm' ? n * 60_000 :
+          unit === 'h' ? n * 3_600_000 :
+          n * 86_400_000;
+        return Date.now() - ms;
+      }
+      const t = new Date(since).getTime();
+      return Number.isNaN(t) ? null : t;
+    }
+
+    /** Match aggregate.ts hour key: UTC `YYYY-MM-DDTHH:00` */
+    function hourKeyFromDate(d) {
+      return d.toISOString().slice(0, 13) + ':00';
+    }
+
+    function parseHourKey(key) {
+      const s = String(key || '');
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(s)) return new Date(s + ':00.000Z');
+      return new Date(s);
+    }
+
+    function formatHourLabel(key, withDate) {
+      const d = parseHourKey(key);
+      if (Number.isNaN(d.getTime())) return String(key || '\u2014');
+      if (withDate) {
+        return d.toLocaleString(undefined, {
+          month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit', hour12: false,
+        });
+      }
+      return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    /** Parse day key `YYYY-MM-DD` (UTC date bucket from aggregate). */
+    function parseDayKey(key) {
+      const s = String(key || '');
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!m) return null;
+      return { year: m[1], month: m[2], day: m[3], iso: `${m[1]}-${m[2]}-${m[3]}` };
+    }
+
+    /**
+     * Chart X labels for day series.
+     * When data spans multiple years (or not the current year), include year so
+     * "07-19" then "04-30" is not read as July-before-April in the same year.
+     */
+    function formatDayLabel(key, showYear) {
+      const p = parseDayKey(key);
+      if (!p) {
+        const s = String(key || '');
+        return s.length >= 10 ? s.slice(5, 10) : s;
+      }
+      if (showYear) return `${p.year.slice(2)}-${p.month}-${p.day}`; // YY-MM-DD
+      return `${p.month}-${p.day}`; // MM-DD
+    }
+
+    function daySeriesNeedsYear(series) {
+      const years = new Set();
+      for (const d of series || []) {
+        const p = parseDayKey(d.key);
+        if (p) years.add(p.year);
+      }
+      if (years.size === 0) return false;
+      if (years.size > 1) return true;
+      const only = [...years][0];
+      return only !== String(new Date().getFullYear());
+    }
+
+    const MODEL_DISPLAY_ALIASES = new Map([
+      ['adaptive', 'big-pickle'],
+      ['big pickle', 'big-pickle'],
+      ['coding', 'claude-fable-5'],
+      ['claude fable 5', 'claude-fable-5'],
+      ['claude-fable 3.7 flash', 'gemini-3.8-flash'],
+      ['claude fable 3.7 flash', 'gemini-3.8-flash'],
+      ['gemini-3.7-flash', 'gemini-3.8-flash'],
+      ['gemini 3.7 flash', 'gemini-3.8-flash'],
+      ['qwen3.8-27b', 'qwen3.8-max'],
+      ['qwen3.8-max-preview', 'qwen3.8-max'],
+      ['qwen3guard-gen-0.6b', 'qwen3.8-max'],
+      ['qwen3guard-gen-8b', 'qwen3.8-max'],
+      ['qwenheavy', 'qwen3.8-max'],
+      ['qwen 3.8 max', 'qwen3.8-max'],
+      ['qwencoder qwen3.8 max', 'qwen3.8 max'],
+    ]);
+
+    /** Strip provider suffixes so "gpt-5.5 (openai-compatible-\u2026)" \u2192 "gpt-5.5" */
+    function normalizeModelName(model) {
+      if (model == null) return '';
+      let m = String(model).trim();
+      if (!m) return '';
+      for (let i = 0; i < 3; i++) {
+        const next = m.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+        if (next === m) break;
+        m = next;
+      }
+      m = m.replace(/\s*\[[^\]]*\]\s*$/g, '').trim();
+      if (m.includes('|')) m = m.split('|')[0].trim();
+      if (m.includes('/') && !m.startsWith('http')) {
+        const parts = m.split('/').map((p) => p.trim()).filter(Boolean);
+        const last = parts[parts.length - 1] || m;
+        if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
+      }
+      m = m.replace(/^darkapi(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
+      m = m.replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
+      m = m.replace(/[-_:|/\s]+free$/i, '');
+      m = m.replace(/\s+/g, ' ').replace(/^[-_:|]+|[-_:|]+$/g, '').trim();
+      m = m.replace(
+        /^(claude-(?:opus|sonnet|haiku)-\d+\.\d+)(?:-\d+\.\d+)+$/i,
+        '$1',
+      );
+      m = m.replace(/^(claude-(?:opus|sonnet|haiku)-\d+)-(\d+)$/i, '$1.$2');
+      m = m.replace(/-5-2(?!\d)/g, '-5.2');
+      const lower = m.toLowerCase();
+      const displayAlias = MODEL_DISPLAY_ALIASES.get(lower);
+      if (displayAlias) return displayAlias;
+      if (lower === 'unattributed' || lower === 'unknown' || lower === 'qwencoder') return '';
+      if (lower === 'deepseek-chat') return 'deepseek-v4-flash';
+      if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
+      if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.7';
+      if (lower === 'mimo-auto') return 'mimo-v2.5';
+      if (lower === 'model_private_11') return 'big-pickle';
+      if (lower === 'vip-kimi') return 'kimi-k3';
+      if (lower === 'swe-agent' || lower === 'swe agent') return 'swe-1.6';
+      if (lower === 'windsurf-cascade') return 'swe-1.6';
+      if (lower === 'xlab') return 'gpt-5.5';
+      if (lower === 'gpt-5.3-codex') return 'gpt-5.5';
+      if (lower === 'gp-gpt-5.5') return 'gpt-5.5';
+      if (lower === 'claude-fable') return 'claude-fable-5';
+      if (lower === 'pmv-default') return 'claude-fable-5';
+      if (lower === 'claude-opus') return 'claude-opus-5.5';
+      if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
+      if (lower === 'digigo') return 'gpt-5.5';
+      if (lower === 'free') return 'big-pickle';
+      return m;
+    }
+
+    function normalizeModelForAgent(model, agent) {
+      const normalized = normalizeModelName(model);
+      if (normalized) return normalized;
+      const agentId = String(agent || '').trim().toLowerCase();
+      if (['devin', 'swe-agent', 'swe agent'].includes(agentId)) return 'swe-1.6';
+      return '';
+    }
+
+    /** Agent id → display name (XLab Router → RouterLab, etc.) */
+    const AGENT_LABELS = {
+      '9router': '9Router',
+      aider: 'Aider',
+      'amazon-q': 'Amazon Q',
+      amp: 'Amp',
+      antigravity: 'Antigravity',
+      blackbox: 'Blackbox AI',
+      'claude-code': 'Claude Code',
+      cline: 'Cline',
+      codebuddy: 'CodeBuddy',
+      codebuff: 'Codebuff',
+      codewhale: 'CodeWhale',
+      codex: 'OpenAI Codex',
+      commandcode: 'Command Code',
+      'continue': 'Continue.dev',
+      copilot: 'GitHub Copilot',
+      crush: 'Crush',
+      'claude-fable': 'Claude-Fable',
+      devin: 'Devin',
+      droid: 'Factory Droid',
+      dsh: 'DeepSeek Harness',
+      forge: 'Forge',
+      gemini: 'Gemini CLI',
+      gjc: 'Gajae-Code',
+      goose: 'Goose',
+      grok: 'Grok (xAI)',
+      hermes: 'Hermes Agent',
+      iflow: 'iFlow',
+      jcode: 'Jcode',
+      junie: 'JetBrains Junie',
+      kilocode: 'Kilo Code',
+      kimi: 'Kimi CLI',
+      kiro: 'Kiro',
+      litellm: 'LiteLLM',
+      mimocode: 'MiMo Code',
+      mux: 'Mux',
+      ollama: 'Ollama',
+      openclaw: 'OpenClaw',
+      opencode: 'OpenCode',
+      opencodereview: 'Open Code Review',
+      pi: 'Pi / Oh My Pi',
+      qoder: 'Qoder',
+      qwen: 'Qwen CLI',
+      qwencoder: 'QwenCoder Cloud',
+      roocode: 'Roo Code',
+      routerlab: 'RouterLab',
+      trae: 'Trae',
+      void: 'Void',
+      warp: 'Warp AI',
+      windsurf: 'Windsurf',
+      workbuddy: 'WorkBuddy',
+      zcode: 'ZCode',
+      zed: 'Zed Agent',
+      // Aliases / legacy ids that still show up in older scan-cache rows
+      'xlab-router': 'RouterLab',
+      xlab_router: 'RouterLab',
+      'kilo-code': 'Kilo Code',
+      'roo-code': 'Roo Code',
+      'continue-dev': 'Continue.dev',
+      'warp-ai': 'Warp AI',
+      'code-whale': 'CodeWhale',
+      anthropic: 'Anthropic',
+      openai: 'OpenAI',
+    };
+    function agentLabel(id) {
+      const k = String(id || '').trim();
+      if (!k) return '';
+      const low = k.toLowerCase();
+      if (low === 'xlabrouter' || low === 'xlrouter' || low === 'xlab-router' || low === 'xlab_router') {
+        return 'RouterLab';
+      }
+      return AGENT_LABELS[low] || AGENT_LABELS[k] || titleCaseAgent(k);
+    }
+
+    /**
+     * Capitalize the first letter of every word-ish token so an unmapped agent id
+     * (e.g. "claude-fable" → "Claude-Fable") never renders all-lowercase.
+     * Ids that already carry an uppercase letter keep their casing untouched.
+     */
+    function titleCaseAgent(id) {
+      if (/[A-Z]/.test(id)) return id;
+      return id.replace(/[a-z0-9]+/g, (w) => w.replace(/^[a-z]/, (c) => c.toUpperCase()));
+    }
+
+    function displayModelLabel(model) {
+      const label = String(model ?? '');
+      const lower = label.toLowerCase();
+      const format = (name) => {
+        const spaced = String(name).replace(/-5-2(?!\d)/g, '-5.2').replace(/-/g, ' ');
+        return spaced.replace(/(^|\s)([a-z])/g, (_match, prefix, letter) => prefix + letter.toUpperCase())
+          .replace(/\bgpt\b/gi, 'GPT')
+          .replace(/\bglm\b/gi, 'GLM');
+      };
+      if (lower === 'big-pickle') return format('big pickle');
+      if (lower === 'claude-fable-5') return format('claude fable 5');
+      if (lower === 'qwen3.8-max') return format('qwen3.8 max');
+      return format(label);
+    }
+
+    function formatGroupKey(key) {
+      if (state.groupBy === 'hour' || /^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(String(key || ''))) {
+        return formatHourLabel(key, true);
+      }
+      if (state.groupBy === 'model') {
+        const k = String(key ?? '');
+        // Keep the source name on unknown rows so the missing model is still
+        // traceable to the provider feed.
+        const unattributed = /^(?:unknown|unattributed)\s*\((.*)\)$/i.exec(k);
+        if (unattributed) {
+          return `Unattributed (${agentLabel(unattributed[1]) || unattributed[1]})`;
+        }
+        if (/^(?:unknown|unattributed)$/i.test(k)) return 'Unattributed';
+        if (/^qwencoder$/i.test(k)) return 'Unattributed (QwenCoder Cloud)';
+        return displayModelLabel(normalizeModelName(k) || k);
+      }
+      if (state.groupBy === 'agent') {
+        return agentLabel(key);
+      }
+      return String(key ?? '');
+    }
+
+    /** Fill missing hours so Today/24h chart is continuous. */
+    function fillHourSeries(groups, period) {
+      const byKey = new Map((groups || []).map((g) => [g.key, g]));
+      const blank = (key) => ({
+        key,
+        totalTokens: 0,
+        estimatedCost: 0,
+        eventCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        // Idle hour: no requests, so no active minutes → 0 RPM (not undefined,
+        // which would break the RPM chart mode's max/scale math).
+        rpm: 0,
+      });
+      const end = new Date();
+      end.setMinutes(0, 0, 0);
+      let start;
+      if (period === 'today') {
+        start = new Date();
+        start.setHours(0, 0, 0, 0);
+      } else {
+        start = new Date(end.getTime() - 23 * 3_600_000);
+      }
+      const out = [];
+      for (let t = start.getTime(); t <= end.getTime(); t += 3_600_000) {
+        const key = hourKeyFromDate(new Date(t));
+        out.push(byKey.get(key) || blank(key));
+      }
+      return out;
+    }
+
+    function syncTimeGroupButton() {
+      const btn = $('groupTimeBtn');
+      if (!btn) return;
+      if (isHourlyPeriod()) {
+        btn.setAttribute('data-group', 'hour');
+        btn.textContent = 'By hour';
+        if (state.groupBy === 'day') state.groupBy = 'hour';
+      } else {
+        btn.setAttribute('data-group', 'day');
+        btn.textContent = 'By day';
+        if (state.groupBy === 'hour') state.groupBy = 'day';
+      }
+      setActive($('groupSeg'), 'data-group', state.groupBy);
+    }
+
+    function setActive(segEl, attr, value) {
+      segEl.querySelectorAll('.seg-btn').forEach((b) => {
+        b.classList.toggle('active', b.getAttribute(attr) === value || (value === '' && b.getAttribute(attr) === ''));
+      });
+    }
+
+    function overviewCard(label, value, tone, hint, title, className) {
+      return `<div class="ov-card${className ? ` ${className}` : ''}"${title ? ` title="${title}"` : ''}>
+        <span class="ov-label">${label}</span>
+        <span class="ov-value ${tone || ''}">${value}</span>
+        ${hint ? `<span class="ov-hint">${hint}</span>` : ''}
+      </div>`;
+    }
+
+    function periodLabel() {
+      const p = state.period ?? 'today';
+      if (p === 'today') return 'today';
+      if (p === '24h') return '24h';
+      if (p === '7d') return '7d';
+      if (p === '30d') return '30d';
+      return 'all';
+    }
+
+    /**
+     * Minutes → "2h 30m" / "45m" for the Active-time card. Under an hour stays in
+     * minutes so a short period never rounds away to "0h" and reads as no usage.
+     */
+    function fmtActiveMins(mins) {
+      const m = Math.max(0, Math.round(Number(mins) || 0));
+      if (m < 60) return m + 'm';
+      const h = Math.floor(m / 60);
+      const rest = m % 60;
+      return rest ? `${h}h ${rest}m` : `${h}h`;
+    }
+
+    /**
+     * Period PEAK RPM — the busiest single minute in the period:
+     *   RPM = max over minutes of (requests landing in that calendar minute)
+     * Server computes this in /api/stats.usageRpm.rpm.
+     * Fallback (older server without usageRpm): 0 — the client cannot know the
+     * per-minute distribution from totals alone, so it must not invent a number.
+     */
+    function periodRequestRate(totalRequests) {
+      const ur = state.usageRpm;
+      if (ur && typeof ur === 'object' && Number.isFinite(Number(ur.rpm))) {
+        return {
+          requests: Number(ur.requests) || Math.max(0, Number(totalRequests) || 0),
+          activeMinutes: Number(ur.activeMinutes) || 0,
+          rpm: Number(ur.rpm) || 0,
+          rps: Number(ur.rps) || 0,
+          method: ur.method || 'peak_minute',
+          unit: 'req/min',
+          period: periodLabel(),
+        };
+      }
+      const N = Math.max(0, Number(totalRequests) || 0);
+      return {
+        requests: N,
+        activeMinutes: 0,
+        rpm: 0,
+        rps: 0,
+        method: 'peak_minute',
+        unit: 'req/min',
+        period: periodLabel(),
+      };
+    }
+
+    /**
+     * Minutes of use in the period, as a card label. Active time = every minute
+     * carrying ≥1 request counts as a full minute of use. It comes from
+     * usageRpm.activeMinutes, counted on the server over distinct minute buckets —
+     * the client must never re-derive it from a paged event window.
+     *
+     * Returns null when the period holds no requests: there is no measured active
+     * time then, and rendering "0m" would read as a measurement of zero.
+     */
+    function activeTimeLabel() {
+      // Round BEFORE the >0 test: activeMinutes is always a whole number of minute
+      // buckets, but a fractional value must not slip through as "0m".
+      const m = Math.round(Number(state.usageRpm && state.usageRpm.activeMinutes));
+      if (!Number.isFinite(m) || m <= 0) return null;
+      const periodDays = state.period === '7d' ? 7 : state.period === '30d' ? 30 : 0;
+      const hint = periodDays
+        ? `Daily avg. ${((m / (periodDays * 24 * 60)) * 100).toFixed(1)}% of 24h`
+        : undefined;
+      return { value: fmtActiveMins(m), hint, title: activeTimeTitle(m) };
+    }
+
+    function activeTimeTitle(m) {
+      return `${m} minute${m === 1 ? '' : 's'} with requests in ${periodLabel()} \u2014 any minute containing a request counts in full`;
+    }
+
+    /**
+     * Single writer for the header chip, so the version/scan chip can never drift
+     * out of sync across the three code paths that refresh the header (full load,
+     * recent-only refresh, SSE progress).
+     */
+    function updateMeta(version) {
+      const scanHint = state.scanning ? ' \u00B7 scanning\u2026' : (state.awaitingData ? ' \u00B7 waiting\u2026' : '');
+      const v = version || state.version || '';
+      $('meta').textContent = `v${v}${scanHint}`;
+
+    }
+
+    function cacheWasReported(t) {
+      return Number(t && t.cacheReportedEvents) > 0 ||
+        Number(t && t.cacheReadTokens) > 0 || Number(t && t.cacheWriteTokens) > 0;
+    }
+
+    function fmtCacheTokens(t, field) {
+      return cacheWasReported(t) ? fmtFull(t && t[field]) : '\u2014';
+    }
+
+    function cacheMetricTitle(t) {
+      const records = Number(t && t.cacheReportedEvents) || 0;
+      if (!cacheWasReported(t)) return 'No usage record in this period reported cache token fields.';
+      const source = records > 0 ? `Reported on ${fmtFull(records)} usage record${records === 1 ? '' : 's'}. ` : '';
+      return `${source}Cache values are separate details and may already be included in prompt or total tokens.`;
+    }
+
+    function renderOverview(t, live) {
+      // RPM = busiest single minute in the period (peak, not an average)
+      const rate = periodRequestRate(t.eventCount || 0);
+      const rpmVal = (Math.round(rate.rpm * 10) / 10).toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1,
+      });
+      // Peak metric — no subtitle under RPM
+      const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
+      // Show measured active minutes for Today and wider weekly/monthly periods.
+      // For 7d/30d, the hint normalizes usage to a daily share of 24 hours.
+      const active = ['today', '7d', '30d'].includes(state.period) ? activeTimeLabel() : null;
+      const activeCard = active
+        ? overviewCard('Active time', active.value, 'tone-primary', active.hint, active.title)
+        : '';
+      // Cache fields are provider-reported details and can overlap prompt input.
+      // Keep them visible without changing the existing input/total calculations.
+      const cacheTitle = cacheMetricTitle(t);
+      const cacheHint = cacheWasReported(t) ? 'Provider reported' : 'No cache data';
+      const cards = [
+        overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
+        overviewCard('Cache read', fmtCacheTokens(t, 'cacheReadTokens'), 'tone-primary', cacheHint, cacheTitle),
+        overviewCard('Cache write', fmtCacheTokens(t, 'cacheWriteTokens'), 'tone-primary', cacheHint, cacheTitle),
+        overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
+        overviewCard('Total requests', fmtFull(t.eventCount || 0)),
+        rpmCard,
+        overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing', undefined, 'ov-card--cost'),
+        activeCard,
+      ].filter(Boolean);
+      $('overview').innerHTML = cards.join('');
+    }
+
+    function timeAgo(iso) {
+      if (!iso) return '\u2014';
+      const t = new Date(iso).getTime();
+      if (Number.isNaN(t)) return '\u2014';
+      const mins = Math.floor((Date.now() - t) / 60000);
+      // Future / rollup stamps are filtered out of the list — never label them "Today"
+      if (mins < 0) return '\u2014';
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return mins + 'm ago';
+      if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
+      return new Date(iso).toLocaleDateString();
+    }
+
+    function emptyMsg(kind) {
+      // Only show "scanning" empty state when we truly have no data yet
+      if ((state.scanning || state.awaitingData) && state.lastEventCount === 0) {
+        return kind === 'table'
+          ? 'Đang quét agents\u2026 dữ liệu sẽ hiện ngay khi xong.'
+          : 'Scanning agents\u2026';
+      }
+      if (kind === 'chart') return 'No data for this period';
+      if (kind === 'table') return 'Chưa có usage. Dùng AI agents rồi bấm Refresh.';
+      return 'No requests yet.';
+    }
+
+    function recentEventsForDisplay(eventsRes, since) {
+      let recent = Array.isArray(eventsRes && eventsRes.events) ? eventsRes.events : [];
+      // Client-side safety net if an older server build lacks since support
+      const t0 = parseSinceMs(since);
+      if (t0 != null) {
+        recent = recent.filter((e) => {
+          const t = new Date(e.timestamp).getTime();
+          return !Number.isNaN(t) && t >= t0;
+        });
+      }
+      // RECENT REQUESTS: real per-call rows + single-turn estimates only.
+      // Drop daily/model rollups and future-stamped rows (UI used to show them as "Today").
+      const nowMs = Date.now();
+      recent = recent.filter((e) => {
+        if (!e) return false;
+        const t = new Date(e.timestamp).getTime();
+        if (Number.isNaN(t)) return false;
+        // Future timestamps = day rollups / noon-UTC fakes — hide from Recent requests
+        if (t > nowMs + 5_000) return false;
+        const rc = e.requestCount;
+        if (typeof rc === 'number' && Number.isFinite(rc) && rc > 5) return false;
+        if (e.estimated) {
+          if (typeof rc === 'number' && Number.isFinite(rc) && rc > 1) return false;
+          const total =
+            (Number(e.totalTokens) || 0) ||
+            (Number(e.inputTokens) || 0) +
+              (Number(e.outputTokens) || 0) +
+              (Number(e.cacheReadTokens) || 0) +
+              (Number(e.cacheWriteTokens) || 0);
+          if (total > 2e6) return false;
+          if (total <= 0 && !(Number(e.estimatedCost) > 0)) return false;
+        }
+        return true;
+      });
+      // Ensure newest-first even if response order varies
+      return recent
+        .slice()
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, 25);
+    }
+
+    function renderRecent(events) {
+      if (!events.length) {
+        $('recentBody').innerHTML = `<div class="chart-empty">${emptyMsg('recent')}</div>`;
+        return;      }
+      $('recentBody').innerHTML = `
+        <ul class="recent-list">
+          ${events.map((e) => {
+            const resolvedModel = normalizeModelForAgent(e.model, e.agent);
+            const model = resolvedModel
+              ? displayModelLabel(resolvedModel)
+              : agentLabel(e.agent) || '\u2014';
+            const agent = e.agent && resolvedModel ? agentLabel(e.agent) : '';
+            const cached = (Number(e.cacheReadTokens) || 0) + (Number(e.cacheWriteTokens) || 0);
+            return `<li class="recent-item">
+              <div class="recent-item-main">
+                <span class="recent-model" title="${escapeHtml(model)}">${escapeHtml(model)}</span>
+                ${agent ? `<span class="recent-agent">${escapeHtml(agent)}</span>` : ''}
+              </div>
+              <div class="recent-item-meta">
+                <span class="recent-tokens" title="input / output">
+                  <span>${fmt((Number(e.inputTokens) || 0) + cached)}</span><span class="recent-sep">/</span><span>${fmt(e.outputTokens)}</span>
+                </span>
+                <time class="recent-when" datetime="${escapeHtml(e.timestamp || '')}">${timeAgo(e.timestamp)}</time>
+              </div>
+            </li>`;
+          }).join('')}
+        </ul>`;
+    }
+
+    /**
+     * Metric value for one chart bucket.
+     * tokens → total tokens; cost → estimated USD; rpm → requests/active-minute.
+     */
+    function chartValue(d, mode) {
+      if (mode === 'cost') return Number(d.estimatedCost) || 0;
+      if (mode === 'rpm') return Number(d.rpm) || 0;
+      return Number(d.totalTokens) || 0;
+    }
+
+    /** Y-axis tick label for the active chart metric. */
+    function chartTickLabel(v, mode) {
+      if (mode === 'cost') return money4(v);
+      if (mode === 'rpm') return (Math.round(v * 10) / 10).toString();
+      return fmt(v);
+    }
+
+    function renderChart() {
+      const series = state.daySeries;
+      const mode = state.chartMode;
+      const vals = series.map((d) => chartValue(d, mode));
+      const has = vals.some((v) => v > 0);
+      if (!has) {
+        $('chartBody').innerHTML = `<div class="chart-empty">${emptyMsg('chart')}</div>`;
+        return;
+      }
+
+      const W = 640, H = 200, PL = 44, PR = 12, PT = 12, PB = 28;
+      const iw = W - PL - PR, ih = H - PT - PB;
+      // RPM can legitimately be < 1 (e.g. 0.4 req/min) — never use a 1.0 floor
+      const floor = mode === 'cost' ? 0.0001 : (mode === 'rpm' ? 0.1 : 1);
+      const max = Math.max(...vals, floor);
+      const n = series.length;
+      const xAt = (i) => PL + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
+      const yAt = (v) => PT + ih - (v / max) * ih;
+
+      const pts = series.map((d, i) => [xAt(i), yAt(chartValue(d, mode))]);
+      const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+      const area = line + ` L${pts[pts.length - 1][0].toFixed(1)},${(PT + ih).toFixed(1)} L${pts[0][0].toFixed(1)},${(PT + ih).toFixed(1)} Z`;
+      const stroke = mode === 'tokens' ? 'var(--chart-tokens)'
+        : (mode === 'cost' ? 'var(--chart-cost)' : 'var(--chart-rpm)');
+      const fillId = mode === 'tokens' ? 'gradTok' : (mode === 'cost' ? 'gradCost' : 'gradRpm');
+
+      const yTicks = [0, 0.5, 1].map((t) => {
+        const v = max * t;
+        const y = yAt(v);
+        const label = chartTickLabel(v, mode);
+        return `<line x1="${PL}" y1="${y}" x2="${W - PR}" y2="${y}" class="chart-grid" />
+          <text x="${PL - 6}" y="${y + 3}" class="chart-tick" text-anchor="end">${label}</text>`;
+      }).join('');
+
+      const showYear = !state.chartByHour && daySeriesNeedsYear(series);
+      const xLabels = series.map((d, i) => {
+        const step = n > 14 ? Math.ceil(n / 8) : (n > 10 ? 2 : 1);
+        if (n > 8 && i % step !== 0 && i !== n - 1 && i !== 0) return '';
+        const label = state.chartByHour
+          ? formatHourLabel(d.key, false)
+          : formatDayLabel(d.key, showYear);
+        // Edge ticks: avoid clipping first/last labels off the chart
+        const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+        return `<text x="${xAt(i)}" y="${H - 8}" class="chart-tick" text-anchor="${anchor}">${escapeHtml(label)}</text>`;
+      }).join('');
+
+      $('chartBody').innerHTML = `
+        <svg class="usage-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${mode === 'rpm' ? 'Requests per minute chart' : 'Usage chart'}">
+          <defs>
+            <linearGradient id="gradTok" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stop-color="rgba(99,102,241,0.28)" />
+              <stop offset="95%" stop-color="rgba(99,102,241,0)" />
+            </linearGradient>
+            <linearGradient id="gradCost" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stop-color="rgba(245,158,11,0.28)" />
+              <stop offset="95%" stop-color="rgba(245,158,11,0)" />
+            </linearGradient>
+            <linearGradient id="gradRpm" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stop-color="rgba(20,184,166,0.28)" />
+              <stop offset="95%" stop-color="rgba(20,184,166,0)" />
+            </linearGradient>
+          </defs>
+          ${yTicks}
+          <path d="${area}" fill="url(#${fillId})" />
+          <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" vector-effect="non-scaling-stroke" />
+          ${xLabels}
+        </svg>`;
+    }
+
+    function renderTable() {
+      const costs = state.viewMode === 'costs';
+      const showRpm = ['today', '24h', '7d', '30d'].includes(state.period);
+      const rpmHeader = showRpm ? ['RPM'] : [];
+      const head = costs
+        ? ['Key', 'Requests', ...rpmHeader, 'Input $', 'Output $', 'Total $']
+        : ['Key', 'Requests', ...rpmHeader, 'Input + cache', 'Cache read', 'Cache write', 'Output', 'Total'];
+      $('tableHead').innerHTML = `<tr>${head.map((h, i) => {
+        const title = h === 'Cache read' || h === 'Cache write'
+          ? 'Provider-reported cache detail; may overlap Input + cache and Total.'
+          : '';
+        return `<th class="${i ? 'num' : ''}"${title ? ` title="${title}"` : ''}>${h}</th>`;
+      }).join('')}</tr>`;
+
+      const collator = state.sortBy === 'name'
+        ? new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+        : null;
+      const visibleGroups = state.groupBy === 'model'
+        ? state.groups.filter((group) =>
+            !hiddenModelNames.has(formatGroupKey(group.key).trim().toLowerCase()))
+        : state.groups;
+      const groups = collator
+        ? visibleGroups.slice().sort((a, b) =>
+            collator.compare(formatGroupKey(a.key), formatGroupKey(b.key)))
+        : visibleGroups;
+      $('tableValueSortBtn').textContent =
+        state.groupBy === 'day' || state.groupBy === 'hour'
+          ? 'By date'
+          : state.viewMode === 'tokens' ? 'By tokens' : 'By cost';
+      setActive($('sortSeg'), 'data-sort', state.sortBy);
+      if (!groups.length) {
+        $('tableBody').innerHTML = `<tr><td colspan="${head.length}"><div class="empty">${emptyMsg('table')}</div></td></tr>`;
+        return;
+      }
+
+      // Cost columns use rate-weighted parts from API (input/cache/output rates).
+      // Fallback: token-share only if older aggregate payload lacks inputCost/cacheCost.
+      // The cache share is summed back INTO the input column so the two-part
+      // split still adds up to the total: the API reports them separately, but
+      // they are the same prompt tokens billed at the same rate.
+      $('tableBody').innerHTML = groups.map((g) => {
+        const input = g.inputTokens || 0;
+        const output = g.outputTokens || 0;
+        const cache = (g.cacheReadTokens || 0) + (g.cacheWriteTokens || 0);
+        const totalTok = g.totalTokens || (input + output + cache) || 1;
+        const cost = g.estimatedCost || 0;
+        const hasParts =
+          g.inputCost != null || g.cacheCost != null || g.outputCost != null;
+        const inputCost = (hasParts
+          ? Number(g.inputCost) || 0
+          : cost * (input / totalTok)) + (hasParts
+          ? Number(g.cacheCost) || 0
+          : cost * (cache / totalTok));
+        const outCost = hasParts
+          ? Number(g.outputCost) || 0
+          : cost * (output / totalTok);
+
+        const label = formatGroupKey(g.key);
+        // Requests per active minute for this group (0 when it has no live rows)
+        const rpm = Number(g.rpm) || 0;
+        const rpmCell = rpm > 0
+          ? (Math.round(rpm * 10) / 10).toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 1,
+            })
+          : '\u2014';
+        if (costs) {
+          return `<tr>
+            <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
+            <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
+            ${showRpm ? `<td class="num muted">${rpmCell}</td>` : ''}
+            <td class="num muted">${moneyBreakdown(inputCost)}</td>
+            <td class="num muted">${moneyBreakdown(outCost)}</td>
+            <td class="num toned-cost"><strong>${moneyBreakdown(cost)}</strong></td>
+          </tr>`;
+        }
+        return `<tr>
+          <td><code title="${escapeHtml(label)}">${escapeHtml(label)}</code></td>
+          <td class="num muted">${fmtFull(g.eventCount || 0)}</td>
+          ${showRpm ? `<td class="num muted">${rpmCell}</td>` : ''}
+          <td class="num muted">${fmtFull(input + cache)}</td>
+          <td class="num muted" title="${escapeHtml(cacheMetricTitle(g))}">${fmtCacheTokens(g, 'cacheReadTokens')}</td>
+          <td class="num muted" title="${escapeHtml(cacheMetricTitle(g))}">${fmtCacheTokens(g, 'cacheWriteTokens')}</td>
+          <td class="num muted">${fmtFull(output)}</td>
+          <td class="num"><strong>${fmtFull(g.totalTokens || 0)}</strong></td>
+        </tr>`;
+      }).join('');
+    }
+
+    /** Client period cache — instant switch when scan/pricing unchanged. */
+    const periodLoadCache = new Map();
+    const PERIOD_CACHE_MAX = 12;
+
+    function periodCacheKey() {
+      return [
+        state.period || 'all',
+        state.groupBy,
+        state.viewMode,
+        state.scanRevision,
+        typeof pricingRevision === 'number' ? pricingRevision : 0,
+      ].join('|');
+    }
+
+    async function load(opts = {}) {
+      const quiet = opts.quiet === true;
+      if (state.loading) {
+        state.pendingLoad = true;
+        return;
+      }
+      state.loading = true;
+      if (!quiet) $('fetchSpin').classList.remove('hidden');
+      syncTimeGroupButton();
+      const since = sinceParam();
+      const hourly = isHourlyPeriod();
+      state.chartByHour = hourly;
+
+      // Serve from client cache first (period tab switch without re-fetch)
+      const cacheKey = periodCacheKey();
+      if (!opts.force && periodLoadCache.has(cacheKey)) {
+        const hit = periodLoadCache.get(cacheKey);
+        try {
+          applyLoadedPayload(hit, { fromCache: true });
+        } finally {
+          state.loading = false;
+          $('fetchSpin').classList.add('hidden');
+          if (state.pendingLoad) {
+            state.pendingLoad = false;
+            void load({ quiet: true });
+          }
+        }
+        return;
+      }
+
+      const tableSort = (state.groupBy === 'hour' || state.groupBy === 'day')
+        ? 'tokens'
+        : (state.viewMode === 'tokens' ? 'tokens' : 'cost');
+      const qStats = new URLSearchParams({ groupBy: state.groupBy, sort: tableSort });
+      const seriesBy = hourly ? 'hour' : 'day';
+      // live=0 on series: skip second hot-mirror RPM pass (primary stats already has live)
+      const qSeries = new URLSearchParams({ groupBy: seriesBy, sort: 'tokens', live: '0' });
+      if (since) { qStats.set('since', since); qSeries.set('since', since); }
+
+      try {
+        // Pass since to /api/events so server filters with parseSince (7d/24h/\u2026),
+        // not new Date("7d") which is Invalid Date and drops every event.
+        // live=1 (default server-side): real per-call rows only — not daily 300M-token blobs
+        const qEvents = new URLSearchParams({ limit: '40', live: '1' });
+        if (since) qEvents.set('since', since);
+
+        const [stats, seriesStats, health, eventsRes] = await Promise.all([
+          fetch('/api/stats?' + qStats).then((r) => r.json()),
+          fetch('/api/stats?' + qSeries).then((r) => r.json()),
+          fetch('/api/health').then((r) => r.json()),
+          fetch('/api/events?' + qEvents).then((r) => r.json()),
+        ]);
+
+        const payload = { stats, seriesStats, health, eventsRes, since, hourly };
+        if (periodLoadCache.size >= PERIOD_CACHE_MAX) {
+          const first = periodLoadCache.keys().next().value;
+          periodLoadCache.delete(first);
+        }
+        periodLoadCache.set(cacheKey, payload);
+        applyLoadedPayload(payload, { fromCache: false });
+      } catch {
+        if (!quiet) $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+        // Still retry while bootstrapping empty UI
+        if (state.awaitingData || state.scanning) scheduleScanPoll();
+      } finally {
+        state.loading = false;
+        $('fetchSpin').classList.add('hidden');
+        // Drain coalesced reloads so scan/token updates never get dropped
+        if (state.pendingLoad) {
+          state.pendingLoad = false;
+          void load({ quiet: true });
+        }
+      }
+    }
+
+    function applyLoadedPayload(payload, meta = {}) {
+      const { stats, seriesStats, health, eventsRes, since, hourly } = payload;
+      void meta;
+
+      state.totals = stats.totals || {};
+      // Period RPM: active-minutes mean from filtered events (not wall-clock span)
+      if (stats.usageRpm && typeof stats.usageRpm === 'object') state.usageRpm = stats.usageRpm;
+      else if (seriesStats.usageRpm && typeof seriesStats.usageRpm === 'object') state.usageRpm = seriesStats.usageRpm;
+      else state.usageRpm = null;
+      // Live 3m window (secondary) from /api/stats
+      if (stats.live && typeof stats.live === 'object') state.live = stats.live;
+      else if (seriesStats.live && typeof seriesStats.live === 'object') state.live = seriesStats.live;
+      state.lastTotalsKey = totalsKey(state.totals);
+      let groups = stats.groups || [];
+      // Chronological for time buckets
+      if (state.groupBy === 'hour' || state.groupBy === 'day') {
+        groups = groups.slice().sort((a, b) => String(a.key).localeCompare(String(b.key)));
+      }
+      state.groups = groups;
+
+      // Chronological sort by date key (ISO YYYY-MM-DD / hour keys sort lexicographically)
+      const rawSeries = (seriesStats.groups || []).slice().sort((a, b) => {
+        const ka = String(a.key || '');
+        const kb = String(b.key || '');
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      });
+      state.daySeries = hourly ? fillHourSeries(rawSeries, state.period) : rawSeries;
+
+      const eventCount = health.eventCount || 0;
+      state.scanning = Boolean(health.scanning);
+      if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
+      if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
+      if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
+      if (typeof health.todayStartsAt === 'string' && health.todayStartsAt) {
+        state.todayStartsAt = health.todayStartsAt;
+      }
+      // First boot / empty cache: keep polling until first scan finishes
+      state.awaitingData = state.scanning || (eventCount === 0 && state.scanRevision === 0);
+      state.lastEventCount = eventCount;
+
+      if (typeof health.version === 'string' && health.version) state.version = health.version;
+      // Header: version + scan state. Active time lives in the overview card row
+      // instead: it is a period-wide figure, and the card grid has room for it.
+      updateMeta();
+
+      renderOverview(state.totals, state.live);
+      renderChart();
+      renderTable();
+
+      renderRecent(recentEventsForDisplay(eventsRes, since));
+
+      scheduleScanPoll();
+    }
+
+    // Recent requests are a live feed and must not share the period/chart cache.
+    // Stats can stay memoized for instant tab switches; this lightweight poll
+    // keeps new local and mirror rows visible without a tight polling loop.
+    let recentRefreshInFlight = false;
+    async function refreshRecentOnly() {
+      if (recentRefreshInFlight) return;
+      recentRefreshInFlight = true;
+      const periodAtStart = state.period;
+      const since = sinceParam();
+      const qEvents = new URLSearchParams({ limit: '100', live: '1' });
+      if (since) qEvents.set('since', since);
+      try {
+        const [eventsRes, health] = await Promise.all([
+          fetch('/api/events?' + qEvents, { cache: 'no-store' }).then((r) => r.json()),
+          fetch('/api/health', { cache: 'no-store' }).then((r) => r.json()),
+        ]);
+        // A period switch happened while the request was in flight; let the
+        // normal load path render the selected period instead.
+        if (periodAtStart !== state.period) return;
+        state.scanning = Boolean(health.scanning);
+        if (typeof health.scanRevision === 'number') state.scanRevision = health.scanRevision;
+        if (typeof health.scanUpdatedAt === 'number') state.scanUpdatedAt = health.scanUpdatedAt;
+        if (typeof health.pricingRevision === 'number') pricingRevision = health.pricingRevision;
+        state.lastEventCount = health.eventCount || 0;
+        if (typeof health.version === 'string' && health.version) state.version = health.version;
+        updateMeta();
+        renderRecent(recentEventsForDisplay(eventsRes, since));
+      } catch {
+        // The regular dashboard load / SSE reconnect remains the fallback.
+      } finally {
+        recentRefreshInFlight = false;
+      }
+    }
+
+    let scanPollTimer = 0;
+    function scheduleScanPoll() {
+      if (scanPollTimer) clearTimeout(scanPollTimer);
+      if (!state.scanning && !state.awaitingData) return;
+      // Slow poll while scanning — SSE progress is primary; avoid hammering /api/stats
+      const delay = state.scanning ? 2500 : 2000;
+      scanPollTimer = setTimeout(() => {
+        scanPollTimer = 0;
+        requestLoad({ quiet: true });
+      }, delay);
+    }
+
+    // Segment handlers
+    $('periodSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.period = b.getAttribute('data-period') ?? 'today';
+      setActive($('periodSeg'), 'data-period', state.period);
+      syncTimeGroupButton();
+      requestLoad();
+    };
+    $('chartMode').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.chartMode = b.getAttribute('data-mode') || 'tokens';
+      setActive($('chartMode'), 'data-mode', state.chartMode);
+      renderChart();
+    };
+    $('groupSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.groupBy = b.getAttribute('data-group') || 'agent';
+      setActive($('groupSeg'), 'data-group', state.groupBy);
+      requestLoad();
+    };
+    $('sortSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.sortBy = b.getAttribute('data-sort') || 'value';
+      renderTable();
+    };
+    $('viewModeSeg').onclick = (e) => {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      state.viewMode = b.getAttribute('data-view') || 'costs';
+      setActive($('viewModeSeg'), 'data-view', state.viewMode);
+      requestLoad();
+    };
+
+    // Rescan in background (async) so UI never freezes 10\u201320s on heavy agents
+    $('refresh').onclick = async () => {
+      setRefreshBusy('Scanning\u2026');
+      try {
+        state.scanning = true;
+        state.awaitingData = state.lastEventCount === 0;
+        await fetch('/api/scan?async=1', { method: 'POST' });
+        requestLoad({ quiet: true });
+        scheduleScanPoll();
+      } catch {
+        requestLoad({ quiet: true });
+      } finally {
+        // Idle button immediately; meta chip shows scanning until SSE/poll clears it
+        setRefreshIdle();
+      }
+    };
+
+    requestLoad();
+    // Background refresh once per minute — skip while scanning (SSE + scan poll handle that)
+    setInterval(() => {
+      if (state.scanning) return;
+      void requestLoad({ quiet: true });
+    }, 60_000);
+
+    // Keep only the Recent requests card hot; reloading full period stats every
+    // few seconds would defeat the period cache and make large histories lag.
+    setInterval(() => {
+      void refreshRecentOnly();
+    }, 60_000);
+
+    // Realtime: pricing rate changes + scan completion (fills empty bootstrap UI)
+    function watchLiveStream() {
+      try {
+        const es = new EventSource('/api/pricing/stream');
+        es.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'hello') {
+              pricingRevision = msg.pricingRevision || msg.revision || 0;
+              if (typeof msg.scanRevision === 'number') state.scanRevision = msg.scanRevision;
+              state.scanning = Boolean(msg.scanning);
+              if (msg.scanning || (msg.eventCount || 0) === 0) {
+                state.awaitingData = true;
+                scheduleScanPoll();
+              }
+              updateMeta();
+              return;
+            }
+            if (msg.type === 'pricing' && msg.revision && msg.revision !== pricingRevision) {
+              pricingRevision = msg.revision;
+              periodLoadCache.clear();
+              requestLoad({ quiet: true, force: true });
+              return;
+            }
+            if (msg.type === 'scan') {
+              const rev = msg.revision || 0;
+              const wasScanning = state.scanning;
+              state.scanning = Boolean(msg.scanning);
+              if (msg.reason === 'start' || msg.reason === 'start-vps-sync') {
+                state.awaitingData = state.awaitingData || state.lastEventCount === 0;
+                updateMeta();
+                scheduleScanPoll();
+                return;
+              }
+              // Progressive batches: throttle full reload (was every agent = UI lag)
+              if (msg.reason === 'progress') {
+                if (typeof msg.eventCount === 'number') state.lastEventCount = msg.eventCount;
+                if ((msg.eventCount || 0) > 0) state.awaitingData = false;
+                const now = Date.now();
+                if (!state._lastProgressLoadAt || now - state._lastProgressLoadAt > 2500) {
+                  state._lastProgressLoadAt = now;
+                  requestLoad({ quiet: true });
+                } else {
+                  // Cheap header refresh without re-fetching all charts. Goes
+                  // through updateMeta so the status stays on one code path.
+                  state.scanning = true;
+                  updateMeta();
+                }
+                return;
+              }
+              // Scan finished (or error idle) \u2014 always reload so empty UI fills
+              if (rev !== state.scanRevision || wasScanning || msg.reason === 'complete' || msg.reason === 'error') {
+                // Do NOT stamp scanRevision here before load \u2014 requestLoad will refresh from /api/health
+                state.scanning = false;
+                state.awaitingData = false;
+                periodLoadCache.clear();
+                requestLoad({ quiet: true, force: true });
+              }
+            }
+          } catch {
+            // ignore parse errors
+          }
+        };
+        es.onerror = () => {
+          // Browser auto-reconnects; keep poll as backup
+          if (state.scanning || state.awaitingData) scheduleScanPoll();
+        };
+      } catch {
+        // EventSource unavailable
+      }
+      // Backup poll — SSE is primary; keep interval light to avoid extra /api/health load
+      setInterval(async () => {
+        try {
+          const h = await fetch('/api/health').then((r) => r.json());
+          let need = false;
+          if (h.pricingRevision && h.pricingRevision !== pricingRevision) {
+            need = true;
+          }
+          if (typeof h.scanRevision === 'number' && h.scanRevision !== state.scanRevision) {
+            need = true;
+          }
+          if (typeof h.scanUpdatedAt === 'number' && h.scanUpdatedAt !== state.scanUpdatedAt) {
+            need = true;
+          }
+          if (Boolean(h.scanning) !== state.scanning) {
+            state.scanning = Boolean(h.scanning);
+            need = true;
+          }
+          if ((h.eventCount || 0) !== state.lastEventCount) {
+            need = true;
+          }
+          // When only token totals change (same event count), still refresh via periodic load
+          if (need) requestLoad({ quiet: true });
+          else if (h.scanning || ((h.eventCount || 0) === 0 && state.awaitingData)) {
+            scheduleScanPoll();
+          }
+        } catch {
+          // offline
+        }
+      }, 5000);
+    }
+    watchLiveStream();
+
+    // Hover-prefetch nav targets so the next click feels instant
+    document.querySelectorAll('a.nav-link, a.settings-btn, a.brand-logo-wrap').forEach((a) => {
+      a.addEventListener('pointerenter', () => {
+        const href = a.getAttribute('href');
+        if (!href || href.startsWith('#')) return;
+        const link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.as = 'document';
+        link.href = href;
+        document.head.appendChild(link);
+      }, { once: true, passive: true });
+    });

@@ -1,0 +1,809 @@
+const $ = (id) => document.getElementById(id);
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function normalizeModelName(model) {
+  if (model == null) return '';
+  let m = String(model).trim();
+  if (!m) return '';
+  for (let i = 0; i < 3; i++) {
+    const next = m.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+    if (next === m) break;
+    m = next;
+  }
+  m = m.replace(/\s*\[[^\]]*\]\s*$/g, '').trim();
+  if (m.includes('|')) m = m.split('|')[0].trim();
+  if (m.includes('/') && !m.startsWith('http')) {
+    const parts = m.split('/').map((p) => p.trim()).filter(Boolean);
+    const last = parts[parts.length - 1] || m;
+    if (last && last.length >= 2 && !/^(models?|v\d+)$/i.test(last)) m = last;
+  }
+  m = m.replace(/^darkapi(?=$|[-_:|/\s])[-_:|/\s]*/i, '');
+  m = m.replace(/\s+/g, ' ').replace(/[-_:|]+$/g, '').trim();
+  m = m.replace(/-5-2(?!\d)/g, '-5.2');
+  const lower = m.toLowerCase();
+  if (/^(?:claude[- ]fable 3\.7 flash|gemini[- ]3\.7[- ]flash)$/.test(lower)) return 'gemini-3.8-flash';
+  if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.6';
+  if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return 'kimi-k2.7';
+  if (lower === 'vip-kimi') return 'kimi-k3';
+  if (lower === 'windsurf-cascade') return 'swe-1.6';
+  if (lower === 'xlab') return 'gpt-5.5';
+  if (lower === 'gpt-5.3-codex') return 'gpt-5.5';
+  if (lower === 'claude-fable') return 'claude-fable-5';
+  if (lower === 'claude-opus') return 'claude-opus-5.5';
+  if (lower === 'claude-sonnet') return 'claude-sonnet-5.5';
+  return m;
+}
+
+function cleanModelDisplayName(model) {
+  const cleaned = String(model ?? '')
+    .replace(/^darkapi(?=$|[-_:|/\s])[-_:|/\s]*/i, '')
+    .replace(/^mintrouter(?=$|[-_:|/\s])[-_:|/\s]*/i, '')
+    .replace(/[-_:|/\s]+free$/i, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[-_:|]+|[-_:|]+$/g, '')
+    .trim();
+  const format = (name) => {
+    const spaced = name.replace(/-5-2(?!\d)/g, '-5.2').replace(/-/g, ' ');
+    return spaced.replace(/(^|\s)([a-z])/g, (_match, prefix, letter) => prefix + letter.toUpperCase())
+      .replace(/\bgpt\b/gi, 'GPT');
+  };
+  const lower = cleaned.toLowerCase();
+  if (/^(?:claude[- ]fable 3\.7 flash|gemini[- ]3\.7[- ]flash)$/.test(lower)) return format('gemini-3.8-flash');
+  if (/^kimi[- ](?:k2[-.]6|2\.6)(?:[- ]code)?$/.test(lower)) return format('kimi-k2.6');
+  if (/^kimi[- ](?:k2[-.]7|2\.7)(?:[- ]code)?$/.test(lower)) return format('kimi-k2.7');
+  if (lower === 'vip-kimi') return format('kimi-k3');
+  if (lower === 'windsurf-cascade') return format('swe-1.6');
+  if (lower === 'xlab') return format('gpt-5.5');
+  if (lower === 'gpt-5.3-codex') return format('gpt-5.5');
+  if (lower === 'claude-fable') return format('claude-fable-5');
+  if (lower === 'claude-opus') return format('claude-opus-5.5');
+  if (lower === 'claude-sonnet') return format('claude-sonnet-5.5');
+  return format(cleaned);
+}
+
+const ICONS = {
+  moon: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"/></svg>',
+  sun: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+  settings: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a6.776 6.776 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg>',
+  reload: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
+  save: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>',
+  plus: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+};
+
+function applyTheme(mode) {
+  document.documentElement.classList.toggle('dark', mode === 'dark');
+  localStorage.setItem('tokenlab-theme', mode);
+  const btn = $('themeBtn');
+  btn.innerHTML = mode === 'dark' ? ICONS.sun : ICONS.moon;
+  btn.title = mode === 'dark' ? 'Light mode' : 'Dark mode';
+}
+applyTheme(localStorage.getItem('tokenlab-theme') === 'dark' ? 'dark' : 'light');
+if ($('settingsBtn')) $('settingsBtn').innerHTML = ICONS.settings;
+$('pricingReload').innerHTML = ICONS.reload + '<span>Refresh</span>';
+$('pricingSave').innerHTML = ICONS.save + '<span>Save</span>';
+$('priceAdd').innerHTML = ICONS.plus + '<span>Add</span>';
+$('themeBtn').onclick = () => {
+  applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+};
+
+let pricingDraft = {};
+let openrouter = [];
+let seenSet = new Set();
+let customRates = {};
+let quickFilter = 'all';
+let renderTimer = 0;
+
+function setStatus(text) {
+  $('pricingStatus').textContent = text;
+}
+
+function fmtCtx(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return (v / 1e6).toFixed(v % 1e6 === 0 ? 0 : 1) + 'M';
+  if (v >= 1e3) return Math.round(v / 1e3) + 'K';
+  return String(v || '\u2014');
+}
+
+function fmtPrice(n) {
+  const v = Number(n) || 0;
+  if (v === 0) return '0';
+  if (v < 0.01) return v.toFixed(4);
+  if (v < 1) return v.toFixed(3);
+  return v.toFixed(2);
+}
+
+/**
+ * Icons identical to OpenRouter:
+ * 1) Hosted CDN  https://openrouter.ai/images/icons/{Name}.{ext}
+ * 2) Google favicon (same URL pattern OpenRouter uses when no hosted asset)
+ * Local /assets/providers is offline fallback only.
+ */
+const OR_ICON = 'https://openrouter.ai/images/icons/';
+const gFav = (site) =>
+  'https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=' +
+  encodeURIComponent(site) + '&size=256';
+
+/** Exact OpenRouter icon URLs by author/provider slug */
+const OPENROUTER_ICON = {
+  // Hosted on openrouter.ai/images/icons
+  openai: OR_ICON + 'OpenAI.svg',
+  anthropic: OR_ICON + 'Anthropic.svg',
+  google: OR_ICON + 'GoogleGemini.svg',
+  'google-ai-studio': OR_ICON + 'GoogleAIStudio.svg',
+  'google-vertex': OR_ICON + 'GoogleVertex.svg',
+  'meta-llama': OR_ICON + 'Meta.png',
+  meta: OR_ICON + 'Meta.png',
+  mistralai: OR_ICON + 'Mistral.png',
+  mistral: OR_ICON + 'Mistral.png',
+  deepseek: OR_ICON + 'DeepSeek.png',
+  qwen: OR_ICON + 'Qwen.png',
+  moonshotai: OR_ICON + 'MoonshotAI.png',
+  cohere: OR_ICON + 'Cohere.png',
+  perplexity: OR_ICON + 'Perplexity.svg',
+  microsoft: OR_ICON + 'Microsoft.svg',
+  azure: OR_ICON + 'Azure.svg',
+  'amazon-bedrock': OR_ICON + 'Bedrock.svg',
+  tencent: OR_ICON + 'Tencent.png',
+  'ibm-granite': OR_ICON + 'IBMGranite.svg',
+  ibm: OR_ICON + 'IBMGranite.svg',
+  inception: OR_ICON + 'Inception.svg',
+  kwaipilot: OR_ICON + 'Kwaipilot.png',
+  'nex-agi': OR_ICON + 'NexAGI.svg',
+  thedrummer: OR_ICON + 'TheDrummer.png',
+  siliconflow: OR_ICON + 'SiliconFlow.svg',
+  deepinfra: OR_ICON + 'DeepInfra.webp',
+  fireworks: OR_ICON + 'Fireworks.png',
+  poolside: OR_ICON + 'poolside-logomark-solid-color.svg',
+  // Same Google-favicon URLs OpenRouter uses on model pages
+  'x-ai': gFav('https://x.ai/'),
+  grok: gFav('https://x.ai/'),
+  nvidia: gFav('https://nvidia.com/'),
+  minimax: gFav('https://minimaxi.com/'),
+  'z-ai': gFav('https://z.ai/'),
+  zhipu: gFav('https://z.ai/'),
+  thudm: gFav('https://z.ai/'),
+  baidu: gFav('https://www.baidu.com/'),
+  liquid: gFav('https://www.liquid.ai/'),
+  ai21: gFav('https://ai21.com/'),
+  xiaomi: gFav('https://www.mi.com'),
+  nousresearch: gFav('https://nousresearch.com/'),
+  hermes: gFav('https://nousresearch.com/'),
+  allenai: gFav('https://allenai.org/'),
+  morph: gFav('https://morphllm.com'),
+  writer: gFav('https://writer.com/'),
+  'bytedance-seed': gFav('https://seed.bytedance.com/'),
+  bytedance: gFav('https://seed.bytedance.com/'),
+  seed: gFav('https://seed.bytedance.com/'),
+  'arcee-ai': gFav('https://www.arcee.ai'),
+  arcee: gFav('https://www.arcee.ai'),
+  relace: gFav('https://www.relace.ai'),
+  deepcogito: gFav('https://www.deepcogito.com/'),
+  inflection: gFav('https://inflection.ai/'),
+  openrouter: gFav('https://openrouter.ai/'),
+  'aion-labs': gFav('https://www.aionlabs.ai/'),
+  amazon: gFav('https://nova.amazon.com/'),
+  inclusionai: gFav('https://www.inclusion-ai.org/'),
+  sakana: gFav('https://sakana.ai'),
+  upstage: gFav('https://upstage.ai/'),
+  rekaai: gFav('https://reka.ai/'),
+  reka: gFav('https://reka.ai/'),
+  stepfun: gFav('https://www.stepfun.com/'),
+  groq: gFav('https://groq.com/'),
+  together: gFav('https://www.together.ai/'),
+  cerebras: gFav('https://www.cerebras.ai/'),
+  nebius: gFav('https://nebius.com/'),
+  huggingface: gFav('https://huggingface.co/'),
+  // HF community orgs \u2014 OpenRouter shows Hugging Face favicon
+  'anthracite-org': gFav('https://huggingface.co/'),
+  cognitivecomputations: gFav('https://huggingface.co/'),
+  gryphe: gFav('https://huggingface.co/'),
+  sao10k: gFav('https://huggingface.co/'),
+  undi95: gFav('https://huggingface.co/'),
+  mancer: gFav('https://huggingface.co/'),
+  // Hosting / extras (favicon same style)
+  chutes: gFav('https://chutes.ai/'),
+  hyperbolic: gFav('https://hyperbolic.xyz/'),
+  'black-forest-labs': gFav('https://bfl.ai/'),
+  'stability-ai': gFav('https://stability.ai/'),
+  fal: gFav('https://fal.ai/'),
+  'fal-ai': gFav('https://fal.ai/'),
+  voyage: gFav('https://www.voyageai.com/'),
+  jina: gFav('https://jina.ai/'),
+  alibaba: gFav('https://www.alibabacloud.com/'),
+  '01-ai': gFav('https://www.01.ai/'),
+  perceptron: gFav('https://www.perceptron.inc/'),
+  ollama: gFav('https://ollama.com/'),
+  // Synthetic / agent-seen providers
+  windsurf: gFav('https://windsurf.com/'),
+  cursor: gFav('https://cursor.com/'),
+  other: gFav('https://openrouter.ai/'),
+};
+
+/** Offline fallback only (used if OpenRouter/favicon fails) */
+const PROVIDER_ICON_FILE = {
+  openai: 'openai.png',
+  anthropic: 'anthropic.png',
+  google: 'gemini.png',
+  'google-vertex': 'vertex.png',
+  'google-ai-studio': 'gemini.png',
+  'x-ai': 'xai.png',
+  grok: 'xai.png',
+  'meta-llama': 'meta.png',
+  mistralai: 'mistral.png',
+  deepseek: 'deepseek.png',
+  qwen: 'qwen.png',
+  moonshotai: 'moonshot.png',
+  cohere: 'cohere.png',
+  nvidia: 'nvidia.png',
+  perplexity: 'perplexity.png',
+  amazon: 'aws.png',
+  'amazon-bedrock': 'aws.png',
+  microsoft: 'microsoft.png',
+  azure: 'azure.png',
+  together: 'together.png',
+  fireworks: 'fireworks.png',
+  groq: 'groq.png',
+  cerebras: 'cerebras.png',
+  hyperbolic: 'hyperbolic.png',
+  minimax: 'minimax.png',
+  'z-ai': 'zhipu.png',
+  zhipu: 'zhipu.png',
+  thudm: 'zhipu.png',
+  openrouter: 'openrouter.png',
+  tencent: 'tencent.png',
+  baidu: 'baidu.png',
+  bytedance: 'bytedance.png',
+  'bytedance-seed': 'bytedance.png',
+  alibaba: 'alicode.png',
+  stepfun: 'stepfun.png',
+  nousresearch: 'nousresearch.png',
+  hermes: 'hermes.png',
+  ai21: 'ai21.png',
+  rekaai: 'reka.png',
+  reka: 'reka.png',
+  ibm: 'ibm.png',
+  'ibm-granite': 'ibm.png',
+  upstage: 'upstage.png',
+  liquid: 'liquid.png',
+  '01-ai': 'yi.png',
+  inflection: 'inflection.png',
+  writer: 'writer.png',
+  mancer: 'mancer.png',
+  'aion-labs': 'aion-labs.png',
+  poolside: 'poolside.png',
+  sakana: 'sakana.png',
+  'nex-agi': 'nex-agi.png',
+  morph: 'morph.png',
+  inception: 'inception.png',
+  inclusionai: 'inclusionai.png',
+  kwaipilot: 'kwaipilot.png',
+  allenai: 'allenai.png',
+  deepcogito: 'deepcogito.png',
+  perceptron: 'perceptron.png',
+  relace: 'relace.png',
+  'arcee-ai': 'arcee.png',
+  arcee: 'arcee.png',
+  xiaomi: 'xiaomi.png',
+  huggingface: 'huggingface.png',
+  nebius: 'nebius.png',
+  siliconflow: 'siliconflow.png',
+  chutes: 'chutes.png',
+  'black-forest-labs': 'black-forest-labs.png',
+  'stability-ai': 'stability-ai.png',
+  fal: 'fal-ai.png',
+  'fal-ai': 'fal-ai.png',
+  voyage: 'voyage-ai.png',
+  jina: 'jina-ai.png',
+  'anthracite-org': 'anthracite.png',
+  cognitivecomputations: 'cognitivecomputations.png',
+  gryphe: 'gryphe.png',
+  sao10k: 'sao10k.png',
+  thedrummer: 'thedrummer.png',
+  undi95: 'undi95.png',
+  iflow: 'iflow.png',
+  qoder: 'qoder.png',
+  blackbox: 'blackbox.png',
+  opencode: 'opencode.png',
+  openclaw: 'openclaw.png',
+  amp: 'amp.png',
+  cline: 'cline.png',
+  cursor: 'cursor.png',
+  copilot: 'copilot.png',
+  kilocode: 'kilocode.png',
+  kiro: 'kiro.png',
+  ollama: 'ollama.png',
+  windsurf: 'windsurf.png',
+  other: 'openrouter.png',
+};
+
+const PROV_COLORS = [
+  '#00A19A', '#0d9488', '#2563eb', '#7c3aed', '#db2777',
+  '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#4f46e5',
+];
+
+function providerKey(provider) {
+  let p = String(provider || '').toLowerCase().trim();
+  if (p.startsWith('~')) p = p.slice(1); // OpenRouter redirect aliases
+  return p;
+}
+
+/** OpenRouter icon first \u2192 local offline \u2192 monogram */
+function providerIconSrcs(provider) {
+  const p = providerKey(provider);
+  const srcs = [];
+  const or = OPENROUTER_ICON[p];
+  if (or) srcs.push(or);
+  const file = PROVIDER_ICON_FILE[p];
+  if (file) srcs.push('/assets/providers/' + file + '?v=21');
+  return srcs;
+}
+
+function providerColor(provider) {
+  const p = providerKey(provider);
+  let h = 0;
+  for (let i = 0; i < p.length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0;
+  return PROV_COLORS[h % PROV_COLORS.length];
+}
+
+function providerIconHtml(provider, opts) {
+  const sm = opts && opts.sm;
+  const sizeCls = sm ? ' or-prov-sm' : '';
+  const p = providerKey(provider) || 'openrouter';
+  const letter = escapeHtml((p.replace(/^[^a-z0-9]+/i, '')[0] || '?').toUpperCase());
+  const srcs = providerIconSrcs(p);
+  const bg = providerColor(p);
+  const title = escapeHtml(p);
+  // Fixed square box; letter is overlay inside \u2014 never inline with model name
+  if (!srcs.length) {
+    return `<span class="or-prov${sizeCls} is-fallback" title="${title}" style="background:${bg}" aria-hidden="true"><span class="or-prov-letter" style="background:${bg}">${letter}</span></span>`;
+  }
+  const src0 = escapeHtml(srcs[0]);
+  const rest = srcs.slice(1).map((s) => escapeHtml(s)).join('|');
+  return `<span class="or-prov${sizeCls}" title="${title}" style="--prov-bg:${bg}">
+    <img class="or-prov-img" src="${src0}" data-fallbacks="${rest}" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
+    <span class="or-prov-letter" style="background:${bg}" aria-hidden="true">${letter}</span>
+  </span>`;
+}
+
+function setProviderFilterValue(value, label) {
+  const v = value || '';
+  const lab = label || (v || 'All providers');
+  const hidden = $('providerFilter');
+  const btn = $('providerFilterBtn');
+  const lead = $('providerFilterLead');
+  const labEl = $('providerFilterLabel');
+  if (!hidden || !btn) return;
+  hidden.value = v;
+  if (labEl) labEl.textContent = lab;
+  if (lead) {
+    lead.innerHTML = v ? providerIconHtml(v, { sm: true }) : '';
+  }
+  const menu = $('providerFilterMenu');
+  if (menu) {
+    menu.querySelectorAll('[role="option"]').forEach((opt) => {
+      const on = (opt.getAttribute('data-value') || '') === v;
+      opt.setAttribute('aria-selected', on ? 'true' : 'false');
+      opt.classList.toggle('is-active', on);
+    });
+  }
+}
+
+function closeProviderMenu() {
+  const menu = $('providerFilterMenu');
+  const btn = $('providerFilterBtn');
+  const wrap = $('providerFilterWrap');
+  if (menu) menu.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  if (wrap) wrap.classList.remove('is-open');
+}
+
+function openProviderMenu() {
+  const menu = $('providerFilterMenu');
+  const btn = $('providerFilterBtn');
+  const wrap = $('providerFilterWrap');
+  if (menu) menu.hidden = false;
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+  if (wrap) wrap.classList.add('is-open');
+}
+
+function toggleProviderMenu() {
+  const menu = $('providerFilterMenu');
+  if (!menu || menu.hidden) openProviderMenu();
+  else closeProviderMenu();
+}
+
+// Chain OpenRouter \u2192 local \u2192 monogram letter inside icon box only
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!img || !img.classList || !img.classList.contains('or-prov-img')) return;
+  const raw = img.getAttribute('data-fallbacks') || '';
+  const queue = raw.split('|').filter(Boolean);
+  if (queue.length) {
+    img.setAttribute('data-fallbacks', queue.slice(1).join('|'));
+    img.src = queue[0];
+    return;
+  }
+  const box = img.closest('.or-prov');
+  if (box) box.classList.add('is-fallback');
+}, true);
+
+/** OpenRouter-style multi-token AND search on id, name, provider, slug */
+function matchesQuery(m, q) {
+  if (!q) return true;
+  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const hay = [m.id, m.name, m.provider, m.slug, m.modality].join(' ').toLowerCase();
+  return tokens.every((t) => hay.includes(t));
+}
+
+function effectiveRates(m) {
+  const id = (m.id || '').toLowerCase();
+  const slug = (m.slug || '').toLowerCase();
+  const draft = pricingDraft[id] || pricingDraft[slug];
+  const cust = customRates[id] || customRates[slug];
+  return {
+    input: draft?.inputPer1M ?? cust?.inputPer1M ?? m.inputPer1M ?? 0,
+    output: draft?.outputPer1M ?? cust?.outputPer1M ?? m.outputPer1M ?? 0,
+    // Single cache rate (cache read); write rate stays backend-only for cost calc
+    cache: draft?.cacheReadPer1M ?? cust?.cacheReadPer1M ?? m.cacheReadPer1M,
+    estimated: !draft && !cust && m.estimated === true,
+    source: draft ? 'draft' : cust ? 'custom' : (m.source || 'openrouter'),
+  };
+}
+
+function filteredModels() {
+  const q = ($('priceSearch').value || '').trim();
+  const provider = $('providerFilter').value || '';
+  const sort = $('sortFilter').value || 'newest';
+  let list = openrouter.filter((m) => {
+    if (!matchesQuery(m, q)) return false;
+    if (provider && m.provider !== provider) return false;
+    const rates = effectiveRates(m);
+    const isCustom = rates.source === 'custom' || rates.source === 'draft';
+    const isSeen = seenSet.has((m.slug || '').toLowerCase()) || seenSet.has((m.id || '').toLowerCase())
+      || [...seenSet].some((s) => s.includes((m.slug || '').toLowerCase()));
+    if (quickFilter === 'free') {
+      const isFree = (Number(rates.input) === 0 && Number(rates.output) === 0) || m.free;
+      if (!isFree) return false;
+    }
+    if (quickFilter === 'seen' && !isSeen) return false;
+    if (quickFilter === 'custom' && !isCustom) return false;
+    return true;
+  });
+
+  list = list.slice().sort((a, b) => {
+    const ra = effectiveRates(a);
+    const rb = effectiveRates(b);
+    if (sort === 'name') return a.name.localeCompare(b.name);
+    if (sort === 'price-asc') return (ra.input + ra.output) - (rb.input + rb.output);
+    if (sort === 'price-desc') return (rb.input + rb.output) - (ra.input + ra.output);
+    if (sort === 'context') return (b.contextLength || 0) - (a.contextLength || 0);
+    // newest
+    return (b.created || 0) - (a.created || 0) || a.name.localeCompare(b.name);
+  });
+  return list;
+}
+
+function renderList() {
+  const list = filteredModels();
+  $('resultCount').textContent = list.length + ' / ' + openrouter.length;
+  if (!list.length) {
+    $('modelList').innerHTML = '<div class="empty">No models match filters.</div>';
+    return;
+  }
+  // Cap DOM for performance; search / provider filter narrows quickly
+  const MAX = 800;
+  const slice = list.slice(0, MAX);
+  const more = list.length > MAX
+    ? `<div class="or-more muted">Showing ${MAX} of ${list.length} \u2014 refine search or provider filter</div>`
+    : '';
+
+  const head = `<div class="or-head" aria-hidden="true">
+    <span class="or-head-model">Model</span>
+    <span class="or-head-in">In $/1M</span>
+    <span class="or-head-out">Out $/1M</span>
+    <span class="or-head-cache">Cache</span>
+  </div>`;
+
+  const rows = slice.map((m) => {
+    const rates = effectiveRates(m);
+    const id = escapeHtml(m.id);
+    const free = Number(rates.input) === 0 && Number(rates.output) === 0;
+    const src = rates.source;
+    const rawName = m.name
+      ? m.name.replace(/^[^:]+:\s*/, '')
+      : String(m.id || '').split('/').pop();
+    const displayName = escapeHtml(cleanModelDisplayName(rawName));
+    return `<article class="or-row ${src === 'custom' || src === 'draft' ? 'is-custom' : ''} ${free ? 'is-free' : ''}" data-id="${id}">
+      <div class="or-cell-model">
+        ${providerIconHtml(m.provider)}
+        <div class="or-card-main">
+          <div class="or-card-title-row">
+            <h3 class="or-card-name" title="${displayName}">${displayName}</h3>
+            ${free ? '<span class="or-badge free">Free</span>' : ''}
+            ${src === 'custom' || src === 'draft' ? '<span class="or-badge custom">' + escapeHtml(src) + '</span>' : ''}
+            ${src === 'seen' ? '<span class="or-badge custom">seen</span>' : ''}
+            ${src === 'bundled' ? '<span class="or-badge">bundled</span>' : ''}
+            ${rates.estimated ? '<span class="or-badge">reference</span>' : ''}
+          </div>
+          <div class="or-card-meta">
+            <code class="or-id">${id}</code>
+            <span class="or-dot">\u00B7</span>
+            <span>${fmtCtx(m.contextLength)}</span>
+          </div>
+        </div>
+      </div>
+      <input class="price-input or-in" data-field="in" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.input)}" aria-label="Input $/1M" title="Input $/1M" />
+      <input class="price-input or-out" data-field="out" data-model="${id}" type="number" step="0.0001" min="0" value="${Number(rates.output)}" aria-label="Output $/1M" title="Output $/1M" />
+      <input class="price-input or-cache" data-field="cache" data-model="${id}" type="number" step="0.0001" min="0" value="${rates.cache != null ? Number(rates.cache) : ''}" aria-label="Cache $/1M" title="Cache $/1M" />
+    </article>`;
+  }).join('');
+
+  $('modelList').innerHTML = head + rows + more;
+}
+
+function scheduleRender() {
+  if (renderTimer) clearTimeout(renderTimer);
+  renderTimer = setTimeout(() => {
+    renderTimer = 0;
+    renderList();
+  }, 80);
+}
+
+function fillProviders() {
+  const set = new Set(openrouter.map((m) => m.provider).filter(Boolean));
+  const providers = [...set].sort((a, b) => a.localeCompare(b));
+  const menu = $('providerFilterMenu');
+  const cur = ($('providerFilter') && $('providerFilter').value) || '';
+  if (!menu) return;
+  const allOpt =
+    `<button type="button" class="or-prov-dd-opt" role="option" data-value="" aria-selected="${cur ? 'false' : 'true'}">` +
+    `<span class="or-prov-dd-opt-icon or-prov-dd-all" aria-hidden="true"></span>` +
+    `<span class="or-prov-dd-opt-label">All providers</span></button>`;
+  const opts = providers.map((p) => {
+    const sel = p === cur;
+    return `<button type="button" class="or-prov-dd-opt${sel ? ' is-active' : ''}" role="option" data-value="${escapeHtml(p)}" aria-selected="${sel ? 'true' : 'false'}">` +
+      `${providerIconHtml(p, { sm: true })}` +
+      `<span class="or-prov-dd-opt-label">${escapeHtml(p)}</span></button>`;
+  }).join('');
+  menu.innerHTML = allOpt + opts;
+  if (cur && set.has(cur)) setProviderFilterValue(cur, cur);
+  else setProviderFilterValue('', 'All providers');
+}
+
+async function loadMeta() {
+  try {
+    const health = await fetch('/api/health').then((r) => r.json());
+    $('meta').textContent = `v${health.version || ''}`;
+  } catch {
+    $('meta').innerHTML = '<span class="err">API offline</span>';
+  }
+}
+
+async function loadPricing(opts = {}) {
+  const refresh = opts.refresh === true;
+  setStatus(refresh ? 'Fetching OpenRouter\u2026' : 'Loading\u2026');
+  try {
+    const q = refresh ? '?refreshOpenRouter=1' : '';
+    const res = await fetch('/api/pricing' + q);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    openrouter = Array.isArray(data.openrouter) ? data.openrouter : [];
+    customRates = data.customRates || {};
+    seenSet = new Set((data.seenModels || []).map((m) => String(m).toLowerCase()));
+    // Also add short names from seen
+    for (const s of [...seenSet]) {
+      if (s.includes('/')) seenSet.add(s.slice(s.lastIndexOf('/') + 1));
+    }
+    const pathEl = $('pricingPath');
+    if (pathEl) pathEl.textContent = data.configPath || 'config.json';
+    fillProviders();
+    renderList();
+    const when = data.openrouterFetchedAt
+      ? new Date(data.openrouterFetchedAt).toLocaleString()
+      : '\u2014';
+    const providers = new Set(openrouter.map((m) => m.provider).filter(Boolean)).size;
+    setStatus(
+      `${openrouter.length} models \u00B7 ${providers} providers \u00B7 ${Object.keys(customRates).length} custom`,
+    );
+    if (!openrouter.length) {
+      $('modelList').innerHTML = '<div class="empty">No models yet. Click Refresh to fetch OpenRouter catalog.</div>';
+    }
+  } catch (err) {
+    console.error('[model] loadPricing', err);
+    setStatus('Load failed');
+    $('modelList').innerHTML = '<div class="empty">Failed to load models</div>';
+  }
+}
+
+function collectDraftFromDom() {
+  $('modelList').querySelectorAll('.or-row[data-id]').forEach((card) => {
+    const model = (card.getAttribute('data-id') || '').toLowerCase();
+    if (!model) return;
+    pricingDraft[model] = {
+      inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
+      outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
+      cacheReadPer1M: Number(card.querySelector('[data-field="cache"]')?.value) || 0,
+    };
+  });
+}
+
+let liveTimer = null;
+let liveSaving = false;
+let liveQueued = false;
+
+async function pushRatesLive(opts = {}) {
+  const { manual = false } = opts;
+  if (liveSaving) {
+    liveQueued = true;
+    return;
+  }
+  collectDraftFromDom();
+  const custom = { ...customRates, ...pricingDraft };
+  liveSaving = true;
+  if (manual) $('pricingSave').disabled = true;
+  setStatus(manual ? 'Saving\u2026' : 'Updating\u2026');
+  try {
+    const res = await fetch('/api/pricing', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customRates: custom, replace: true, live: !manual }),
+    }).then((r) => r.json());
+    pricingDraft = {};
+    customRates = res.customRates || {};
+    setStatus(manual
+      ? `Saved \u00B7 ${Object.keys(customRates).length} custom`
+      : `Live \u00B7 ${Object.keys(customRates).length} custom`);
+    // patch openrouter sources without full refetch
+    openrouter = openrouter.map((m) => {
+      const c = customRates[m.id.toLowerCase()] || customRates[(m.slug || '').toLowerCase()];
+      return {
+        ...m,
+        source: c ? 'custom' : 'openrouter',
+        inputPer1M: c?.inputPer1M ?? m.inputPer1M,
+        outputPer1M: c?.outputPer1M ?? m.outputPer1M,
+        cacheReadPer1M: c?.cacheReadPer1M ?? m.cacheReadPer1M,
+      };
+    });
+    renderList();
+  } catch {
+    setStatus(manual ? 'Save failed' : 'Update failed');
+  } finally {
+    liveSaving = false;
+    if (manual) $('pricingSave').disabled = false;
+    if (liveQueued) {
+      liveQueued = false;
+      void pushRatesLive({ manual: false });
+    }
+  }
+}
+
+function scheduleLivePush() {
+  if (liveTimer) clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => void pushRatesLive({ manual: false }), 500);
+}
+
+$('modelList').addEventListener('input', (e) => {
+  const inp = e.target.closest('.price-input');
+  if (!inp) return;
+  const model = (inp.getAttribute('data-model') || '').toLowerCase();
+  if (!model) return;
+  const card = inp.closest('.or-row');
+  pricingDraft[model] = {
+    inputPer1M: Number(card.querySelector('[data-field="in"]')?.value) || 0,
+    outputPer1M: Number(card.querySelector('[data-field="out"]')?.value) || 0,
+    cacheReadPer1M: Number(card.querySelector('[data-field="cache"]')?.value) || 0,
+  };
+  setStatus('Typing\u2026');
+  scheduleLivePush();
+});
+
+$('priceSearch').oninput = scheduleRender;
+$('sortFilter').onchange = renderList;
+
+// Provider dropdown with OpenRouter icons (native <select> cannot show images)
+const providerBtn = $('providerFilterBtn');
+const providerMenu = $('providerFilterMenu');
+if (providerBtn) {
+  providerBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleProviderMenu();
+  });
+}
+if (providerMenu) {
+  providerMenu.addEventListener('click', (e) => {
+    const opt = e.target.closest('[role="option"]');
+    if (!opt) return;
+    e.preventDefault();
+    const val = opt.getAttribute('data-value') || '';
+    const lab = opt.querySelector('.or-prov-dd-opt-label')?.textContent || val || 'All providers';
+    setProviderFilterValue(val, lab);
+    closeProviderMenu();
+    renderList();
+  });
+}
+document.addEventListener('click', (e) => {
+  const wrap = $('providerFilterWrap');
+  if (wrap && !wrap.contains(e.target)) closeProviderMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeProviderMenu();
+});
+
+document.querySelector('.or-filter-group').onclick = (e) => {
+  const btn = e.target.closest('.or-chip');
+  if (!btn) return;
+  quickFilter = btn.getAttribute('data-filter') || 'all';
+  document.querySelectorAll('.or-chip').forEach((b) => b.classList.toggle('active', b === btn));
+  renderList();
+};
+
+$('priceAdd').onclick = () => {
+  const raw = ($('priceModel').value || '').trim();
+  const model = raw.includes('/') ? raw : (normalizeModelName(raw) || raw);
+  if (!model) return;
+  const key = model.toLowerCase();
+  pricingDraft[key] = {
+    inputPer1M: Number($('priceIn').value) || 0,
+    outputPer1M: Number($('priceOut').value) || 0,
+    cacheReadPer1M: Number($('priceCache').value) || 0,
+  };
+  // Ensure visible in list
+  if (!openrouter.some((m) => m.id.toLowerCase() === key || (m.slug || '').toLowerCase() === key)) {
+    openrouter.unshift({
+      id: model,
+      name: model,
+      provider: model.includes('/') ? model.split('/')[0] : 'custom',
+      slug: model.includes('/') ? model.split('/').pop() : model,
+      contextLength: 0,
+      modality: 'text->text',
+      free: false,
+      source: 'draft',
+      inputPer1M: pricingDraft[key].inputPer1M,
+      outputPer1M: pricingDraft[key].outputPer1M,
+      cacheReadPer1M: pricingDraft[key].cacheReadPer1M,
+    });
+  }
+  $('priceModel').value = '';
+  $('priceIn').value = '';
+  $('priceOut').value = '';
+  $('priceCache').value = '';
+  renderList();
+  scheduleLivePush();
+};
+
+$('pricingReload').onclick = async () => {
+  if (liveTimer) clearTimeout(liveTimer);
+  pricingDraft = {};
+  try {
+    await fetch('/api/models/refresh', { method: 'POST' });
+  } catch { /* ignore */ }
+  await loadPricing({ refresh: true });
+};
+
+$('pricingSave').onclick = async () => {
+  if (liveTimer) clearTimeout(liveTimer);
+  await pushRatesLive({ manual: true });
+};
+
+loadMeta();
+loadPricing();
+
+document.querySelectorAll('a.nav-link, a.settings-btn, a.brand-logo-wrap').forEach((a) => {
+  a.addEventListener('pointerenter', () => {
+    const href = a.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.as = 'document';
+    link.href = href;
+    document.head.appendChild(link);
+  }, { once: true, passive: true });
+});

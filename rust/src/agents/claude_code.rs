@@ -1,0 +1,364 @@
+//! Agent: Claude Code (port of `src/agents/claude-code/index.ts`).
+//!
+//! `~/.claude/projects/<project>/<session>.jsonl`. One API response can be written
+//! as several assistant rows (one per content block), all carrying the same
+//! requestId/message.id and repeated usage; keep one logical request.
+
+use std::collections::HashSet;
+
+use indexmap::{IndexMap, IndexSet};
+use serde_json::Value;
+
+use crate::agents::shared::env::{path_env, unique};
+use crate::agents::shared::usage_fields::{extract_token_buckets, TokenBuckets};
+use crate::agents::{parse_fn, AgentModule};
+use crate::pricing::apply_pricing;
+use crate::types::{AgentId, UsageEvent};
+use crate::util::{
+    cached_candidates_for_file, env_nonempty, js_date_parse, js_trim, now_ms, path_exists, pjoin, read_jsonl_cached,
+    stable_id, to_iso_string, walk_files, CandidateOpts, PathFlavor, WalkOptions,
+};
+
+/// Local data roots to scan on this machine.
+pub fn roots() -> Vec<String> {
+    let e = path_env();
+    let mut r: Vec<String> = Vec::new();
+    r.push(e.expand_home(&env_nonempty("CLAUDE_CONFIG_DIR").unwrap_or_else(|| e.j(&[&e.home, ".claude"]))));
+    if let Some(v) = env_nonempty("CLAUDE_CONFIG_DIRS") {
+        for s in v.split(e.path.delimiter()) {
+            r.push(e.expand_home(s));
+        }
+    }
+    r.push(e.j(&[&e.home, ".config", "claude"]));
+    unique(r)
+}
+
+#[derive(Debug, Clone)]
+struct UsageCandidate {
+    file: String,
+    row: Value,
+    message: Value,
+    buckets: TokenBuckets,
+    request_key: String,
+    row_index: usize,
+}
+
+/// `typeof value === "string" && value.trim() ? value : null`
+fn non_empty_string<'a>(v: Option<&'a Value>) -> Option<&'a str> {
+    match v {
+        Some(Value::String(s)) if !js_trim(s).is_empty() => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn request_key_for(file: &str, row: &Value, message: &Value, row_index: usize) -> String {
+    let request_id = non_empty_string(row.get("requestId"))
+        .or_else(|| non_empty_string(row.get("request_id")))
+        .or_else(|| non_empty_string(message.get("requestId")))
+        .or_else(|| non_empty_string(message.get("request_id")));
+    if let Some(id) = request_id {
+        return format!("request:{}", id);
+    }
+    let message_id = non_empty_string(message.get("id")).or_else(|| non_empty_string(row.get("message_id")));
+    if let Some(id) = message_id {
+        return format!("message:{}", id);
+    }
+    let uuid = non_empty_string(row.get("uuid"));
+    match uuid {
+        Some(u) => format!("row:{}:{}", file, u),
+        None => format!("row:{}:{}", file, row_index),
+    }
+}
+
+fn candidate_score(c: &UsageCandidate) -> f64 {
+    let b = &c.buckets;
+    b.input_tokens + b.output_tokens + b.cache_read_tokens + b.cache_write_tokens
+}
+
+fn is_richer_candidate(next: &UsageCandidate, previous: &UsageCandidate) -> bool {
+    let next_output = next.buckets.output_tokens;
+    let previous_output = previous.buckets.output_tokens;
+    if next_output != previous_output {
+        return next_output > previous_output;
+    }
+    let next_score = candidate_score(next);
+    let previous_score = candidate_score(previous);
+    if next_score != previous_score {
+        return next_score > previous_score;
+    }
+    next.row_index > previous.row_index
+}
+
+fn timestamp_from_row(row: &Value, message: &Value) -> String {
+    let candidates = [row.get("timestamp"), row.get("ts"), message.get("timestamp"), message.get("ts")];
+    for value in candidates.into_iter().flatten() {
+        match value {
+            Value::String(s) if !js_trim(s).is_empty() => {
+                let ms = js_date_parse(s);
+                if !ms.is_nan() {
+                    if let Some(iso) = to_iso_string(ms) {
+                        return iso;
+                    }
+                }
+            }
+            Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    if f.is_finite() && f > 0.0 {
+                        let ms = if f > 1e12 { f } else { f * 1000.0 };
+                        if let Some(iso) = to_iso_string(ms) {
+                            return iso;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    to_iso_string(now_ms()).unwrap_or_default()
+}
+
+fn workspace_from_file(file: &str, roots: &[String]) -> Option<String> {
+    let flavor = PathFlavor::host();
+    let sep = flavor.sep();
+    for root in roots {
+        let relative = flavor.relative(root, file);
+        if relative.is_empty()
+            || relative == ".."
+            || relative.starts_with(&format!("..{}", sep))
+            || flavor.is_absolute(&relative)
+        {
+            continue;
+        }
+        let parts: Vec<&str> = relative.split(sep).collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let first = parts[0];
+        if !first.is_empty() {
+            return Some(first.to_string());
+        }
+    }
+    None
+}
+
+fn as_plain_object(v: Option<&Value>) -> Option<&Value> {
+    match v {
+        Some(x @ Value::Object(_)) => Some(x),
+        _ => None,
+    }
+}
+
+pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
+    let mut files: IndexSet<String> = IndexSet::new();
+
+    let is_jsonl = |n: &str, _full: &str| n.to_lowercase().ends_with(".jsonl");
+    for root in roots {
+        if !path_exists(root).await {
+            continue;
+        }
+        let projects = pjoin(&[root.as_str(), "projects"]);
+        let transcripts = pjoin(&[root.as_str(), "transcripts"]);
+        for dir in [projects, transcripts] {
+            for file in walk_files(&dir, WalkOptions::new().matching(is_jsonl)).await {
+                files.insert(file);
+            }
+        }
+    }
+
+    let all_roots: Vec<String> = roots
+        .iter()
+        .flat_map(|root| [pjoin(&[root.as_str(), "projects"]), pjoin(&[root.as_str(), "transcripts"])])
+        .collect();
+    let mut by_request: IndexMap<String, UsageCandidate> = IndexMap::new();
+    let mut seen_uuids: HashSet<String> = HashSet::new();
+
+    for file in files.iter() {
+        let file_owned = file.clone();
+        let file_candidates = cached_candidates_for_file(
+            file,
+            || async move {
+                let file = file_owned;
+                let rows = match read_jsonl_cached(&file, None).await? {
+                    Some(r) => r,
+                    None => return Ok(Vec::new()),
+                };
+                let mut local: Vec<UsageCandidate> = Vec::new();
+                let mut local_uuids: HashSet<String> = HashSet::new();
+                let mut row_index = 0usize;
+                for row in rows.iter() {
+                    row_index += 1;
+                    if !matches!(row, Value::Object(_)) {
+                        continue;
+                    }
+                    let uuid = non_empty_string(row.get("uuid"));
+                    if let Some(u) = uuid {
+                        if local_uuids.contains(u) {
+                            continue;
+                        }
+                    }
+                    let message: &Value = match as_plain_object(row.get("message")) {
+                        Some(m) => m,
+                        None => row,
+                    };
+                    let row_type = non_empty_string(row.get("type"));
+                    let message_role = non_empty_string(message.get("role"));
+                    if (row_type.is_some() && row_type != Some("assistant"))
+                        || (row_type.is_none() && message_role.is_some() && message_role != Some("assistant"))
+                    {
+                        continue;
+                    }
+                    let usage = as_plain_object(message.get("usage")).or_else(|| as_plain_object(row.get("usage")));
+                    let buckets = match extract_token_buckets(usage) {
+                        Some(b) => b,
+                        None => continue,
+                    };
+                    if let Some(u) = uuid {
+                        local_uuids.insert(u.to_string());
+                    }
+                    local.push(UsageCandidate {
+                        file: file.clone(),
+                        row: row.clone(),
+                        message: message.clone(),
+                        buckets,
+                        request_key: request_key_for(&file, row, message, row_index),
+                        row_index,
+                    });
+                }
+                Ok(local)
+            },
+            CandidateOpts { max_bytes: None, estimate_bytes: None },
+        )
+        .await?;
+
+        for candidate in file_candidates.iter() {
+            if let Some(uuid) = non_empty_string(candidate.row.get("uuid")) {
+                if seen_uuids.contains(uuid) {
+                    continue;
+                }
+                seen_uuids.insert(uuid.to_string());
+            }
+            let replace = match by_request.get(&candidate.request_key) {
+                None => true,
+                Some(prev) => is_richer_candidate(candidate, prev),
+            };
+            if replace {
+                by_request.insert(candidate.request_key.clone(), candidate.clone());
+            }
+        }
+    }
+
+    let mut events: Vec<UsageEvent> = Vec::new();
+    for candidate in by_request.values() {
+        let b = &candidate.buckets;
+        let input_tokens = if b.input_includes_cache == Some(true) {
+            (b.input_tokens - b.cache_read_tokens).max(0.0)
+        } else {
+            b.input_tokens
+        };
+        let model = match candidate.message.get("model") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            _ => match candidate.row.get("model") {
+                Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            },
+        };
+        events.push(apply_pricing(UsageEvent {
+            id: stable_id(&["claude-code", candidate.request_key.as_str()]),
+            agent: AgentId::ClaudeCode,
+            model,
+            timestamp: timestamp_from_row(&candidate.row, &candidate.message),
+            input_tokens,
+            output_tokens: b.output_tokens,
+            cache_read_tokens: b.cache_read_tokens,
+            cache_write_tokens: b.cache_write_tokens,
+            workspace: workspace_from_file(&candidate.file, &all_roots),
+            source_path: candidate.file.clone(),
+            estimated: Some(false),
+            // Claude Code always writes the cache buckets, so a zero here is a real
+            // measurement rather than a missing field.
+            cache_reported: Some(true),
+            ..Default::default()
+        }));
+    }
+    Ok(events)
+}
+
+pub fn agent() -> AgentModule {
+    AgentModule {
+        id: AgentId::ClaudeCode,
+        label: "Claude Code",
+        roots,
+        parse: parse_fn(|roots: Vec<String>| async move { parse_claude_code(&roots).await }),
+        parse_light: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn identity() {
+        let a = agent();
+        assert_eq!(a.id.as_str(), "claude-code");
+        assert_eq!(a.label, "Claude Code");
+    }
+
+    #[tokio::test]
+    async fn deduplicates_repeated_content_blocks_and_keeps_full_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let project_dir = dir.path().join("projects").join("C--Dev-Demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let repeated = "msg_ce_repeated_blocks";
+        let second = "msg_cb_second_request";
+        let usage_a = json!({
+            "input_tokens": 100, "output_tokens": 20,
+            "cache_read_input_tokens": 50, "cache_creation_input_tokens": 0,
+            "cache_creation": {
+                "ephemeral_5m_input_tokens": 4, "ephemeral_1h_input_tokens": 6, "input_tokens": 10
+            }
+        });
+        let mut rows = vec![json!({
+            "type": "user", "uuid": "user-1",
+            "message": {"role": "user", "usage": {"input_tokens": 999999, "output_tokens": 999999}}
+        })];
+        for (i, ts) in ["2026-09-13T01:00:00.000Z", "2026-09-13T01:00:00.001Z", "2026-09-13T01:00:00.002Z"]
+            .iter()
+            .enumerate()
+        {
+            rows.push(json!({
+                "type": "assistant", "uuid": format!("assistant-{}", i + 1), "timestamp": ts,
+                "apiBlockIndex": i,
+                "message": {"id": repeated, "role": "assistant", "model": "openclaw", "usage": usage_a}
+            }));
+        }
+        for i in 0..2 {
+            rows.push(json!({
+                "type": "assistant", "uuid": format!("assistant-{}", i + 4), "requestId": "request-2",
+                "apiBlockIndex": i,
+                "message": {"id": second, "role": "assistant", "model": "glm-5.3",
+                            "usage": {"input_tokens": 7, "output_tokens": 9}}
+            }));
+        }
+        let file = project_dir.join("session.jsonl");
+        let text: String = rows.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n") + "\n";
+        std::fs::write(&file, text).unwrap();
+
+        let events = parse_claude_code(&[root]).await.unwrap();
+        assert_eq!(events.len(), 2);
+        let first = events.iter().find(|e| e.model.as_deref() == Some("openclaw")).unwrap();
+        assert_eq!(first.input_tokens, 100.0);
+        assert_eq!(first.output_tokens, 20.0);
+        assert_eq!(first.cache_read_tokens, 50.0);
+        assert_eq!(first.cache_write_tokens, 10.0);
+        assert_eq!(first.total_tokens, 180.0);
+        assert_eq!(first.workspace.as_deref(), Some("C--Dev-Demo"));
+        assert_eq!(first.estimated, Some(false));
+        assert_eq!(first.source_path, file.to_string_lossy());
+        let sec = events.iter().find(|e| e.model.as_deref() == Some("glm-5.3")).unwrap();
+        assert_eq!(sec.total_tokens, 16.0);
+    }
+}
