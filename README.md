@@ -2,7 +2,7 @@
 
 **Local-first token API usage & cost tracker for every AI agent on one machine.**
 
-TokenLab is an npm package that runs a lightweight **localhost** service and dashboard. It aggregates **token API consumption** and **estimated spend (cost)** from all AI coding agents and CLIs installed on the host — including **Cursor**, **Grok**, **Windsurf**, **Codex**, **Claude Code**, and more — so you always know **how many tokens each agent used and how much it cost**.
+TokenLab is a Rust binary (UI in Astro) that runs a lightweight **localhost** service and dashboard. It aggregates **token API consumption** and **estimated spend (cost)** from all AI coding agents and CLIs installed on the host — including **Cursor**, **Grok**, **Windsurf**, **Codex**, **Claude Code**, and more — so you always know **how many tokens each agent used and how much it cost**.
 
 No cloud account required by default. Data stays on your machine.
 
@@ -75,7 +75,7 @@ TokenLab scans **local agent usage artifacts**, normalizes them into one schema,
 - **Live refresh** — filesystem watchers + periodic rescan
 - **Breakdowns & rankings** — top agents, top models, spend over time
 - **Stable JSON API** — automate budgets, status bars, scripts
-- **npm-first UX** — `npx` / `bunx` / global binary
+- **Single binary** — one `tokenlab` executable with the dashboard embedded
 - **Offline-friendly pricing** — bundled price table; optional refresh
 
 ---
@@ -211,7 +211,7 @@ Parsers ship incrementally; `tokenlab doctors` reports which agents are detected
 
 | Item | Minimum |
 |------|---------|
-| Runtime | Node.js **20+** or Bun **1.1+** |
+| Build toolchain | Rust (stable) + Node.js 20+ (only to build the Astro UI) |
 | OS | Windows 10+, macOS 12+, Linux |
 | Network | None required (localhost + offline pricing) |
 | Disk | ~50 MB install + local DB growth |
@@ -220,7 +220,7 @@ Parsers ship incrementally; `tokenlab doctors` reports which agents are detected
 
 ## Quick start
 
-Works on **Windows**, **macOS**, and **Linux** (Node.js 20+).
+Works on **Windows**, **macOS**, and **Linux** (build from source with Rust).
 
 ### Desktop App (Recommended)
 
@@ -233,45 +233,26 @@ Download the desktop app for your platform from the [Releases](https://github.co
 
 The desktop app automatically handles server startup and provides a native window experience.
 
-### One-shot
+### Build and run
 
 ```bash
-npx tokenlab@latest serve
-# or
-bunx tokenlab@latest serve
-```
-
-### Global install
-
-```bash
-npm install -g tokenlab
-tokenlab serve
+git clone https://github.com/quangminh1212/TokenLab.git
+cd TokenLab/rust
+cargo build --release          # also builds the Astro UI (web/) and embeds it
+./target/release/tokenlab serve
 # optional: open default browser
-tokenlab serve --open
+./target/release/tokenlab serve --open
 ```
 
-Open:
+Open `http://127.0.0.1:3737`.
 
-```text
-http://127.0.0.1:3737
-```
-
-### Local clone (dev / hot reload)
+### Dev launcher
 
 ```bash
-git clone https://github.com/quangminh1212/XLab_Token.git
-cd XLab_Token
-npm install
-
 # Windows
 run.bat
-
 # macOS / Linux
-chmod +x run.sh
 ./run.sh
-
-# or cross-platform
-npm run serve:watch
 ```
 
 ### Token + cost snapshot (CLI)
@@ -590,59 +571,11 @@ Do not bind to `0.0.0.0` on untrusted networks. Treat the DB as sensitive if wor
 ## Development
 
 ```bash
-git clone https://github.com/quangminh1212/XLab_Token.git
-cd XLab_Token
-npm install
-npm test
-npm run build
-npm start
+cd rust
+cargo test
+cargo build --release
+cd ../web && npm install && npm run build   # UI only (cargo build --release does this too)
 ```
-
-### Building Desktop App
-
-#### Generate placeholder icons
-
-```bash
-npm run generate-icons
-```
-
-For production, convert the generated SVG to proper formats:
-- `electron/assets/icon.png` (256x256 PNG for Linux)
-- `electron/assets/icon.ico` (256x256 ICO for Windows)
-- `electron/assets/icon.icns` (ICNS for macOS)
-
-#### Build for current platform
-
-```bash
-npm run electron:build
-```
-
-#### Build for specific platforms
-
-**Windows:**
-```bash
-npm run electron:build:win
-```
-
-**macOS:**
-```bash
-npm run electron:build:mac
-```
-
-**Linux:**
-```bash
-npm run electron:build:linux
-```
-
-#### Development mode
-
-```bash
-npm run electron:dev
-```
-
-See [installer/electron/README.md](installer/electron/README.md) for detailed Electron documentation.
-
----
 
 ## Documentation
 
@@ -659,24 +592,16 @@ Additional documentation is available in the [docs/](docs/) directory:
 |----|----------------|
 | Windows | `run.bat` |
 | macOS / Linux | `./run.sh` |
-| Any | `npm run serve:watch` |
 
-Agent data paths are resolved per platform (`%APPDATA%` / `~/Library/Application Support` / XDG). Extension-based agents also scan VS Code, Cursor, VSCodium, Code - OSS, and Windsurf `globalStorage`.
+Agent data paths are resolved per platform (`%APPDATA%` / `~/Library/Application Support` / XDG).
 
 ```text
-src/
-  agents/   # one folder per agent (paths + parser)
-  server/   # HTTP API + dashboard
-  cli.ts    # tokenlab binary
+rust/src/
+  agents/   # one module per agent (paths + parser)
+  server/   # axum HTTP API; serves embedded web/dist
+  cli.rs    # tokenlab binary
+web/        # Astro UI
 ```
-
-| Script | Purpose |
-|--------|---------|
-| `dev` | CLI via tsx |
-| `serve:watch` | API + UI hot reload |
-| `build` | Production build |
-| `test` | Unit + parser fixtures |
-| `typecheck` | TypeScript check |
 
 ---
 
@@ -688,10 +613,10 @@ Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (
 |------|--------|
 | Multi-agent local scanners | **Done** — 23 agents incl. Codex (deep), Hermes, OpenClaw |
 | Token + cost aggregation | **Done** — `stats` / `cost` / `/api/stats` / `/api/cost` |
-| Bundled offline pricing | **Done** — LiteLLM-style rates in `src/pricing.ts` |
+| Bundled offline pricing | **Done** — LiteLLM-style rates in `rust/src/pricing.rs` |
 | Localhost dashboard | **Done** — `tokenlab serve` → `http://127.0.0.1:3737` |
 | Agent detection (`doctors`) | **Done** |
-| Hermes SQLite (`state.db`) | **Done** — via `node:sqlite` + JSONL fallback |
+| Hermes SQLite (`state.db`) | **Done** — via SQLite + JSONL fallback |
 | OpenClaw / clawdbot / moltbot | **Done** — sessions index + JSONL usage |
 | Codex deep scan | **Done** — sessions/history/archived, cumulative token_count |
 | Grok session estimate | **Done** — real usage if present, else text-length estimate |
@@ -702,13 +627,11 @@ Integrated feature set inspired by **tokscale**, **codeburn**, and **ccusage** (
 ### Dev commands
 
 ```bash
-npm install
-npm run build
-npm test
-npx tsx src/cli.ts doctors
-npx tsx src/cli.ts stats --since 7d
-npx tsx src/cli.ts cost --since 7d
-npx tsx src/cli.ts serve --port 3737
+cd rust
+cargo run -- doctors
+cargo run -- stats --since 7d
+cargo run -- cost --since 7d
+cargo run -- serve --port 3737
 ```
 
 ## Roadmap
