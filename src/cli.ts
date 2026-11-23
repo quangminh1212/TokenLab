@@ -54,7 +54,7 @@ Local-first token API usage & cost tracker for AI agents on this machine.
 
 Usage:
   tokenlab serve [--host 127.0.0.1] [--port 3737] [--no-ui] [--open] [--no-tray]
-  tokenlab setup [--no-open] [--no-autostart] [--no-desktop] [--no-serve] [--json]
+  tokenlab setup [--open] [--no-autostart] [--no-desktop] [--no-serve] [--json]
   tokenlab stats [--since 24h|7d|30d] [--by agent|model|day] [--sort tokens|cost] [--json]
   tokenlab cost  [--since 7d] [--json]
   tokenlab scan  [--json]
@@ -79,7 +79,7 @@ Backup options:
 
 Setup (also runs after global npm install):
   Enables Windows login autostart, creates a Desktop shortcut, and starts the dashboard if not already running.
-  --no-open       Do not open the browser
+  --open          Open the dashboard in the browser (default: do not open)
   --no-autostart  Skip login autostart registration
   --no-desktop    Skip Desktop shortcut (TokenLab.lnk)
   --no-serve      Do not start the server
@@ -266,7 +266,7 @@ async function main(): Promise<void> {
     const fromPostinstall = has(args, "--from-postinstall");
     try {
       const result = await runSetup({
-        open: !has(args, "--no-open"),
+        open: has(args, "--open"),
         autostart: !has(args, "--no-autostart"),
         desktop: !has(args, "--no-desktop"),
         serve: !has(args, "--no-serve"),

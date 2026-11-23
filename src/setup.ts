@@ -82,7 +82,7 @@ function startServeDetached(opts: { open: boolean; host: string; port: number })
  * Safe to call repeatedly; never throws for expected platform limits.
  */
 export async function runSetup(opts: SetupOptions = {}): Promise<SetupResult> {
-  const open = opts.open !== false;
+  const open = opts.open === true;
   const wantAutostart = opts.autostart !== false;
   const wantDesktop = opts.desktop !== false;
   const wantServe = opts.serve !== false;

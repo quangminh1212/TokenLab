@@ -711,7 +711,7 @@ async function writeDesktopLauncherVbs(): Promise<string> {
   const content = [
     "' TokenLab desktop launcher (generated)",
     "Set sh = CreateObject(\"WScript.Shell\")",
-    `sh.Run """${nodeQ}"" ""${cliQ}"" setup", 0, False`,
+    `sh.Run """${nodeQ}"" ""${cliQ}"" setup --open", 0, False`,
     "",
   ].join("\r\n");
   await writeFile(vbsPath, content, "utf8");
