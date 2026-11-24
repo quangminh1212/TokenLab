@@ -2384,9 +2384,136 @@ static SCAN_CACHE_SAVE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::
 /// Last successful save fingerprint (process-local), skips identical rewrites.
 static LAST_SCAN_CACHE_WRITE_FP: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 
-async fn read_scan_cache_file(file_path: &str) -> Result<Vec<UsageEvent>, String> {
-    let raw = read_json_value(file_path).await?;
+/// Byte ranges of the top-level objects of a JSON array (string/escape aware).
+/// None when the text is not a plain well-shaped array of objects, so callers
+/// fall back to the full serde parse.
+fn json_array_element_ranges(b: &[u8]) -> Option<Vec<(usize, usize)>> {
+    let n = b.len();
+    let ws = |c: u8| c == b' ' || c == b'\n' || c == b'\r' || c == b'\t';
+    let mut i = 0usize;
+    // Skip UTF-8 BOM if present.
+    if b.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        i = 3;
+    }
+    while i < n && ws(b[i]) {
+        i += 1;
+    }
+    if i >= n || b[i] != b'[' {
+        return None;
+    }
+    i += 1;
+    let mut out = Vec::new();
+    loop {
+        while i < n && ws(b[i]) {
+            i += 1;
+        }
+        if i >= n {
+            return None;
+        }
+        if b[i] == b']' && out.is_empty() {
+            i += 1;
+            break;
+        }
+        if b[i] != b'{' {
+            return None;
+        }
+        let start = i;
+        let mut depth = 0i64;
+        let mut in_str = false;
+        loop {
+            if i >= n {
+                return None;
+            }
+            let c = b[i];
+            if in_str {
+                if c == b'\\' {
+                    i += 1;
+                } else if c == b'"' {
+                    in_str = false;
+                }
+            } else if c == b'"' {
+                in_str = true;
+            } else if c == b'{' || c == b'[' {
+                depth += 1;
+            } else if c == b'}' || c == b']' {
+                depth -= 1;
+                if depth == 0 {
+                    i += 1;
+                    break;
+                }
+            }
+            i += 1;
+        }
+        out.push((start, i));
+        while i < n && ws(b[i]) {
+            i += 1;
+        }
+        if i >= n {
+            return None;
+        }
+        if b[i] == b',' {
+            i += 1;
+            continue;
+        }
+        if b[i] == b']' {
+            i += 1;
+            break;
+        }
+        return None;
+    }
+    while i < n && ws(b[i]) {
+        i += 1;
+    }
+    if i != n {
+        return None;
+    }
+    Some(out)
+}
+
+/// Parallel equivalent of `read_json_value` + `sanitize_events`. None means
+/// "use the serial path".
+fn parse_events_parallel(bytes: &[u8]) -> Option<Vec<UsageEvent>> {
+    use rayon::prelude::*;
+    let ranges = json_array_element_ranges(bytes)?;
+    let chunk = (ranges.len() / (rayon::current_num_threads() * 4)).max(256);
+    let parts: Vec<Option<Vec<UsageEvent>>> = ranges
+        .par_chunks(chunk)
+        .map(|rs| {
+            let mut v = Vec::with_capacity(rs.len());
+            for &(a, b) in rs {
+                let val: Value = serde_json::from_slice(&bytes[a..b]).ok()?;
+                if let Some(e) = sanitize_event_value(&val) {
+                    v.push(e);
+                }
+            }
+            Some(v)
+        })
+        .collect();
+    let mut out = Vec::with_capacity(ranges.len());
+    for p in parts {
+        out.extend(p?);
+    }
+    Some(out)
+}
+
+async fn read_events_file(file_path: &str) -> Result<Vec<UsageEvent>, String> {
+    let bytes = tokio::fs::read(file_path).await.map_err(|e| err_msg(&e))?;
+    let (fast, bytes) = tokio::task::spawn_blocking(move || {
+        let r = parse_events_parallel(&bytes);
+        (r, bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Some(events) = fast {
+        return Ok(events);
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let raw = serde_json::from_str::<Value>(&text).map_err(|e| err_msg(&e))?;
     Ok(sanitize_events(&raw).unwrap_or_default())
+}
+
+async fn read_scan_cache_file(file_path: &str) -> Result<Vec<UsageEvent>, String> {
+    read_events_file(file_path).await
 }
 
 /// Recover individual event objects from a truncated / corrupt JSON array.

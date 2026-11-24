@@ -591,6 +591,9 @@ pub(crate) struct AppState {
     handle: tokio::runtime::Handle,
     /// Flipped to `true` by `ServerHandle::close` so SSE pings stop and streams end.
     shutdown: tokio::sync::watch::Sender<bool>,
+    /// `true` once the on-disk scan cache has been loaded + merged. API routes
+    /// (except health) wait on this so the port can be bound immediately.
+    ready: tokio::sync::watch::Sender<bool>,
 }
 
 #[derive(Default)]
@@ -967,6 +970,7 @@ impl AppState {
             started_at: now,
             handle,
             shutdown: tokio::sync::watch::channel(false).0,
+            ready: tokio::sync::watch::channel(true).0,
         }
     }
 
@@ -2421,6 +2425,11 @@ impl AppState {
         let path = parts.uri.path().to_string();
         let q = Query::parse(parts.uri.query());
         let no_ui = self.no_ui;
+
+        if path.starts_with("/api/") && path != "/api/health" && !*self.ready.borrow() {
+            let mut rx = self.ready.subscribe();
+            let _ = tokio::time::timeout(Duration::from_secs(180), rx.wait_for(|r| *r)).await;
+        }
 
         match (parts.method.as_str(), path.as_str()) {
             ("GET", "/api/health") => self.route_health().await,
@@ -4012,65 +4021,6 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
 
     let state = Arc::new(AppState::new(host.clone(), port as u16, no_ui, tokio::runtime::Handle::current()));
 
-    // Events from other machines / restore, and the last local scan snapshot.
-    let imported = load_imported_events().await;
-    let disk = load_scan_cache().await;
-    let imported_len = imported.len();
-    let disk_len = disk.len();
-    // Union import + disk, then collapse within machine scope: local clones
-    // collapse while foreign-machine usage remains additive and day totals never
-    // shrink.
-    let imported = Arc::new(imported);
-    let imported_for_merge = imported.clone();
-    let (events, ts) = tokio::task::spawn_blocking(move || {
-        let merged = merge_local_prefer_over_gist_rollups(&disk, &imported_for_merge, None);
-        let mono = enforce_monotonic_agent_days(&disk, &merged);
-        let c1 = collapse_router_daily_events(&mono);
-        let c2 = collapse_source_path_rollups(&c1);
-        let c3 = collapse_exact_usage_duplicates(&c2);
-        // Disk saves write timestamp-sorted; sort once more for safety then index.
-        sort_events_by_time(&c3)
-    })
-    .await?;
-    state.inner.lock().imported_events = imported;
-    state.set_cache(events, true, Some(ts)).await;
-    if disk_len > 0 {
-        slog(&format!("[tokenlab] loaded {disk_len} cached scan events"));
-    }
-    if imported_len > 0 {
-        slog(&format!("[tokenlab] loaded {imported_len} imported events"));
-    }
-    let cached = state.inner.lock().cache.len();
-    if cached > 0 {
-        slog(&format!("[tokenlab] warm cache ready: {cached} events (scan + import)"));
-    }
-
-    // Bundled rates changed since the cache was last priced? Reprice once so
-    // agents without a real router cost do not keep an estimatedCost computed
-    // from an older rate table. Real router-reported costs are preserved by
-    // `reprice_events` itself.
-    let stored = get_config_sync().scan_cache_rates_version.unwrap_or(0.0);
-    if stored != RATES_VERSION {
-        let sum_cost = |state: &Arc<AppState>| -> f64 {
-            state.inner.lock().cache.iter().fold(0.0, |sum, e| sum + e.estimated_cost.unwrap_or(0.0))
-        };
-        let before = sum_cost(&state);
-        state.reprice_cache(true).await;
-        let after = sum_cost(&state);
-        let n = state.inner.lock().cache.len();
-        slog(&format!(
-            "[tokenlab] rates v{} -> v{}: repriced {n} events (${} -> ${})",
-            js_num_to_string(stored),
-            js_num_to_string(RATES_VERSION),
-            js_to_fixed(before, 2),
-            js_to_fixed(after, 2)
-        ));
-        state.schedule_save_scan_cache(true);
-        if let Err(err) = set_scan_cache_rates_version(RATES_VERSION).await {
-            swarn(&format!("[tokenlab] rates reprice skipped: {err}"));
-        }
-    }
-
     // Bind immediately (retry while the port is busy).
     let listener = match listen_with_retry(&host, port, 40, 150).await {
         Ok(l) => l,
@@ -4097,6 +4047,89 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         }
     });
 
+    // Load + merge the (large) on-disk scan cache in the background: the port is
+    // already bound so the dashboard paints immediately; API calls wait on `ready`.
+    let load_done = {
+        let state = state.clone();
+        let handle = state.handle.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        state.ready.send_replace(false);
+        handle.spawn(async move {
+        // Events from other machines / restore, and the last local scan snapshot.
+        let imported = load_imported_events().await;
+        let disk = load_scan_cache().await;
+        let imported_len = imported.len();
+        let disk_len = disk.len();
+        // Union import + disk, then collapse within machine scope: local clones
+        // collapse while foreign-machine usage remains additive and day totals never
+        // shrink.
+        let imported = Arc::new(imported);
+        let imported_for_merge = imported.clone();
+        let merged = tokio::task::spawn_blocking(move || {
+            let merged = merge_local_prefer_over_gist_rollups(&disk, &imported_for_merge, None);
+            let mono = enforce_monotonic_agent_days(&disk, &merged);
+            let c1 = collapse_router_daily_events(&mono);
+            let c2 = collapse_source_path_rollups(&c1);
+            let c3 = collapse_exact_usage_duplicates(&c2);
+            // Disk saves write timestamp-sorted; sort once more for safety then index.
+            sort_events_by_time(&c3)
+        })
+        .await;
+        let (events, ts) = match merged {
+            Ok(v) => v,
+            Err(err) => {
+                swarn(&format!("[tokenlab] cache merge failed: {err}"));
+                state.ready.send_replace(true);
+                let _ = tx.send(());
+                return;
+            }
+        };
+        state.inner.lock().imported_events = imported;
+        state.set_cache(events, true, Some(ts)).await;
+        if disk_len > 0 {
+            slog(&format!("[tokenlab] loaded {disk_len} cached scan events"));
+        }
+        if imported_len > 0 {
+            slog(&format!("[tokenlab] loaded {imported_len} imported events"));
+        }
+        let cached = state.inner.lock().cache.len();
+        if cached > 0 {
+            slog(&format!("[tokenlab] warm cache ready: {cached} events (scan + import)"));
+        }
+
+        // Bundled rates changed since the cache was last priced? Reprice once so
+        // agents without a real router cost do not keep an estimatedCost computed
+        // from an older rate table. Real router-reported costs are preserved by
+        // `reprice_events` itself.
+        let stored = get_config_sync().scan_cache_rates_version.unwrap_or(0.0);
+        if stored != RATES_VERSION {
+            let sum_cost = |state: &Arc<AppState>| -> f64 {
+                state.inner.lock().cache.iter().fold(0.0, |sum, e| sum + e.estimated_cost.unwrap_or(0.0))
+            };
+            let before = sum_cost(&state);
+            state.reprice_cache(true).await;
+            let after = sum_cost(&state);
+            let n = state.inner.lock().cache.len();
+            slog(&format!(
+                "[tokenlab] rates v{} -> v{}: repriced {n} events (${} -> ${})",
+                js_num_to_string(stored),
+                js_num_to_string(RATES_VERSION),
+                js_to_fixed(before, 2),
+                js_to_fixed(after, 2)
+            ));
+            state.schedule_save_scan_cache(true);
+            if let Err(err) = set_scan_cache_rates_version(RATES_VERSION).await {
+                swarn(&format!("[tokenlab] rates reprice skipped: {err}"));
+            }
+        }
+
+
+            state.ready.send_replace(true);
+            let _ = tx.send(());
+        });
+        rx
+    };
+
     // Warm OpenRouter model catalog (disk then network) so the Model page is
     // never empty.
     state.handle.spawn(async move {
@@ -4114,6 +4147,7 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
     {
         let this = state.clone();
         state.handle.spawn(async move {
+            let _ = load_done.await;
             let _ = futures::join!(
                 this.sync_vps_mirrors("boot", MIRROR_SYNC_TIMEOUT_MS),
                 this.sync_ubuntu_usage("boot")

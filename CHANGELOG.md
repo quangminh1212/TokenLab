@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] — 2026-11-24
+
+### Fixed
+- **Rust build starts instantly**: the HTTP port is bound first and the large scan cache is loaded/merged in the background (API calls wait until ready), and the cache is parsed in parallel. Previously the dashboard was unreachable for 30–100 s on every start.
+
 ## [1.0.7] — 2026-10-13
 
 ### Fixed

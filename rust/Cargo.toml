@@ -1,6 +1,6 @@
 [package]
 name = "tokenlab"
-version = "1.0.7"
+version = "1.0.8"
 edition = "2021"
 description = "TokenLab - local AI coding agent token usage tracker (Rust port)"
 license = "MIT"
@@ -32,6 +32,7 @@ indexmap = { version = "2.14.2", features = ["serde"] }
 mime_guess = "2.0.5"
 once_cell = "1.21.4"
 parking_lot = "0.13.0"
+rayon = "1.12.0"
 regex = "1.13.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 rusqlite = { version = "0.43.0", features = ["bundled"] }
