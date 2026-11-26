@@ -128,12 +128,26 @@ pub async fn run_setup(opts: SetupOptions) -> SetupResult {
     let port = opts.port.unwrap_or_else(default_port);
     let url = format!("http://{host}:{port}/");
 
+    // Fast path: server already up -> open the dashboard immediately, before the
+    // (slow) autostart/shortcut refresh below.
+    let mut opened_early = false;
+    if open && want_serve && is_server_reachable(&host, port).await {
+        open_browser(&url);
+        opened_early = true;
+    }
+
     let mut parts: Vec<String> = Vec::new();
     let mut autostart_enabled: Option<bool> = None;
     let mut desktop_shortcut: Option<String> = None;
 
     if want_autostart {
-        if cfg!(windows) {
+        // Already running + autostart registered: don't kill/restart the supervisor
+        // on every click (the launcher VBS is refreshed on the next real start).
+        let skip_refresh = opened_early && cfg!(windows) && get_autostart_status().await.enabled;
+        if skip_refresh {
+            autostart_enabled = Some(true);
+            parts.push("autostart ON".to_string());
+        } else if cfg!(windows) {
             let result = enable_autostart().await;
             autostart_enabled = Some(result.status.enabled);
             parts.push(if result.ok {
@@ -170,7 +184,7 @@ pub async fn run_setup(opts: SetupOptions) -> SetupResult {
     if want_serve {
         if server_running {
             parts.push("server already running".to_string());
-            if open {
+            if open && !opened_early {
                 open_browser(&url);
             }
         } else {
