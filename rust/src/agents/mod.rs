@@ -557,11 +557,18 @@ pub async fn scan_all(opts: ScanAllOptions) -> Vec<UsageEvent> {
                 match result {
                     Ok(parsed) => {
                         let batch = apply_machine_scope(job, parsed);
-                        if collect_all {
-                            all.lock().extend(batch.iter().cloned());
-                        }
-                        if let Some(cb) = &on_done {
-                            cb(AgentDone { agent: job.id, events: batch, duration_ms: now_ms() - t0, error: None });
+                        match &on_done {
+                            Some(cb) => {
+                                if collect_all {
+                                    all.lock().extend(batch.iter().cloned());
+                                }
+                                cb(AgentDone { agent: job.id, events: batch, duration_ms: now_ms() - t0, error: None });
+                            }
+                            None => {
+                                if collect_all {
+                                    all.lock().extend(batch);
+                                }
+                            }
                         }
                     }
                     Err(msg) => {
@@ -581,23 +588,22 @@ pub async fn scan_all(opts: ScanAllOptions) -> Vec<UsageEvent> {
     if !collect_all {
         return Vec::new();
     }
-    let all = std::mem::take(&mut *all.lock());
+    let mut all = std::mem::take(&mut *all.lock());
     // LiteLLM is an independent source of truth and is added as-is; only the
     // OpenClaw rows mirrored by Hermes are dropped.
     let openclaw: Vec<&UsageEvent> = all.iter().filter(|e| e.agent == AgentId::Openclaw).collect();
     let hermes: Vec<&UsageEvent> = all.iter().filter(|e| e.agent == AgentId::Hermes).collect();
     let mask = openclaw_keep_mask(&openclaw, &hermes);
     let mut keep = mask.into_iter();
-    all.iter()
-        .filter(|e| {
-            if e.agent == AgentId::Openclaw {
-                keep.next().unwrap_or(true)
-            } else {
-                true
-            }
-        })
-        .cloned()
-        .collect::<Vec<_>>()
+    all.retain(|e| {
+        if e.agent == AgentId::Openclaw {
+            keep.next().unwrap_or(true)
+        } else {
+            true
+        }
+    });
+    all.shrink_to_fit();
+    all
 }
 
 /// `scanAll(enabledMap)` convenience form.

@@ -65,7 +65,7 @@ impl<V> Lru<V> {
 // ---------------------------------------------------------------------------
 
 pub const JSONL_CACHE_MAX_ENTRIES: usize = 4_000;
-pub const JSONL_CACHE_MAX_BYTES: usize = 96 * 1024 * 1024;
+pub const JSONL_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 struct JsonlEntry {
     stamp: FileStamp,
@@ -114,6 +114,11 @@ pub(crate) fn jsonl_cache_miss() {
 }
 
 pub(crate) fn jsonl_cache_store(file: &str, stamp: FileStamp, rows: Arc<Vec<serde_json::Value>>, text_len: usize) {
+    // An entry that cannot fit would be inserted and immediately evicted, keeping the whole
+    // tree alive for nothing: do not cache it (callers memoize derived results anyway).
+    if text_len > JSONL_CACHE_MAX_BYTES / 2 {
+        return;
+    }
     let mut c = JSONL_CACHE.lock();
     if let Some(prev) = c.lru.insert(file.to_string(), JsonlEntry { stamp, rows, bytes: text_len }) {
         c.bytes = c.bytes.saturating_sub(prev.bytes);
@@ -206,10 +211,21 @@ pub struct EventCacheOpts {
     pub signature: Option<String>,
 }
 
+/// Compatibility wrapper around [`cached_events_arc`] returning an owned copy.
+pub async fn cached_events_for_file<F, Fut>(file: &str, produce: F, opts: EventCacheOpts) -> Result<Vec<UsageEvent>>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Vec<UsageEvent>>>,
+{
+    let arc = cached_events_arc(file, produce, opts).await?;
+    Ok(Arc::try_unwrap(arc).unwrap_or_else(|a| (*a).clone()))
+}
+
 /// Return cached events for `file` when its stamp is unchanged, otherwise call
 /// `produce` and memoize the result. With `opts.signature` the stat is skipped
-/// and the caller-managed signature decides freshness.
-pub async fn cached_events_for_file<F, Fut>(file: &str, produce: F, opts: EventCacheOpts) -> Result<Vec<UsageEvent>>
+/// and the caller-managed signature decides freshness. The shared `Arc` is returned
+/// so neither a store nor a hit deep-copies the events.
+pub async fn cached_events_arc<F, Fut>(file: &str, produce: F, opts: EventCacheOpts) -> Result<Arc<Vec<UsageEvent>>>
 where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<Vec<UsageEvent>>>,
@@ -224,18 +240,20 @@ where
             if let Some(ev) = hit {
                 c.hits += 1;
                 c.lru.touch(file);
-                return Ok((*ev).clone());
+                return Ok(ev);
             }
             c.misses += 1;
         }
-        let events = produce().await?;
+        let mut events = produce().await?;
+        events.shrink_to_fit();
+        let events = Arc::new(events);
         let mut c = EVENT_CACHE.lock();
         event_store(
             &mut c,
             file,
             EventEntry {
                 stamp: FileStamp { size: 0, mtime_ms: 0.0 },
-                events: Arc::new(events.clone()),
+                events: events.clone(),
                 signature: Some(signature),
             },
         );
@@ -244,12 +262,12 @@ where
 
     let stamp = match stamp_file(file).await {
         Some(s) => s,
-        None => return Ok(Vec::new()),
+        None => return Ok(Arc::new(Vec::new())),
     };
     if let Some(max) = opts.max_bytes {
         if stamp.size > max {
             EVENT_CACHE.lock().misses += 1;
-            return produce().await;
+            return Ok(Arc::new(produce().await?));
         }
     }
     {
@@ -263,13 +281,15 @@ where
         if let Some(ev) = hit {
             c.hits += 1;
             c.lru.touch(file);
-            return Ok((*ev).clone());
+            return Ok(ev);
         }
         c.misses += 1;
     }
-    let events = produce().await?;
+    let mut events = produce().await?;
+    events.shrink_to_fit();
+    let events = Arc::new(events);
     let mut c = EVENT_CACHE.lock();
-    event_store(&mut c, file, EventEntry { stamp, events: Arc::new(events.clone()), signature: None });
+    event_store(&mut c, file, EventEntry { stamp, events: events.clone(), signature: None });
     Ok(events)
 }
 
@@ -277,7 +297,7 @@ where
 // Derived (candidate) cache
 // ---------------------------------------------------------------------------
 
-const DERIVED_CACHE_MAX_BYTES: usize = 256 * 1024 * 1024;
+const DERIVED_CACHE_MAX_BYTES: usize = 96 * 1024 * 1024;
 
 struct DerivedEntry {
     stamp: FileStamp,

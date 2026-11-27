@@ -21,6 +21,40 @@ pub mod types;
 pub mod util;
 pub mod version;
 
+/// Return freed heap pages to the OS (call after a heavy scan). One-shot, no
+/// polling. Windows: HeapCompact + trim working set; elsewhere a no-op.
+pub fn trim_memory() {
+    #[cfg(windows)]
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetProcessHeap() -> isize;
+            fn HeapCompact(heap: isize, flags: u32) -> usize;
+            fn GetCurrentProcess() -> isize;
+            fn K32EmptyWorkingSet(process: isize) -> i32;
+        }
+        let heap = GetProcessHeap();
+        if heap != 0 {
+            HeapCompact(heap, 0);
+        }
+        K32EmptyWorkingSet(GetCurrentProcess());
+    }
+}
+
+/// Lower the calling thread's scheduling priority slightly (Windows only).
+pub fn lower_current_thread_priority() {
+    #[cfg(windows)]
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentThread() -> isize;
+            fn SetThreadPriority(thread: isize, priority: i32) -> i32;
+        }
+        // THREAD_PRIORITY_BELOW_NORMAL = -1
+        SetThreadPriority(GetCurrentThread(), -1);
+    }
+}
+
 // Public API surface mirroring `src/index.ts`.
 pub use aggregate::{aggregate, cost_report};
 pub use agents::{agent_path_specs, all_agents as AGENTS, detect_agents, scan_all};

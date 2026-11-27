@@ -181,11 +181,11 @@ fn to_json<T: Serialize>(value: &T) -> String {
 /// restore / multi-machine) unioned with a fresh local re-scan, so CLI totals
 /// never drop below what the dashboard shows. Usage only grows.
 async fn load_full_events() -> Vec<UsageEvent> {
-    let (scanned, cached, imported) = tokio::join!(
-        scan_all(ScanAllOptions::default()),
-        load_scan_cache(),
-        load_imported_events()
-    );
+    // Serialised (not joined) so peak memory stays low: cache + imports first,
+    // then the fresh scan.
+    let cached = load_scan_cache().await;
+    let imported = load_imported_events().await;
+    let scanned = scan_all(ScanAllOptions::default()).await;
     // Fresh Claude Code source rows replace pre-dedupe cache rows.
     let mut local = replace_fresh_agent_source_events(&scanned, &cached, "claude-code");
     local = replace_fresh_agent_session_events(&scanned, &local, "grok");

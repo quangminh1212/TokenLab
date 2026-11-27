@@ -85,8 +85,8 @@ fn walk_sync(
     let flavor = PathFlavor::host();
     let mut subdirs: Vec<String> = Vec::new();
     for entry in rd.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let full = flavor.join(&[dir, name.as_str()]);
+        let name_os = entry.file_name();
+        let name = name_os.to_string_lossy();
         let ft = match entry.file_type() {
             Ok(t) => t,
             Err(_) => continue,
@@ -95,8 +95,9 @@ fn walk_sync(
             if skip_dir(&name) || extra_skip.map_or(false, |l| l.iter().any(|s| s.eq_ignore_ascii_case(&name))) {
                 continue;
             }
-            subdirs.push(full);
+            subdirs.push(flavor.join(&[dir, name.as_ref()]));
         } else if ft.is_file() {
+            let full = flavor.join(&[dir, name.as_ref()]);
             if m.as_ref().map_or(true, |f| f(&name, &full)) {
                 out.push(full);
             }
@@ -159,6 +160,132 @@ pub async fn read_text(file: &str) -> Option<String> {
 pub fn read_text_sync(file: &str) -> Option<String> {
     let bytes = std::fs::read(file).ok()?;
     decode_utf8_js(bytes)
+}
+
+/// RAII guard that drops the current thread to below-normal priority (Windows only) so a
+/// background scan yields to the UI / HTTP threads; restores normal priority on drop because
+/// tokio blocking-pool threads are reused.
+pub struct LowPriority;
+
+#[cfg(windows)]
+mod prio {
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn GetCurrentThread() -> isize;
+        pub fn SetThreadPriority(h: isize, p: i32) -> i32;
+    }
+}
+
+impl LowPriority {
+    pub fn enter() -> LowPriority {
+        #[cfg(windows)]
+        unsafe {
+            // THREAD_PRIORITY_BELOW_NORMAL = -1
+            prio::SetThreadPriority(prio::GetCurrentThread(), -1);
+        }
+        LowPriority
+    }
+}
+
+impl Drop for LowPriority {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            prio::SetThreadPriority(prio::GetCurrentThread(), 0);
+        }
+    }
+}
+
+/// Concatenated multi-frame zstd stream exposed as a single `Read`.
+struct ZstdChain<'a> {
+    buf: &'a [u8],
+    frames: std::vec::IntoIter<super::zstd::ZstdFrameRange>,
+    cur: Option<Box<dyn std::io::Read + 'a>>,
+}
+
+impl<'a> std::io::Read for ZstdChain<'a> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            if self.cur.is_none() {
+                match self.frames.next() {
+                    None => return Ok(0),
+                    Some(r) => {
+                        let d = ruzstd::decoding::StreamingDecoder::new(&self.buf[r.start..r.end])
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+                        self.cur = Some(Box::new(d));
+                    }
+                }
+            }
+            let n = self.cur.as_mut().unwrap().read(out)?;
+            if n == 0 {
+                self.cur = None;
+                continue;
+            }
+            return Ok(n);
+        }
+    }
+}
+
+fn drive_lines<R: std::io::BufRead>(
+    mut r: R,
+    check_limit: bool,
+    f: &mut dyn FnMut(&str),
+) -> Option<u64> {
+    let mut buf: Vec<u8> = Vec::with_capacity(16 * 1024);
+    let mut total: u64 = 0;
+    let mut utf16: usize = 0;
+    loop {
+        buf.clear();
+        let n = r.read_until(b'\n', &mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        let line: &[u8] = if buf.last() == Some(&b'\n') { &buf[..buf.len() - 1] } else { &buf };
+        let s = String::from_utf8_lossy(line);
+        if check_limit {
+            // Mirror V8's string-length limit on the decoded text (lines + separators).
+            utf16 = utf16.saturating_add(super::js::js_len(&s) + 1);
+            if utf16 > JS_MAX_STRING_LENGTH + 1 {
+                return None;
+            }
+        }
+        let t = super::js::js_trim(s.strip_suffix('\r').unwrap_or(&s));
+        if t.is_empty() {
+            continue;
+        }
+        f(t);
+    }
+    Some(total)
+}
+
+/// Stream a (possibly zstd-compressed) text file line by line without ever holding the whole
+/// file in memory. Each non-empty trimmed line (like newline split + CR strip + `js_trim`) is
+/// passed to `f`. Returns the number of (decoded) bytes read, or `None` when the file is
+/// unreadable / corrupt / over the V8 string limit; the caller must then discard anything
+/// `f` accumulated. Blocking: call from `spawn_blocking`.
+pub fn for_each_line_sync(file: &str, zstd: bool, f: &mut dyn FnMut(&str)) -> Option<u64> {
+    if zstd {
+        let raw = std::fs::read(file).ok()?;
+        let frames = match super::zstd::scan_zstd_frames(&raw) {
+            Ok(fr) => fr,
+            Err(e) => {
+                eprintln!("[tokenlab] skipping unreadable zstd file {}: {}", file, e);
+                return None;
+            }
+        };
+        let chain = ZstdChain { buf: &raw, frames: frames.into_iter(), cur: None };
+        let r = drive_lines(std::io::BufReader::with_capacity(64 * 1024, chain), true, f);
+        if r.is_none() {
+            eprintln!("[tokenlab] skipping unreadable zstd file {}", file);
+        }
+        r
+    } else {
+        let fh = std::fs::File::open(file).ok()?;
+        let size = fh.metadata().ok()?.len();
+        let check = size as usize > JS_MAX_STRING_LENGTH;
+        drive_lines(std::io::BufReader::with_capacity(64 * 1024, fh), check, f)
+    }
 }
 
 /// Cheap file identity for cache invalidation.

@@ -20,7 +20,7 @@ use crate::agents::{parse_fn, AgentModule};
 use crate::pricing::apply_pricing;
 use crate::types::{AgentId, UsageEvent};
 use crate::util::{
-    app_data_dir, cached_events_for_file, env_nonempty, host_platform, js_date_parse, js_len, js_num_to_string,
+    app_data_dir, cached_events_arc, env_nonempty, host_platform, js_date_parse, js_len, js_num_to_string,
     js_number_from_str, js_round, js_trim, local_parts, now_ms, path_exists, read_jsonl_cached, read_text,
     stable_id, stamp_file, to_iso_string, utc_parts, walk_files, EventCacheOpts, PathFlavor, WalkOptions,
 };
@@ -531,7 +531,7 @@ impl Ctx {
         }
 
         let f = file.to_string();
-        let file_events = cached_events_for_file(
+        let file_events = cached_events_arc(
             file,
             move || async move {
                 let mut produced = Vec::new();
@@ -543,7 +543,7 @@ impl Ctx {
             EventCacheOpts::default(),
         )
         .await?;
-        self.events.extend(file_events);
+        self.events.extend(file_events.iter().cloned());
         self.remember_signature(file, &signature);
         Ok(())
     }
@@ -1055,7 +1055,7 @@ async fn parse_codex_sqlite_state(root: &str, seen_rollouts: &mut HashSet<String
                             let mtime = stamp.mtime_ms.trunc();
                             let before = events.len();
                             let rp2 = rollout_path.clone();
-                            let res = cached_events_for_file(
+                            let res = cached_events_arc(
                                 &rollout_path,
                                 move || async move {
                                     let mut produced = Vec::new();
@@ -1068,7 +1068,7 @@ async fn parse_codex_sqlite_state(root: &str, seen_rollouts: &mut HashSet<String
                             )
                             .await;
                             if let Ok(file_events) = res {
-                                events.extend(file_events);
+                                events.extend(file_events.iter().cloned());
                                 if events.len() > before && tokens.is_finite() && tokens > 0.0 {
                                     if let Some(i) = events.iter().position(|e| e.id == summary_id) {
                                         events.remove(i);

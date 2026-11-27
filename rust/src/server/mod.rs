@@ -33,7 +33,7 @@ use tokio::task::JoinHandle;
 
 use crate::agents::{self, AdditionalRoots, AgentDone, ScanAllOptions};
 use crate::aggregate::{
-    aggregate, compute_active_usage_rpm, compute_live_request_rate, cost_report, precompute_dashboard_periods,
+    aggregate, compute_active_usage_rpm, compute_active_usage_rpm_iter, compute_live_request_rate, cost_report, precompute_dashboard_periods,
     DashPeriodKey, PrecomputedPeriodStats, SortBy,
 };
 use crate::backup::{
@@ -67,7 +67,7 @@ use crate::rate_guard::{resolve_rate_spec, RateConfigInput};
 use crate::types::{AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent};
 use crate::util::{
     app_data_dir, build_timestamp_index, cwd_string, env_nonempty, filter_by_period,
-    filter_by_period_sorted_detailed, host_platform, js_date_parse, js_num_to_string, js_number_from_str,
+    filter_by_period_sorted_detailed, sorted_period_range, host_platform, js_date_parse, js_num_to_string, js_number_from_str,
     js_to_fixed, js_trim, normalize_model_for_agent, normalize_model_name, now_ms, parse_since, pjoin,
     sort_events_by_time, start_of_day_in_time_zone, to_iso_string, utc_parts, PathFlavor,
 };
@@ -890,6 +890,24 @@ fn refresh_agent_event_counts(base: &[AgentStatus], cache: &[UsageEvent]) -> Vec
 
 /// Filter a read snapshot by period; the parallel index is returned when the
 /// snapshot was sorted.
+/// Return freed heap pages to the OS (Windows keeps them in the process heap).
+fn release_memory_to_os() {
+    #[cfg(windows)]
+    {
+        extern "system" {
+            fn GetProcessHeap() -> *mut std::ffi::c_void;
+            fn HeapCompact(h: *mut std::ffi::c_void, flags: u32) -> usize;
+        }
+        // SAFETY: both are plain kernel32 calls on the process heap handle.
+        unsafe {
+            let h = GetProcessHeap();
+            if !h.is_null() {
+                HeapCompact(h, 0);
+            }
+        }
+    }
+}
+
 fn filter_snapshot(
     events: &[UsageEvent],
     ts: Option<&[f64]>,
@@ -1067,6 +1085,14 @@ impl AppState {
             (events, None)
         };
         let want_index = sorted && !events.is_empty();
+        let mut events = events;
+        let mut ts = ts;
+        if events.capacity() > events.len() + events.len() / 16 {
+            events.shrink_to_fit();
+        }
+        if let Some(t) = ts.as_mut() {
+            t.shrink_to_fit();
+        }
         {
             let mut g = self.inner.lock();
             g.cache = Arc::new(events);
@@ -1079,8 +1105,13 @@ impl AppState {
                 g.cache_ts = None;
             }
             g.period_stats_memo.clear();
+            g.cost_report_memo.clear();
             g.live_rate_memo = None;
             g.dash_period_stats = None;
+        }
+        // Hand freed transient scan memory back to the OS.
+        if sorted {
+            self.handle.spawn_blocking(release_memory_to_os);
         }
         // After a full sorted set (boot / scan finalize): rebuild the period
         // index in the background so the next period switch is a map lookup.
@@ -1139,6 +1170,34 @@ impl AppState {
         })
         .await
         .unwrap_or_default()
+    }
+
+    /// Run `f` over the period slice of the read snapshot without cloning the
+    /// events (binary-searched sub-slice when the snapshot is time-indexed).
+    async fn with_period_slice<R, F>(self: &Arc<Self>, since: Option<String>, until: Option<String>, f: F) -> Option<R>
+    where
+        R: Send + 'static,
+        F: FnOnce(&[UsageEvent], Option<&[f64]>) -> R + Send + 'static,
+    {
+        let snap = self.read_snapshot();
+        tokio::task::spawn_blocking(move || {
+            let tz = configured_time_zone();
+            match snap.ts_slice() {
+                Some(ts) if ts.len() == snap.events.len() => {
+                    match sorted_period_range(ts, since.as_deref(), until.as_deref(), Some(&tz)) {
+                        None => f(&snap.events, Some(ts)),
+                        Some((lo, hi)) if lo < hi => f(&snap.events[lo..hi], Some(&ts[lo..hi])),
+                        Some(_) => f(&[], Some(&[])),
+                    }
+                }
+                _ => {
+                    let e = filter_by_period(&snap.events, since.as_deref(), until.as_deref(), Some(&tz));
+                    f(&e, None)
+                }
+            }
+        })
+        .await
+        .ok()
     }
 
     async fn events_in_period(self: &Arc<Self>, since: Option<String>, until: Option<String>) -> Vec<UsageEvent> {
@@ -1793,6 +1852,10 @@ const UBUNTU_REMOTE_HOME: &str = "/home/ubuntu";
 const MIRROR_SYNC_TIMEOUT_MS: u64 = 300_000;
 const MIRROR_SYNC_INTERVAL_MS: f64 = 60.0 * 60_000.0;
 const PMV_MIRROR_SYNC_INTERVAL_MS: f64 = 60_000.0;
+/// The periodic PMV sync (a Python spawn) only runs while someone has asked for
+/// the PMV usage recently; otherwise the process stays idle.
+const PMV_ACTIVE_WINDOW_MS: f64 = 10.0 * 60_000.0;
+static PMV_LAST_REQUEST_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// Retry delay after a failed VPS/Ubuntu mirror sync.
 const MIRROR_SYNC_RETRY_MS: f64 = 10.0 * 60_000.0;
 /// Last OpenRouter catalog fetch attempt (success or failure), for backoff.
@@ -2672,28 +2735,33 @@ impl AppState {
                         if !scanning {
                             self.ensure_cache_sorted().await;
                         }
-                        let (events, ts) = self.events_in_period_detailed(since.clone(), until.clone()).await;
                         write_heartbeat();
                         let all_aliases = pk == Some(DashPeriodKey::All) && group_by == GroupBy::Model;
                         let sort_c = sort.clone();
                         let since_c = since.clone();
                         let until_c = until.clone();
-                        let (stats_v, rpm_v) = tokio::task::spawn_blocking(move || {
-                            let stats = aggregate(
-                                &events,
-                                group_by,
-                                SortBy::from(sort_c.as_str()),
-                                since_c.as_deref(),
-                                until_c.as_deref(),
-                                ts.as_deref(),
-                                all_aliases,
-                            );
-                            // Period RPM: busiest single minute in the period.
-                            let rpm = compute_active_usage_rpm(&events);
-                            (serde_json::to_value(&stats), serde_json::to_value(&rpm))
-                        })
-                        .await
-                        .map_err(|e| e.to_string())?;
+                        let (stats_v, rpm_v) = self
+                            .with_period_slice(since.clone(), until.clone(), move |events, ts| {
+                                let stats = aggregate(
+                                    events,
+                                    group_by,
+                                    SortBy::from(sort_c.as_str()),
+                                    since_c.as_deref(),
+                                    until_c.as_deref(),
+                                    ts,
+                                    all_aliases,
+                                );
+                                // Period RPM: busiest single minute in the period.
+                                let rpm = match ts {
+                                    Some(t) if t.len() == events.len() => compute_active_usage_rpm_iter(
+                                        events.iter().zip(t.iter().copied()),
+                                    ),
+                                    _ => compute_active_usage_rpm(events),
+                                };
+                                (serde_json::to_value(&stats), serde_json::to_value(&rpm))
+                            })
+                            .await
+                            .ok_or_else(|| "stats task failed".to_string())?;
                         let mut map = match stats_v.map_err(|e| e.to_string())? {
                             Value::Object(m) => m,
                             _ => Map::new(),
@@ -2725,6 +2793,14 @@ impl AppState {
     // ----- /api/phanmemvip-usage ------------------------------------------
 
     async fn route_phanmemvip_usage(self: &Arc<Self>) -> Result<Response, String> {
+        {
+            let now = now_ms();
+            PMV_LAST_REQUEST_MS.store(now as u64, std::sync::atomic::Ordering::Relaxed);
+            let last = self.inner.lock().last_pmv_mirror_sync_at;
+            if now - last >= PMV_MIRROR_SYNC_INTERVAL_MS {
+                let _ = self.sync_phanmemvip_usage_mirror("request");
+            }
+        }
         let date = vietnam_date_key(now_ms());
         let day_start = js_date_parse(&format!("{date}T00:00:00+07:00"));
         let today_events = if day_start.is_finite() {
@@ -2882,16 +2958,16 @@ impl AppState {
             }
             self.ensure_cache_sorted().await;
         }
-        let events = self.events_in_period(since.clone(), until.clone()).await;
         let since_c = since.clone();
         let until_c = until.clone();
-        let report = tokio::task::spawn_blocking(move || {
-            let r = cost_report(&events, since_c.as_deref(), until_c.as_deref());
-            serde_json::to_value(&r)
-        })
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+        let report = self
+            .with_period_slice(since.clone(), until.clone(), move |events, _ts| {
+                let r = cost_report(events, since_c.as_deref(), until_c.as_deref());
+                serde_json::to_value(&r)
+            })
+            .await
+            .ok_or_else(|| "cost task failed".to_string())?
+            .map_err(|e| e.to_string())?;
         let report = Arc::new(report);
         if !scanning {
             let mut g = self.inner.lock();
@@ -2955,6 +3031,31 @@ impl AppState {
         let scanning = self.inner.lock().scanning;
         if !scanning {
             self.ensure_cache_sorted().await;
+        }
+        if agent.is_none() {
+            let tail_ok = {
+                let g = self.inner.lock();
+                matches!(&g.cache_ts, Some(ts) if ts.len() == g.cache.len())
+            };
+            if tail_ok && limit.fract() == 0.0 && limit >= 1.0 && limit < 1.0e9 {
+                let lim = limit as usize;
+                let tail = self
+                    .with_period_slice(since.clone(), until.clone(), move |events, ts| {
+                        if ts.is_some() && events.len() > lim {
+                            let mut v = events[events.len() - lim..].to_vec();
+                            v.reverse();
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    })
+                    .await
+                    .flatten();
+                if let Some(list) = tail {
+                    let count = list.len();
+                    return json_ser(200, json!({ "events": list, "count": count, "liveOnly": false })).await;
+                }
+            }
         }
         let mut list = self.events_in_period(since, until).await;
         if let Some(a) = agent.as_deref() {
@@ -3875,7 +3976,8 @@ impl AppState {
                 g.last_ubuntu_mirror_sync_at,
             )
         };
-        if now - last_pmv >= PMV_MIRROR_SYNC_INTERVAL_MS {
+        let last_req = PMV_LAST_REQUEST_MS.load(std::sync::atomic::Ordering::Relaxed) as f64;
+        if now - last_pmv >= PMV_MIRROR_SYNC_INTERVAL_MS && now - last_req <= PMV_ACTIVE_WINDOW_MS {
             // Runs on its own task; nothing waits for it.
             let _ = self.sync_phanmemvip_usage_mirror("periodic");
         }

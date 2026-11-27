@@ -426,7 +426,10 @@ pub async fn load_config() -> XlabTokenConfig {
     let p = config_path();
     if path_exists(&p).await {
         if let Ok(bytes) = tokio::fs::read(&p).await {
-            let raw = String::from_utf8_lossy(&bytes).into_owned();
+            let raw = match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+            };
             let parsed = serde_json::from_str::<Value>(&raw);
             if !matches!(parsed, Ok(Value::Object(_))) && !raw.trim().is_empty() {
                 // Keep the unreadable file so it is never silently lost.

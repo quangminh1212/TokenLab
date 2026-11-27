@@ -93,7 +93,7 @@ static MEMORY: Lazy<Mutex<Option<Arc<OpenRouterCache>>>> = Lazy::new(|| Mutex::n
 /// Serialises catalog fetches. The stored value is the result of the most
 /// recent fetch so callers that queued behind it share it (the TS `inflight`
 /// promise).
-static FETCH_LOCK: Lazy<tokio::sync::Mutex<Option<Result<Vec<OpenRouterModelEntry>, String>>>> =
+static FETCH_LOCK: Lazy<tokio::sync::Mutex<Option<Result<(), String>>>> =
     Lazy::new(|| tokio::sync::Mutex::new(None));
 static FETCH_GEN: AtomicU64 = AtomicU64::new(0);
 
@@ -306,17 +306,23 @@ pub fn locale_compare(a: &str, b: &str) -> Ordering {
 async fn read_disk_cache() -> Option<OpenRouterCache> {
     let p = openrouter_cache_path();
     let bytes = tokio::fs::read(&p).await.ok()?;
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    let raw: Value = serde_json::from_str(&text).ok()?;
-    let obj = raw.as_object()?;
-    let models = obj.get("models")?.as_array()?;
+    let raw: Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?,
+    };
+    drop(bytes);
+    let Value::Object(mut obj) = raw else { return None };
+    if !obj.get("models")?.is_array() {
+        return None;
+    }
     if !js_truthy(obj.get("fetchedAt")) {
         return None;
     }
     let fetched_at = js_number(obj.get("fetchedAt"));
-    let models: Vec<OpenRouterModelEntry> = models
-        .iter()
-        .filter_map(|m| serde_json::from_value::<OpenRouterModelEntry>(m.clone()).ok())
+    let Some(Value::Array(items)) = obj.remove("models") else { return None };
+    let models: Vec<OpenRouterModelEntry> = items
+        .into_iter()
+        .filter_map(|m| serde_json::from_value::<OpenRouterModelEntry>(m).ok())
         .collect();
     Some(OpenRouterCache {
         fetched_at: if fetched_at.is_nan() { 0.0 } else { fetched_at },
@@ -347,15 +353,20 @@ async fn fetch_network() -> anyhow::Result<Vec<OpenRouterModelEntry>> {
     if !res.status().is_success() {
         anyhow::bail!("OpenRouter models HTTP {}", res.status().as_u16());
     }
-    let body: Value = res.json().await?;
-    let list = body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default();
-    let mut models: Vec<OpenRouterModelEntry> = Vec::new();
+    let mut body: Value = res.json().await?;
+    let list = match body.get_mut("data").map(Value::take) {
+        Some(Value::Array(a)) => a,
+        _ => Vec::new(),
+    };
+    drop(body);
+    let mut models: Vec<OpenRouterModelEntry> = Vec::with_capacity(list.len());
     for item in &list {
         let Some(obj) = item.as_object() else { continue };
         if let Some(entry) = parse_entry(obj) {
             models.push(entry);
         }
     }
+    drop(list);
     models.sort_by(|a, b| {
         let cb = b.created.unwrap_or(0.0);
         let ca = a.created.unwrap_or(0.0);
@@ -364,10 +375,10 @@ async fn fetch_network() -> anyhow::Result<Vec<OpenRouterModelEntry>> {
             .unwrap_or(Ordering::Equal)
             .then_with(|| locale_compare(&a.id, &b.id))
     });
-    let cache = OpenRouterCache { fetched_at: now_ms(), models: models.clone() };
-    set_memory(cache.clone());
-    let _ = write_disk_cache(&cache).await;
-    Ok(models)
+    let cache = OpenRouterCache { fetched_at: now_ms(), models };
+    let mem = set_memory(cache);
+    let _ = write_disk_cache(&mem).await;
+    Ok(mem.models.clone())
 }
 
 async fn fetch_inner(force: bool) -> anyhow::Result<Vec<OpenRouterModelEntry>> {
@@ -416,13 +427,19 @@ pub async fn fetch_open_router_models(force: bool) -> anyhow::Result<Vec<OpenRou
     let mut guard = FETCH_LOCK.lock().await;
     if FETCH_GEN.load(AtomicOrdering::SeqCst) != gen_before {
         // A fetch completed while we were queued: share its result.
-        if let Some(r) = guard.as_ref() {
-            return r.clone().map_err(|e| anyhow::anyhow!(e));
+        match guard.as_ref() {
+            Some(Err(e)) => return Err(anyhow::anyhow!(e.clone())),
+            Some(Ok(())) => {
+                if let Some(mem) = memory_snapshot() {
+                    return Ok(mem.models.clone());
+                }
+            }
+            None => {}
         }
     }
     let result = fetch_inner(force).await;
     *guard = Some(match &result {
-        Ok(v) => Ok(v.clone()),
+        Ok(_) => Ok(()),
         Err(e) => Err(e.to_string()),
     });
     FETCH_GEN.fetch_add(1, AtomicOrdering::SeqCst);

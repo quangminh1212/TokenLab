@@ -5,6 +5,7 @@
 //! requestId/message.id and repeated usage; keep one logical request.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use indexmap::{IndexMap, IndexSet};
 use serde_json::Value;
@@ -15,8 +16,8 @@ use crate::agents::{parse_fn, AgentModule};
 use crate::pricing::apply_pricing;
 use crate::types::{AgentId, UsageEvent};
 use crate::util::{
-    cached_candidates_for_file, env_nonempty, js_date_parse, js_trim, now_ms, path_exists, pjoin, read_jsonl_cached,
-    stable_id, to_iso_string, walk_files, CandidateOpts, PathFlavor, WalkOptions,
+    cached_candidates_for_file, env_nonempty, js_date_parse, js_trim, now_ms, path_exists, pjoin, stable_id,
+    stream_lines, to_iso_string, walk_files, CandidateOpts, PathFlavor, WalkOptions,
 };
 
 /// Local data roots to scan on this machine.
@@ -35,7 +36,7 @@ pub fn roots() -> Vec<String> {
 
 #[derive(Debug, Clone)]
 struct UsageCandidate {
-    file: String,
+    file: Arc<str>,
     /// Non-empty `row.uuid` (only the fields needed later are kept, not the whole row).
     uuid: Option<String>,
     model: Option<String>,
@@ -71,6 +72,28 @@ fn request_key_for(file: &str, row: &Value, message: &Value, row_index: usize) -
         Some(u) => format!("row:{}:{}", file, u),
         None => format!("row:{}:{}", file, row_index),
     }
+}
+
+/// Rough heap footprint of one candidate (cache accounting).
+fn candidate_bytes(c: &UsageCandidate) -> usize {
+    std::mem::size_of::<UsageCandidate>()
+        + c.uuid.as_ref().map_or(0, |s| s.len() + 16)
+        + c.model.as_ref().map_or(0, |s| s.len() + 16)
+        + c.timestamp.as_ref().map_or(0, |s| s.len() + 16)
+        + c.request_key.len()
+        + 16
+}
+
+/// Candidate at (file index, row index); the current file's list is not in `held` yet.
+fn held_at<'a>(
+    held: &'a [Arc<Vec<UsageCandidate>>],
+    current: &'a Arc<Vec<UsageCandidate>>,
+    current_idx: usize,
+    fi: usize,
+    ci: usize,
+) -> &'a UsageCandidate {
+    let list = if fi == current_idx { current } else { &held[fi] };
+    &list[ci]
 }
 
 fn candidate_score(c: &UsageCandidate) -> f64 {
@@ -154,7 +177,10 @@ fn as_plain_object(v: Option<&Value>) -> Option<&Value> {
 pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
     let mut files: IndexSet<String> = IndexSet::new();
 
-    let is_jsonl = |n: &str, _full: &str| n.to_lowercase().ends_with(".jsonl");
+    let is_jsonl = |n: &str, _full: &str| {
+        let b = n.as_bytes();
+        b.len() >= 6 && b[b.len() - 6..].eq_ignore_ascii_case(b".jsonl")
+    };
     for root in roots {
         if !path_exists(root).await {
             continue;
@@ -172,31 +198,44 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
         .iter()
         .flat_map(|root| [pjoin(&[root.as_str(), "projects"]), pjoin(&[root.as_str(), "transcripts"])])
         .collect();
-    let mut by_request: IndexMap<String, UsageCandidate> = IndexMap::new();
+    // (index into `held`, index into that file's candidates) of the winning candidate per request.
+    let mut by_request: IndexMap<String, (usize, usize)> = IndexMap::new();
+    let mut held: Vec<Arc<Vec<UsageCandidate>>> = Vec::new();
     let mut seen_uuids: HashSet<String> = HashSet::new();
 
     for file in files.iter() {
-        let file_owned = file.clone();
+        let file_owned: Arc<str> = Arc::from(file.as_str());
         let file_candidates = cached_candidates_for_file(
             file,
             || async move {
                 let file = file_owned;
-                let rows = match read_jsonl_cached(&file, None).await? {
-                    Some(r) => r,
-                    None => return Ok(Vec::new()),
-                };
-                let mut local: Vec<UsageCandidate> = Vec::new();
-                let mut local_uuids: HashSet<String> = HashSet::new();
-                let mut row_index = 0usize;
-                for row in rows.iter() {
-                    row_index += 1;
-                    if !matches!(row, Value::Object(_)) {
-                        continue;
+                let f2 = file.clone();
+                // Stream the file line by line; only lines mentioning "usage" are decoded into a
+                // `Value` (user / tool-result lines are the large majority). Every valid JSON line
+                // still advances `row_index` exactly like the whole-file parse did.
+                let state = (Vec::<UsageCandidate>::new(), HashSet::<String>::new(), 0usize);
+                let streamed = stream_lines(&f2, state, move |st, line| {
+                    let (local, local_uuids, row_index) = st;
+                    if !line.contains("usage") {
+                        if serde_json::from_str::<serde::de::IgnoredAny>(line).is_ok() {
+                            *row_index += 1;
+                        }
+                        return;
                     }
+                    let row: Value = match serde_json::from_str(line) {
+                        Ok(v) => v,
+                        Err(_) => return,
+                    };
+                    *row_index += 1;
+                    let row_index = *row_index;
+                    if !matches!(row, Value::Object(_)) {
+                        return;
+                    }
+                    let row = &row;
                     let uuid = non_empty_string(row.get("uuid"));
                     if let Some(u) = uuid {
                         if local_uuids.contains(u) {
-                            continue;
+                            return;
                         }
                     }
                     let message: &Value = match as_plain_object(row.get("message")) {
@@ -208,12 +247,12 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
                     if (row_type.is_some() && row_type != Some("assistant"))
                         || (row_type.is_none() && message_role.is_some() && message_role != Some("assistant"))
                     {
-                        continue;
+                        return;
                     }
                     let usage = as_plain_object(message.get("usage")).or_else(|| as_plain_object(row.get("usage")));
                     let buckets = match extract_token_buckets(usage) {
                         Some(b) => b,
-                        None => continue,
+                        None => return,
                     };
                     if let Some(u) = uuid {
                         local_uuids.insert(u.to_string());
@@ -233,14 +272,22 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
                         request_key: request_key_for(&file, row, message, row_index),
                         row_index,
                     });
+                })
+                .await;
+                match streamed {
+                    Some(((mut local, _, _), _)) => {
+                        local.shrink_to_fit();
+                        Ok(local)
+                    }
+                    None => Ok(Vec::new()),
                 }
-                Ok(local)
             },
-            CandidateOpts { max_bytes: None, estimate_bytes: None },
+            CandidateOpts { max_bytes: None, estimate_bytes: Some(candidate_bytes) },
         )
         .await?;
 
-        for candidate in file_candidates.iter() {
+        let fi = held.len();
+        for (ci, candidate) in file_candidates.iter().enumerate() {
             if let Some(uuid) = candidate.uuid.as_deref() {
                 if seen_uuids.contains(uuid) {
                     continue;
@@ -249,16 +296,19 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
             }
             let replace = match by_request.get(&candidate.request_key) {
                 None => true,
-                Some(prev) => is_richer_candidate(candidate, prev),
+                Some(&(pf, pc)) => is_richer_candidate(candidate, held_at(&held, &file_candidates, fi, pf, pc)),
             };
             if replace {
-                by_request.insert(candidate.request_key.clone(), candidate.clone());
+                by_request.insert(candidate.request_key.clone(), (fi, ci));
             }
         }
+        held.push(file_candidates);
     }
+    drop(seen_uuids);
 
     let mut events: Vec<UsageEvent> = Vec::new();
-    for candidate in by_request.values() {
+    for &(fi, ci) in by_request.values() {
+        let candidate = &held[fi][ci];
         let b = &candidate.buckets;
         let input_tokens = if b.input_includes_cache == Some(true) {
             (b.input_tokens - b.cache_read_tokens).max(0.0)
@@ -279,7 +329,7 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
             cache_read_tokens: b.cache_read_tokens,
             cache_write_tokens: b.cache_write_tokens,
             workspace: workspace_from_file(&candidate.file, &all_roots),
-            source_path: candidate.file.clone(),
+            source_path: candidate.file.to_string(),
             estimated: Some(false),
             // Claude Code always writes the cache buckets, so a zero here is a real
             // measurement rather than a missing field.

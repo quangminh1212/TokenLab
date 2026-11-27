@@ -1,17 +1,43 @@
 //! JSONL / JSON readers with stamp-keyed caching, plus `num()`.
 
 use super::cache::{jsonl_cache_lookup, jsonl_cache_miss, jsonl_cache_store};
-use super::fsx::{decode_utf8_js, read_text, stamp_file};
+use super::fsx::{for_each_line_sync, read_text, stamp_file, LowPriority};
 use super::js::{js_len, js_number_from_str, js_trim};
-use super::zstd::decompress_zstd_frames;
 use anyhow::Result;
+use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
+
+/// Bounds concurrent whole-file parses (RAM + CPU peak) across all agents.
+static PARSE_GATE: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(2));
 
 /// Approximate memory blow-up of a parsed `Value` tree over its source text (cache accounting).
 const PARSED_SIZE_FACTOR: usize = 6;
 /// Whole-document JSON files larger than this are skipped (avoids multi-GB `Value` trees).
 const JSON_MAX_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Stream `file` (plain or zstd) line by line through `f`, accumulating into `state`, on one
+/// blocking thread at below-normal priority. At most two files are streamed at a time across
+/// all agents so peak RAM/CPU stays bounded. `None` when the file is unreadable (state dropped).
+pub async fn stream_lines<S, F>(file: &str, state: S, mut f: F) -> Option<(S, u64)>
+where
+    S: Send + 'static,
+    F: FnMut(&mut S, &str) + Send + 'static,
+{
+    let _permit = PARSE_GATE.acquire().await.ok();
+    let zstd = is_zstd_path(file);
+    let path = file.to_string();
+    tokio::task::spawn_blocking(move || {
+        let _low = LowPriority::enter();
+        let mut state = state;
+        let total = for_each_line_sync(&path, zstd, &mut |line| f(&mut state, line))?;
+        Some((state, total))
+    })
+    .await
+    .ok()
+    .flatten()
+}
 
 /// `/\.(?:zst|zstd)$/i`
 pub fn is_zstd_path(file: &str) -> bool {
@@ -51,37 +77,20 @@ pub async fn read_jsonl_cached(file: &str, max_bytes: Option<u64>) -> Result<Opt
         return Ok(Some(rows));
     }
     jsonl_cache_miss();
-    let text: String = if is_zstd_path(file) {
-        // A torn/locked/corrupt archive must not abort the whole agent's parse: skip this file.
-        let raw = match tokio::fs::read(file).await {
-            Ok(r) => r,
-            Err(_) => return Ok(None),
-        };
-        let frames = match tokio::task::spawn_blocking(move || decompress_zstd_frames(&raw)).await {
-            Ok(Ok(f)) => f,
-            Ok(Err(e)) => {
-                eprintln!("[tokenlab] skipping unreadable zstd file {}: {}", file, e);
-                return Ok(None);
-            }
-            Err(_) => return Ok(None),
-        };
-        let joined: Vec<u8> = frames.into_iter().flatten().collect();
-        // `Buffer.toString("utf8")` throws ERR_STRING_TOO_LONG past V8's string limit.
-        match decode_utf8_js(joined) {
-            Some(t) => t,
-            None => return Ok(None),
+    let (mut rows, total) = match stream_lines(file, Vec::<Value>::new(), |rows, line| {
+        if let Ok(v) = serde_json::from_str::<Value>(line) {
+            rows.push(v);
         }
-    } else {
-        match read_text(file).await {
-            Some(t) => t,
-            None => return Ok(None),
-        }
+    })
+    .await
+    {
+        Some(x) => x,
+        None => return Ok(None),
     };
-    let text_len = js_len(&text);
-    let rows = Arc::new(parse_jsonl(&text));
-    drop(text);
+    rows.shrink_to_fit();
+    let rows = Arc::new(rows);
     // Parsed `Value` trees are several times larger than the source text.
-    jsonl_cache_store(file, stamp, rows.clone(), text_len.saturating_mul(PARSED_SIZE_FACTOR));
+    jsonl_cache_store(file, stamp, rows.clone(), (total as usize).saturating_mul(PARSED_SIZE_FACTOR));
     Ok(Some(rows))
 }
 

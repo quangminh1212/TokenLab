@@ -395,6 +395,10 @@ struct Acc {
 }
 
 fn bump(map: &mut IndexMap<String, GroupRow>, key: &str, e: &UsageEvent, parts: &CostParts, info: &EventInfo) {
+    if let Some(row) = map.get_mut(key) {
+        add_with_parts(&mut row.totals, e, parts, info);
+        return;
+    }
     let row = map.entry(key.to_string()).or_insert_with(|| new_row(key));
     add_with_parts(&mut row.totals, e, parts, info);
 }
@@ -429,6 +433,8 @@ pub fn precompute_dashboard_periods(
 
     let n = events.len();
     let use_ts = timestamps_ms.len() == n;
+    // day/hour keys are identical for every event inside the same UTC hour.
+    let mut hour_cache: (i64, String, String) = (i64::MIN, String::new(), String::new());
 
     for (i, e) in events.iter().enumerate() {
         let t = if use_ts { timestamps_ms[i] } else { js_date_parse(&e.timestamp) };
@@ -440,8 +446,16 @@ pub fn precompute_dashboard_periods(
         let agent_key = e.agent.as_str();
         let model_key = model_group_key(e, false);
         let all_time_model_key = model_group_key(e, true);
-        let day_key = iso_prefix(t, 10).unwrap_or_default();
-        let hour_key = format!("{}:00", iso_prefix(t, 13).unwrap_or_default());
+        let hb = (t / 3_600_000.0).floor() as i64;
+        if hour_cache.0 != hb {
+            hour_cache = (
+                hb,
+                iso_prefix(t, 10).unwrap_or_default(),
+                format!("{}:00", iso_prefix(t, 13).unwrap_or_default()),
+            );
+        }
+        let day_key = hour_cache.1.as_str();
+        let hour_key = hour_cache.2.as_str();
         let unresolved = has_unresolved_model(e, false);
         let unresolved_all = has_unresolved_model(e, true);
 
@@ -468,10 +482,10 @@ pub fn precompute_dashboard_periods(
                     &info,
                 );
             }
-            bump(&mut a.day, &day_key, e, &parts, &info);
+            bump(&mut a.day, day_key, e, &parts, &info);
             // Hour series only needed for today/24h charts
             if pk == DashPeriodKey::Today || pk == DashPeriodKey::H24 {
-                bump(&mut a.hour, &hour_key, e, &parts, &info);
+                bump(&mut a.hour, hour_key, e, &parts, &info);
             }
             a.rpm_events.push(i);
         }
@@ -495,7 +509,9 @@ pub fn precompute_dashboard_periods(
     for pk in keys {
         let a = acc.shift_remove(&pk).unwrap();
         let since = if pk == DashPeriodKey::All { None } else { Some(pk.as_str()) };
-        let rpm_events: Vec<UsageEvent> = a.rpm_events.iter().map(|&i| events[i].clone()).collect();
+        let rpm_idx = a.rpm_events;
+        let rpm_idx_ref = &rpm_idx;
+        let rpm_rows = move || rpm_idx_ref.iter().map(move |&i| (&events[i], if use_ts { timestamps_ms[i] } else { js_date_parse(&events[i].timestamp) }));
         let mut agent_stats = finish(a.agent, GroupBy::Agent, SortBy::Cost, since);
         agent_stats.totals = a.totals.clone();
         let mut model_stats = finish(a.model, GroupBy::Model, SortBy::Cost, since);
@@ -512,10 +528,9 @@ pub fn precompute_dashboard_periods(
             (&mut day_stats, GroupBy::Day),
             (&mut hour_stats, GroupBy::Hour),
         ] {
-            let rpm_map = rpm_by_group(
-                &rpm_events,
+            let rpm_map = rpm_by_group_iter(
+                rpm_rows(),
                 by,
-                None,
                 RpmScope::Table,
                 pk == DashPeriodKey::All && by == GroupBy::Model,
             );
@@ -535,7 +550,7 @@ pub fn precompute_dashboard_periods(
                     day: day_stats,
                     hour: hour_stats,
                 },
-                usage_rpm: compute_active_usage_rpm(&rpm_events),
+                usage_rpm: compute_active_usage_rpm_iter(rpm_rows()),
             },
         );
     }
@@ -596,16 +611,24 @@ pub struct ActiveUsageRpm {
 /// peak (one timestamp for a whole day's requests would fake a huge peak) but
 /// still count toward `requests` and `activeMinutes`.
 pub fn compute_active_usage_rpm(events: &[UsageEvent]) -> ActiveUsageRpm {
+    compute_active_usage_rpm_iter(events.iter().map(|e| (e, js_date_parse(&e.timestamp))))
+}
+
+/// Same as [`compute_active_usage_rpm`] over borrowed rows with precomputed
+/// timestamps (ms), so no event clones or re-parsing are needed.
+pub fn compute_active_usage_rpm_iter<'a, I>(rows: I) -> ActiveUsageRpm
+where
+    I: IntoIterator<Item = (&'a UsageEvent, f64)>,
+{
     let mut requests = 0.0;
     // minute bucket -> requests in it (all rows)
     let mut per_minute: HashMap<i64, f64> = HashMap::new();
     // Live requests only: the peak ignores aggregated rollups.
     let mut live_per_minute: HashMap<i64, f64> = HashMap::new();
 
-    for e in events {
+    for (e, t) in rows {
         let reqs = event_request_count(e);
         requests += reqs;
-        let t = js_date_parse(&e.timestamp);
         if !t.is_finite() {
             continue;
         }
@@ -668,18 +691,38 @@ pub fn rpm_by_group(
 ) -> HashMap<String, f64> {
     let n = events.len();
     let ts = timestamps_ms.filter(|t| t.len() == n);
+    rpm_by_group_iter(
+        events.iter().enumerate().map(|(i, e)| {
+            let t = match ts {
+                Some(t) => t[i],
+                None => js_date_parse(&e.timestamp),
+            };
+            (e, t)
+        }),
+        by,
+        scope,
+        all_time_model_aliases,
+    )
+}
+
+/// [`rpm_by_group`] over borrowed rows with precomputed timestamps (ms).
+pub fn rpm_by_group_iter<'a, I>(
+    rows: I,
+    by: GroupBy,
+    scope: RpmScope,
+    all_time_model_aliases: bool,
+) -> HashMap<String, f64>
+where
+    I: IntoIterator<Item = (&'a UsageEvent, f64)>,
+{
     // key -> (minute bucket -> requests in that minute); peak resolved at the end.
     let mut acc: HashMap<String, HashMap<i64, f64>> = HashMap::new();
 
-    for (i, e) in events.iter().enumerate() {
+    for (e, t) in rows {
         // Aggregated rollups have no trustworthy minute — always excluded.
         if e.estimated == Some(true) {
             continue;
         }
-        let t = match ts {
-            Some(t) => t[i],
-            None => js_date_parse(&e.timestamp),
-        };
         if !t.is_finite() {
             continue;
         }

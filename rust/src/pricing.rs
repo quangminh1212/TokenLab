@@ -384,7 +384,7 @@ struct LookupCache {
     /// Held (not just compared) so a freed config can never alias a new one.
     config: Option<Arc<crate::config::XlabTokenConfig>>,
     catalog_at: f64,
-    map: HashMap<String, RateLookup>,
+    map: HashMap<String, Arc<RateLookup>>,
 }
 
 static LOOKUP_CACHE: Lazy<Mutex<LookupCache>> =
@@ -632,7 +632,10 @@ fn compute_rate(custom: &CustomRates, model: Option<&str>) -> RateLookup {
     }
 }
 
-pub fn get_rate_for_model(model: Option<&str>) -> RateLookup {
+/// Upper bound on distinct cached model strings (user data can hold garbage names).
+const LOOKUP_CACHE_MAX: usize = 4096;
+
+fn get_rate_arc(model: Option<&str>) -> Arc<RateLookup> {
     let cfg = get_config_sync();
     let catalog_at = get_open_router_fetched_at();
     let cache_key = match model {
@@ -646,11 +649,18 @@ pub fn get_rate_for_model(model: Option<&str>) -> RateLookup {
             return hit.clone();
         }
     }
-    let result = compute_rate(custom_rates_of(&cfg), model);
+    let result = Arc::new(compute_rate(custom_rates_of(&cfg), model));
     let mut cache = LOOKUP_CACHE.lock();
     sync_cache_state(&mut cache, &cfg, catalog_at);
+    if cache.map.len() >= LOOKUP_CACHE_MAX {
+        cache.map.clear();
+    }
     cache.map.insert(cache_key, result.clone());
     result
+}
+
+pub fn get_rate_for_model(model: Option<&str>) -> RateLookup {
+    (*get_rate_arc(model)).clone()
 }
 
 /// Rate-weighted cost split (`priceCostParts` result).
@@ -678,7 +688,18 @@ pub fn price_cost_parts(
     cache_write_tokens: f64,
     actual_total: Option<f64>,
 ) -> CostParts {
-    let rate = get_rate_for_model(model).rate;
+    let lookup = get_rate_arc(model);
+    price_cost_parts_with_rate(&lookup.rate, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, actual_total)
+}
+
+fn price_cost_parts_with_rate(
+    rate: &ModelRate,
+    input_tokens: f64,
+    output_tokens: f64,
+    cache_read_tokens: f64,
+    cache_write_tokens: f64,
+    actual_total: Option<f64>,
+) -> CostParts {
     // xAI long-context: prompt (input + cache read) >= threshold -> 2x all rates for the request
     let prompt_tokens = or_zero(input_tokens) + or_zero(cache_read_tokens);
     let long_mult = match rate.long_context_threshold_tokens {
@@ -723,9 +744,12 @@ pub fn price_tokens(
     cache_write_tokens: f64,
     currency: &str,
 ) -> PricedTokens {
-    let RateLookup { rate, source, .. } = get_rate_for_model(model);
+    let lookup = get_rate_arc(model);
+    let rate = &lookup.rate;
+    let source = lookup.source;
     let cost =
-        price_cost_parts(model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, None).table_total;
+        price_cost_parts_with_rate(rate, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, None)
+            .table_total;
     if input_tokens + output_tokens + cache_read_tokens + cache_write_tokens == 0.0 {
         return PricedTokens {
             estimated_cost: 0.0,
