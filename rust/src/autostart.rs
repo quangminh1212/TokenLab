@@ -277,8 +277,20 @@ pub async fn write_stop_sentinel() {
 
 pub async fn clear_stop_sentinel() {
     log(&format!("Clearing stop sentinel: {}", stop_sentinel_path()));
-    if let Err(e) = tokio::fs::remove_file(stop_sentinel_path()).await {
-        log_error(&format!("Failed to clear stop sentinel: {e}"));
+    // NotFound is the normal case (no prior Quit; the supervisor also deletes it).
+    for attempt in 0..3 {
+        match tokio::fs::remove_file(stop_sentinel_path()).await {
+            Ok(()) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 2 => {
+                // Antivirus / supervisor may briefly hold the file on Windows.
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+            Err(e) => {
+                log_error(&format!("Failed to clear stop sentinel: {e}"));
+                return;
+            }
+        }
     }
 }
 
@@ -292,14 +304,38 @@ pub async fn clear_stop_sentinel() {
 const SUPERVISOR_TEMPLATE: &str = r##"' TokenLab autostart supervisor (generated) - anti-crash / anti-hang
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-On Error Resume Next
-Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-On Error Goto 0
+Set wmi = Nothing
 stopFile = "@@STOP@@"
 hbFile = "@@HB@@"
 logFile = "@@LOG@@"
 exePath = "@@EXE@@"
 exeName = "@@EXENAME@@"
+
+' WMI may not be ready right after login: (re)acquire lazily, never give up.
+Function EnsureWmi()
+  EnsureWmi = False
+  If IsObject(wmi) Then
+    If Not wmi Is Nothing Then
+      EnsureWmi = True
+      Exit Function
+    End If
+  End If
+  On Error Resume Next
+  Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+  If Err.Number <> 0 Then
+    Err.Clear
+    Set wmi = Nothing
+  End If
+  On Error Goto 0
+  If IsObject(wmi) Then
+    If Not wmi Is Nothing Then EnsureWmi = True
+  End If
+End Function
+
+For wmiTry = 1 To 30
+  If EnsureWmi() Then Exit For
+  WScript.Sleep 1000
+Next
 If fso.FileExists(stopFile) Then fso.DeleteFile stopFile, True
 
 Sub LogLine(msg)
@@ -314,6 +350,7 @@ End Sub
 Function ProcessAlive(pid)
   ProcessAlive = False
   If pid <= 0 Then Exit Function
+  If Not EnsureWmi() Then Exit Function
   On Error Resume Next
   Dim col, p
   Set col = wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE ProcessId=" & pid)
@@ -333,6 +370,7 @@ End Sub
 ' Keep only the oldest wscript/cscript running THIS launcher (full path).
 ' Do NOT match bare "autostart.vbs" — legacy xlab-token\autostart.vbs would race and kill us.
 Sub EnsureSingleInstance()
+  If Not EnsureWmi() Then Exit Sub
   On Error Resume Next
   Dim col, p, cmd, minPid, n, selfKey
   selfKey = LCase(WScript.ScriptFullName)
@@ -369,6 +407,7 @@ End If
 
 Function FindExistingServe()
   FindExistingServe = 0
+  If Not EnsureWmi() Then Exit Function
   On Error Resume Next
   Dim col, p, cmd
   Set col = wmi.ExecQuery("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='" & exeName & "'")
@@ -386,6 +425,7 @@ End Function
 
 Function StartServe()
   StartServe = 0
+  If Not EnsureWmi() Then Exit Function
   On Error Resume Next
   Dim startup, proc, ret, pid, existing, cmdLine
   existing = FindExistingServe()
@@ -557,7 +597,7 @@ async fn reg_query_run() -> Option<String> {
     let out = exec_file(
         "reg",
         &svec(&["query", RUN_KEY, "/v", AUTOSTART_NAME]),
-        None,
+        Some(5000),
     )
     .await
     .ok()?;
@@ -580,7 +620,7 @@ async fn reg_set_run(command: &str) -> Result<(), String> {
             command,
             "/f",
         ]),
-        None,
+        Some(5000),
     )
     .await
     .map(|_| ())
@@ -590,7 +630,7 @@ async fn reg_delete_run() -> bool {
     exec_file(
         "reg",
         &svec(&["delete", RUN_KEY, "/v", AUTOSTART_NAME, "/f"]),
-        None,
+        Some(5000),
     )
     .await
     .is_ok()
@@ -796,12 +836,18 @@ pub async fn list_supervisor_pids() -> Vec<u32> {
     if !cfg!(windows) {
         return Vec::new();
     }
-    let args = svec(&[
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Get-CimInstance Win32_Process -Filter \"Name='wscript.exe' OR Name='cscript.exe'\" | Where-Object { $_.CommandLine -match 'autostart\\.vbs' } | Select-Object -ExpandProperty ProcessId",
-    ]);
+    // Anchor on OUR launcher's full path so another product's (or the legacy
+    // xlab-token) autostart.vbs is never listed and taskkilled.
+    let key = launcher_path().to_lowercase().replace('\'', "''");
+    let script = format!(
+        "Get-CimInstance Win32_Process -Filter \"Name='wscript.exe' OR Name='cscript.exe'\" | Where-Object {{ $_.CommandLine -and $_.CommandLine.ToLower().Contains('{key}') }} | Select-Object -ExpandProperty ProcessId"
+    );
+    let args = vec![
+        "-NoProfile".to_string(),
+        "-NonInteractive".to_string(),
+        "-Command".to_string(),
+        script,
+    ];
     match exec_file("powershell.exe", &args, Some(8000)).await {
         Ok(stdout) => stdout
             .lines()

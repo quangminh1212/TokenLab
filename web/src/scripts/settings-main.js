@@ -89,9 +89,38 @@ let lastHealth = null;
  */
 let lastScanValues = null;
 
-async function loadHealth() {
+/** fetch + JSON with timeout and HTTP status handling. Error bodies with JSON are returned as-is for non-ok. */
+async function postJson(url, opts = {}, ms = 120000) {
+  const o = { ...opts };
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    o.signal = AbortSignal.timeout(ms);
+  }
+  let r;
   try {
-    const h = await fetch('/api/health').then((r) => r.json());
+    r = await fetch(url, o);
+  } catch (e) {
+    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      throw new Error('Request timed out (it may still be running on the server)');
+    }
+    throw e;
+  }
+  const text = await r.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON body */ }
+  if (!r.ok) {
+    const msg = data && data.error && data.error.message;
+    throw new Error(msg || 'HTTP ' + r.status);
+  }
+  return data || {};
+}
+
+let healthBusy = false;
+// Returns true/false for scanning, or null when the API is unreachable.
+async function loadHealth() {
+  if (healthBusy) return lastHealth ? Boolean(lastHealth.scanning) : null;
+  healthBusy = true;
+  try {
+    const h = await postJson('/api/health', {}, 5000);
     lastHealth = h;
     $('meta').textContent = `v${h.version || ''}`;
     $('versionLabel').textContent = h.version || '\u2014';
@@ -102,9 +131,14 @@ async function loadHealth() {
     $('runtimeLabel').textContent = `${h.platform || '\u2014'} \u00B7 ${h.node || '\u2014'}`;
     if (h.todayStartsAt) {
       $('todayStartsLabel').textContent = formatTodayStart(h.todayStartsAt, h.timezone);
-    }        updateScanWordHint(h, lastScanValues);
+    }
+    updateScanWordHint(h, lastScanValues);
+    return Boolean(h.scanning);
   } catch {
     $('meta').innerHTML = '<span class="err">API offline</span>';
+    return null;
+  } finally {
+    healthBusy = false;
   }
 }
 
@@ -368,11 +402,11 @@ $('backupRestoreFile').onchange = async () => {
   try {
     const text = await file.text();
     const backup = JSON.parse(text);
-    const res = await fetch('/api/backup/restore', {
+    const res = await postJson('/api/backup/restore', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ backup }),
-    }).then((r) => r.json());
+    }, 300000);
     if (res.error) throw new Error(res.error.message || 'Import failed');
     const parts = [
       `${res.customRateCount || 0} rates`,
@@ -395,7 +429,7 @@ $('backupGistBtn').onclick = async () => {
   st.textContent = 'Uploading tokenlab.json\u2026';
   try {
     const token = ($('gistToken').value || '').trim();
-    const res = await fetch('/api/backup/gist', {
+    const res = await postJson('/api/backup/gist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -404,7 +438,7 @@ $('backupGistBtn').onclick = async () => {
         public: false,
         scope: 'period-stats',
       }),
-    }).then((r) => r.json());
+    }, 120000);
     if (res.error) throw new Error(res.error.message || 'Gist backup failed');
     const g = res.gist || {};
     const models = res.modelCount || 0;
@@ -436,15 +470,18 @@ $('backupGistBtn').onclick = async () => {
 
 async function saveAutoDailyPref() {
   const on = $('gistAutoDaily') ? $('gistAutoDaily').checked : true;
-  await fetch('/api/config', {
+  await postJson('/api/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ backup: { autoDaily: on } }),
-  });
+  }, 10000);
 }
 if ($('gistAutoDaily')) {
   $('gistAutoDaily').onchange = () => {
-    void saveAutoDailyPref().catch(() => {});
+    void saveAutoDailyPref().catch(() => {
+      // Revert so the toggle reflects what the server has.
+      if ($('gistAutoDaily')) $('gistAutoDaily').checked = !$('gistAutoDaily').checked;
+    });
   };
 }
 
@@ -558,13 +595,19 @@ $('rescanBtn').onclick = async () => {
   $('rescanBtn').disabled = true;
   $('rescanStatus').textContent = 'Starting\u2026';
   try {
-    const r = await fetch('/api/scan?async=1', { method: 'POST' }).then((x) => x.json());
+    const r = await postJson('/api/scan?async=1', { method: 'POST' }, 15000);
     $('rescanStatus').textContent = r.accepted ? 'Scanning\u2026' : 'Done';
     let n = 0;
     const tick = async () => {
       n += 1;
-      await loadHealth();
-      const scanning = $('scanningLabel').textContent === 'Running';
+      const sc = await loadHealth();
+      if (sc === null) {
+        $('rescanStatus').textContent = 'Server unreachable';
+        setTimeout(() => { $('rescanStatus').textContent = ''; }, 2200);
+        $('rescanBtn').disabled = false;
+        return;
+      }
+      const scanning = sc === true;
       if (scanning && n < 40) {
         setTimeout(tick, 800);
       } else {

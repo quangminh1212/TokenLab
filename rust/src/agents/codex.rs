@@ -659,7 +659,13 @@ async fn parse_codex_internal(roots: Vec<String>, options: ParseCodexOptions) ->
             } else {
                 2
             };
-            let files = walk_files(base, WalkOptions::new().max_depth(depth).matching(walk_match_name)).await;
+            let mut files = walk_files(base, WalkOptions::new().max_depth(depth).matching(walk_match_name)).await;
+            if !options.recent_only && *base == root && scan_roots.len() > 1 {
+                // Files under the preferred dirs were already consumed; skip the duplicate work.
+                let prefixes: Vec<String> =
+                    scan_roots.iter().filter(|b| **b != root && !is_noise_path(b)).map(|b| format!("{}{}", b, flavor.sep())).collect();
+                files.retain(|f| !prefixes.iter().any(|p| f.starts_with(p.as_str())));
+            }
             let hot_list: Vec<String> = if options.recent_only {
                 let mut h: Vec<String> =
                     files.iter().filter(|f| flavor.basename(f).starts_with("rollout-")).cloned().collect();

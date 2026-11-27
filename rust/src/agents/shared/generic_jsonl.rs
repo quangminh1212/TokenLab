@@ -6,10 +6,13 @@ use crate::pricing::apply_pricing;
 use crate::types::{AgentId, UsageEvent};
 use crate::util::{
     js_num_to_string, path_exists, read_json_cached, read_jsonl_cached, stable_id, walk_files, WalkMatch,
-    WalkOptions,
+    WalkOptions, ELECTRON_CACHE_DIRS,
 };
 use serde_json::Value;
 use std::sync::Arc;
+
+/// Skip individual JSONL logs larger than this (avoids multi-GB parse trees).
+const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct GenericJsonlOptions {
@@ -51,14 +54,18 @@ pub async fn parse_generic_jsonl(roots: &[String], options: &GenericJsonlOptions
         }
         let files = walk_files(
             root,
-            WalkOptions { max_depth: Some(options.max_depth.unwrap_or(10)), matcher: Some(matcher.clone()) },
+            WalkOptions {
+                max_depth: Some(options.max_depth.unwrap_or(10)),
+                matcher: Some(matcher.clone()),
+                skip_dirs: Some(ELECTRON_CACHE_DIRS),
+            },
         )
         .await;
 
         for file in files {
             // Cached JSONL parse: unchanged files skip read + JSON.parse.
             let rows = if file.ends_with(".jsonl") {
-                read_jsonl_cached(&file, None).await?
+                read_jsonl_cached(&file, Some(MAX_FILE_BYTES)).await?
             } else {
                 read_json_cached(&file).await
             };

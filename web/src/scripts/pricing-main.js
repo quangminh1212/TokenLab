@@ -97,6 +97,7 @@ let pricingDraft = {};
 let openrouter = [];
 let seenSet = new Set();
 let customRates = {};
+let customRatesLoaded = false;
 let quickFilter = 'all';
 let renderTimer = 0;
 
@@ -597,6 +598,7 @@ async function loadPricing(opts = {}) {
     const data = await res.json();
     openrouter = Array.isArray(data.openrouter) ? data.openrouter : [];
     customRates = data.customRates || {};
+    customRatesLoaded = true;
     seenSet = new Set((data.seenModels || []).map((m) => String(m).toLowerCase()));
     // Also add short names from seen
     for (const s of [...seenSet]) {
@@ -645,17 +647,27 @@ async function pushRatesLive(opts = {}) {
     liveQueued = true;
     return;
   }
+  if (!customRatesLoaded) {
+    // Never send replace:true built from a customRates map that failed to load.
+    setStatus('Not loaded yet — click Refresh');
+    return;
+  }
   collectDraftFromDom();
   const custom = { ...customRates, ...pricingDraft };
   liveSaving = true;
   if (manual) $('pricingSave').disabled = true;
   setStatus(manual ? 'Saving\u2026' : 'Updating\u2026');
   try {
-    const res = await fetch('/api/pricing', {
+    const resp = await fetch('/api/pricing', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ customRates: custom, replace: true, live: !manual }),
-    }).then((r) => r.json());
+      signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(20000) : undefined,
+    });
+    const res = await resp.json().catch(() => null);
+    if (!resp.ok || !res || res.error || typeof res.customRates !== 'object' || res.customRates === null) {
+      throw new Error('save failed');
+    }
     pricingDraft = {};
     customRates = res.customRates || {};
     setStatus(manual
@@ -782,10 +794,15 @@ $('priceAdd').onclick = () => {
 $('pricingReload').onclick = async () => {
   if (liveTimer) clearTimeout(liveTimer);
   pricingDraft = {};
+  const btn = $('pricingReload');
+  if (btn.disabled) return;
+  btn.disabled = true;
   try {
-    await fetch('/api/models/refresh', { method: 'POST' });
-  } catch { /* ignore */ }
-  await loadPricing({ refresh: true });
+    // loadPricing({refresh:true}) already forces the OpenRouter fetch server-side.
+    await loadPricing({ refresh: true });
+  } finally {
+    btn.disabled = false;
+  }
 };
 
 $('pricingSave').onclick = async () => {

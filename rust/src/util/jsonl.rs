@@ -8,6 +8,11 @@ use anyhow::Result;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// Approximate memory blow-up of a parsed `Value` tree over its source text (cache accounting).
+const PARSED_SIZE_FACTOR: usize = 6;
+/// Whole-document JSON files larger than this are skipped (avoids multi-GB `Value` trees).
+const JSON_MAX_BYTES: u64 = 128 * 1024 * 1024;
+
 /// `/\.(?:zst|zstd)$/i`
 pub fn is_zstd_path(file: &str) -> bool {
     let l = file.to_ascii_lowercase();
@@ -47,11 +52,25 @@ pub async fn read_jsonl_cached(file: &str, max_bytes: Option<u64>) -> Result<Opt
     }
     jsonl_cache_miss();
     let text: String = if is_zstd_path(file) {
-        let raw = tokio::fs::read(file).await?;
-        let frames = tokio::task::spawn_blocking(move || decompress_zstd_frames(&raw)).await??;
+        // A torn/locked/corrupt archive must not abort the whole agent's parse: skip this file.
+        let raw = match tokio::fs::read(file).await {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
+        let frames = match tokio::task::spawn_blocking(move || decompress_zstd_frames(&raw)).await {
+            Ok(Ok(f)) => f,
+            Ok(Err(e)) => {
+                eprintln!("[tokenlab] skipping unreadable zstd file {}: {}", file, e);
+                return Ok(None);
+            }
+            Err(_) => return Ok(None),
+        };
         let joined: Vec<u8> = frames.into_iter().flatten().collect();
         // `Buffer.toString("utf8")` throws ERR_STRING_TOO_LONG past V8's string limit.
-        decode_utf8_js(joined).ok_or_else(|| anyhow::anyhow!("string too long: {}", file))?
+        match decode_utf8_js(joined) {
+            Some(t) => t,
+            None => return Ok(None),
+        }
     } else {
         match read_text(file).await {
             Some(t) => t,
@@ -60,36 +79,47 @@ pub async fn read_jsonl_cached(file: &str, max_bytes: Option<u64>) -> Result<Opt
     };
     let text_len = js_len(&text);
     let rows = Arc::new(parse_jsonl(&text));
-    jsonl_cache_store(file, stamp, rows.clone(), text_len);
+    drop(text);
+    // Parsed `Value` trees are several times larger than the source text.
+    jsonl_cache_store(file, stamp, rows.clone(), text_len.saturating_mul(PARSED_SIZE_FACTOR));
     Ok(Some(rows))
 }
 
 /// Read + parse a JSON document (array, or object with a known array field).
 pub async fn read_json_cached(file: &str) -> Option<Arc<Vec<Value>>> {
     let stamp = stamp_file(file).await?;
+    if stamp.size > JSON_MAX_BYTES {
+        return None;
+    }
     if let Some(rows) = jsonl_cache_lookup(file, &stamp) {
         return Some(rows);
     }
     jsonl_cache_miss();
     let text = read_text(file).await?;
+    let text_len = js_len(&text);
     let data: Value = serde_json::from_str(&text).ok()?;
+    drop(text);
     let rows: Vec<Value> = match data {
         Value::Array(a) => a,
-        Value::Object(ref o) => {
-            if let Some(Value::Array(a)) = o.get("messages") {
-                a.clone()
-            } else if let Some(Value::Array(a)) = o.get("events") {
-                a.clone()
-            } else if let Some(Value::Array(a)) = o.get("usage") {
-                a.clone()
-            } else {
-                vec![data]
+        Value::Object(mut o) => {
+            let mut found: Option<Vec<Value>> = None;
+            for key in ["messages", "events", "usage"] {
+                if matches!(o.get(key), Some(Value::Array(_))) {
+                    if let Some(Value::Array(a)) = o.remove(key) {
+                        found = Some(a);
+                    }
+                    break;
+                }
+            }
+            match found {
+                Some(a) => a,
+                None => vec![Value::Object(o)],
             }
         }
         _ => return None,
     };
     let rows = Arc::new(rows);
-    jsonl_cache_store(file, stamp, rows.clone(), js_len(&text));
+    jsonl_cache_store(file, stamp, rows.clone(), text_len.saturating_mul(PARSED_SIZE_FACTOR));
     Some(rows)
 }
 

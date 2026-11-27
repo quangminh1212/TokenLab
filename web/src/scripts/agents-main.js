@@ -313,15 +313,46 @@ function scheduleScanPoll() {
   }, 1200);
 }
 
+function fetchJson(url, ms = 15000) {
+  const o = {};
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    o.signal = AbortSignal.timeout(ms);
+  }
+  return fetch(url, o).then((r) => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+}
+
+// Coalesce overlapping loads: one in flight, at most one trailing rerun.
+let loadBusy = false;
+let loadPending = false;
 async function load() {
+  if (loadBusy) {
+    loadPending = true;
+    return;
+  }
+  loadBusy = true;
+  try {
+    await loadOnce();
+  } finally {
+    loadBusy = false;
+    if (loadPending) {
+      loadPending = false;
+      void load();
+    }
+  }
+}
+
+async function loadOnce() {
   const since = sinceParam();
   const agentStatsQ = new URLSearchParams({ groupBy: 'agent', sort: 'cost' });
   if (since) agentStatsQ.set('since', since);
   try {
     const [agentStats, agents, health] = await Promise.all([
-      fetch('/api/stats?' + agentStatsQ).then((r) => r.json()),
-      fetch('/api/agents').then((r) => r.json()),
-      fetch('/api/health').then((r) => r.json()),
+      fetchJson('/api/stats?' + agentStatsQ),
+      fetchJson('/api/agents'),
+      fetchJson('/api/health'),
     ]);
     const eventCount = health.eventCount || 0;
     if (typeof health.scanRevision === 'number') scanRevision = health.scanRevision;

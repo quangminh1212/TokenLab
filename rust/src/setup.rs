@@ -53,8 +53,21 @@ fn default_port() -> u16 {
         .unwrap_or(3737)
 }
 
+/// Address to *connect* to for a given bind host: wildcard binds are not
+/// connectable on Windows (0.0.0.0 / ::), and IPv6 literals need brackets in URLs.
+fn connect_host(host: &str) -> String {
+    let h = host.trim();
+    match h {
+        "" | "0.0.0.0" => "127.0.0.1".to_string(),
+        "::" | "[::]" => "[::1]".to_string(),
+        _ if h.starts_with('[') => h.to_string(),
+        _ if h.contains(':') => format!("[{h}]"),
+        _ => h.to_string(),
+    }
+}
+
 pub async fn is_server_reachable(host: &str, port: u16) -> bool {
-    let url = format!("http://{host}:{port}/api/health");
+    let url = format!("http://{}:{port}/api/health", connect_host(host));
     let client = match reqwest::Client::builder().no_proxy().build() {
         Ok(c) => c,
         Err(_) => return false,
@@ -121,12 +134,19 @@ pub async fn run_setup(opts: SetupOptions) -> SetupResult {
     let want_autostart = opts.autostart != Some(false);
     let want_desktop = opts.desktop != Some(false);
     let want_serve = opts.serve != Some(false);
+    // Explicit host/port differing from the defaults cannot be honoured by the
+    // supervisor VBS (it runs plain `serve`), so those runs skip the supervisor.
+    let custom_endpoint = opts.port.map_or(false, |p| p != default_port())
+        || opts
+            .host
+            .as_deref()
+            .map_or(false, |h| !h.is_empty() && h != default_host());
     let host = opts
         .host
         .filter(|h| !h.is_empty())
         .unwrap_or_else(default_host);
     let port = opts.port.unwrap_or_else(default_port);
-    let url = format!("http://{host}:{port}/");
+    let url = format!("http://{}:{port}/", connect_host(&host));
 
     // Fast path: server already up -> open the dashboard immediately, before the
     // (slow) autostart/shortcut refresh below.
@@ -192,7 +212,11 @@ pub async fn run_setup(opts: SetupOptions) -> SetupResult {
             clear_stop_sentinel().await;
             // Windows: start the same supervised VBS used at login so serve + tray
             // stay alive and auto-restart. Plain detached serve often dies with no tray.
-            if cfg!(windows) {
+            if cfg!(windows) && custom_endpoint {
+                parts.push("custom host/port: running unsupervised (no auto-restart)".to_string());
+                start_serve_detached(open, &host, port);
+                server_running = wait_for_server(&host, port, 15_000).await;
+            } else if cfg!(windows) {
                 let mut sup = launch_supervisor_now(LaunchSupervisorOptions::default()).await;
                 parts.push(if sup.ok {
                     sup.message.clone()
@@ -252,6 +276,15 @@ pub async fn run_setup(opts: SetupOptions) -> SetupResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connect_host_maps_wildcards() {
+        assert_eq!(connect_host("0.0.0.0"), "127.0.0.1");
+        assert_eq!(connect_host("::"), "[::1]");
+        assert_eq!(connect_host("::1"), "[::1]");
+        assert_eq!(connect_host("[::1]"), "[::1]");
+        assert_eq!(connect_host("localhost"), "localhost");
+    }
 
     #[test]
     fn result_serializes_like_ts() {

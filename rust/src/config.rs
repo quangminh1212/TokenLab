@@ -234,6 +234,34 @@ struct State {
 
 static STATE: Lazy<Mutex<State>> = Lazy::new(|| Mutex::new(State::default()));
 
+/// Serializes config read-merge-write sequences.
+static CONFIG_WRITE: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+/// True while config.json exists but could not be parsed (kept on disk, backed up).
+static CONFIG_CORRUPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Write `contents` to `path` via a unique temp file + rename. Falls back to a
+/// direct write if the rename keeps failing (locked target on Windows).
+pub(crate) async fn write_atomic(path: &str, contents: &[u8]) -> std::io::Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let tmp = format!("{}.{}.{}.tmp", path, std::process::id(), now);
+    if tokio::fs::write(&tmp, contents).await.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return tokio::fs::write(path, contents).await;
+    }
+    for attempt in 0..4u64 {
+        if tokio::fs::rename(&tmp, path).await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(40 * (attempt + 1))).await;
+    }
+    let r = tokio::fs::write(path, contents).await;
+    let _ = tokio::fs::remove_file(&tmp).await;
+    r
+}
+
 fn build_sync_view(c: &XlabTokenConfig) -> XlabTokenConfig {
     let mut view = c.clone();
     view.timezone = Some(normalize_timezone(c.timezone.as_deref()));
@@ -399,7 +427,18 @@ pub async fn load_config() -> XlabTokenConfig {
     if path_exists(&p).await {
         if let Ok(bytes) = tokio::fs::read(&p).await {
             let raw = String::from_utf8_lossy(&bytes).into_owned();
-            if let Ok(Value::Object(parsed_map)) = serde_json::from_str::<Value>(&raw) {
+            let parsed = serde_json::from_str::<Value>(&raw);
+            if !matches!(parsed, Ok(Value::Object(_))) && !raw.trim().is_empty() {
+                // Keep the unreadable file so it is never silently lost.
+                CONFIG_CORRUPT.store(true, std::sync::atomic::Ordering::SeqCst);
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let _ = tokio::fs::copy(&p, format!("{}.corrupt-{}", p, ms)).await;
+            }
+            if let Ok(Value::Object(parsed_map)) = parsed {
+                CONFIG_CORRUPT.store(false, std::sync::atomic::Ordering::SeqCst);
                 let base = to_map(&default_config());
                 let mut merged_map = merge_config_values(&base, &parsed_map);
                 let parsed_tz = parsed_map.get("timezone").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -411,7 +450,7 @@ pub async fn load_config() -> XlabTokenConfig {
                     if fixed != "UTC" {
                         merged.timezone = Some(fixed);
                         set_cached_config(Some(merged.clone()));
-                        let _ = tokio::fs::write(&p, pretty(&merged)).await;
+                        let _ = write_atomic(&p, pretty(&merged).as_bytes()).await;
                     }
                 }
                 return merged;
@@ -504,25 +543,36 @@ pub fn reset_config_cache() {
 
 /// Merge `next` over the defaults, normalize the timezone and write config.json.
 pub async fn save_config(next: &XlabTokenConfig) -> anyhow::Result<XlabTokenConfig> {
+    let _g = CONFIG_WRITE.lock().await;
+    save_config_inner(next).await
+}
+
+async fn save_config_inner(next: &XlabTokenConfig) -> anyhow::Result<XlabTokenConfig> {
     let mut merged = merge_config(&default_config(), next);
     merged.timezone = Some(normalize_timezone(merged.timezone.as_deref()));
     let p = config_path();
     let dir = path_flavor().dirname(&p);
     tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::write(&p, pretty(&merged)).await?;
+    write_atomic(&p, pretty(&merged).as_bytes()).await?;
+    CONFIG_CORRUPT.store(false, std::sync::atomic::Ordering::SeqCst);
     set_cached_config(Some(merged.clone()));
     Ok(merged)
 }
 
 /// Record the RATES_VERSION the scan cache is now priced with.
 pub async fn set_scan_cache_rates_version(version: f64) -> anyhow::Result<()> {
+    let _g = CONFIG_WRITE.lock().await;
     let cfg = load_config().await;
     if cfg.scan_cache_rates_version == Some(version) {
         return Ok(());
     }
+    if CONFIG_CORRUPT.load(std::sync::atomic::Ordering::SeqCst) {
+        // Do not overwrite an unreadable user config with defaults automatically.
+        return Ok(());
+    }
     let mut next = cfg;
     next.scan_cache_rates_version = Some(version);
-    save_config(&next).await?;
+    save_config_inner(&next).await?;
     Ok(())
 }
 
@@ -531,6 +581,7 @@ pub async fn set_custom_rates(
     rates: IndexMap<String, ModelRate>,
     replace: bool,
 ) -> anyhow::Result<XlabTokenConfig> {
+    let _g = CONFIG_WRITE.lock().await;
     let cfg = load_config().await;
     let prev = cfg
         .pricing
@@ -551,7 +602,7 @@ pub async fn set_custom_rates(
     let mut pricing = cfg.pricing.clone().unwrap_or_default();
     pricing.custom_rates = custom_rates;
     next.pricing = Some(pricing);
-    save_config(&next).await
+    save_config_inner(&next).await
 }
 
 #[cfg(test)]

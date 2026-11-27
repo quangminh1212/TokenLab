@@ -879,6 +879,18 @@
       }).join('');
     }
 
+    /** fetch + JSON with a hard timeout and HTTP status check (a stalled request must not wedge the UI). */
+    function fetchJson(url, opts = {}, ms = 20000) {
+      const o = { ...opts };
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        o.signal = AbortSignal.timeout(ms);
+      }
+      return fetch(url, o).then((r) => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+    }
+
     /** Client period cache — instant switch when scan/pricing unchanged. */
     const periodLoadCache = new Map();
     const PERIOD_CACHE_MAX = 12;
@@ -940,18 +952,24 @@
         if (since) qEvents.set('since', since);
 
         const [stats, seriesStats, health, eventsRes] = await Promise.all([
-          fetch('/api/stats?' + qStats).then((r) => r.json()),
-          fetch('/api/stats?' + qSeries).then((r) => r.json()),
-          fetch('/api/health').then((r) => r.json()),
-          fetch('/api/events?' + qEvents).then((r) => r.json()),
+          fetchJson('/api/stats?' + qStats),
+          fetchJson('/api/stats?' + qSeries),
+          fetchJson('/api/health'),
+          fetchJson('/api/events?' + qEvents),
         ]);
 
         const payload = { stats, seriesStats, health, eventsRes, since, hourly };
-        if (periodLoadCache.size >= PERIOD_CACHE_MAX) {
-          const first = periodLoadCache.keys().next().value;
-          periodLoadCache.delete(first);
+        // Only cache settled payloads: not while scanning, not before first data, not error bodies.
+        const cacheable = !health.scanning
+          && !stats.error && !!stats.totals
+          && !((health.eventCount || 0) === 0 && !health.scanRevision);
+        if (cacheable) {
+          if (periodLoadCache.size >= PERIOD_CACHE_MAX) {
+            const first = periodLoadCache.keys().next().value;
+            periodLoadCache.delete(first);
+          }
+          periodLoadCache.set(cacheKey, payload);
         }
-        periodLoadCache.set(cacheKey, payload);
         applyLoadedPayload(payload, { fromCache: false });
       } catch {
         if (!quiet) $('meta').innerHTML = '<span class="err">Failed to load API</span>';
@@ -1035,8 +1053,8 @@
       if (since) qEvents.set('since', since);
       try {
         const [eventsRes, health] = await Promise.all([
-          fetch('/api/events?' + qEvents, { cache: 'no-store' }).then((r) => r.json()),
-          fetch('/api/health', { cache: 'no-store' }).then((r) => r.json()),
+          fetchJson('/api/events?' + qEvents, { cache: 'no-store' }, 10000),
+          fetchJson('/api/health', { cache: 'no-store' }, 10000),
         ]);
         // A period switch happened while the request was in flight; let the
         // normal load path render the selected period instead.
@@ -1111,10 +1129,16 @@
       try {
         state.scanning = true;
         state.awaitingData = state.lastEventCount === 0;
-        await fetch('/api/scan?async=1', { method: 'POST' });
+        const sr = await fetch('/api/scan?async=1', {
+          method: 'POST',
+          signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(10000) : undefined,
+        });
+        if (!sr.ok) throw new Error('HTTP ' + sr.status);
         requestLoad({ quiet: true });
         scheduleScanPoll();
       } catch {
+        state.scanning = false;
+        state.awaitingData = false;
         requestLoad({ quiet: true });
       } finally {
         // Idle button immediately; meta chip shows scanning until SSE/poll clears it
@@ -1206,9 +1230,12 @@
         // EventSource unavailable
       }
       // Backup poll — SSE is primary; keep interval light to avoid extra /api/health load
+      let healthPollBusy = false;
       setInterval(async () => {
+        if (healthPollBusy) return;
+        healthPollBusy = true;
         try {
-          const h = await fetch('/api/health').then((r) => r.json());
+          const h = await fetchJson('/api/health', {}, 4000);
           let need = false;
           if (h.pricingRevision && h.pricingRevision !== pricingRevision) {
             need = true;
@@ -1233,6 +1260,8 @@
           }
         } catch {
           // offline
+        } finally {
+          healthPollBusy = false;
         }
       }, 5000);
     }

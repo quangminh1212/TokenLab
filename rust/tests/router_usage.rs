@@ -14,7 +14,6 @@ use tokenlab::backup::collapse_router_daily_events;
 use tokenlab::config::{load_config, reset_config_cache};
 use tokenlab::types::{AgentId, GroupBy, PricingStatus, UsageEvent};
 use tokenlab::util::filter_by_period;
-use tokenlab::util::path_exists;
 
 static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -102,26 +101,14 @@ fn today_utc() -> String {
     chrono::Utc::now().format("%Y-%m-%d").to_string()
 }
 
+// Root-discovery tests only check the shape of `roots()`. They deliberately do
+// not parse whatever happens to exist on the developer's disk (real 9router /
+// routerlab / litellm data can be huge and makes the result machine-dependent).
+// Parsing is covered by the tempdir fixture tests below.
 #[tokio::test]
-async fn discovers_at_least_one_9router_root_with_data_on_this_machine_or_skips() {
+async fn nine_router_roots_resolve_without_throw() {
     let _env = setup(None).await;
-    let mut existing: Vec<String> = Vec::new();
-    for r in nine_router::roots() {
-        if path_exists(&r).await {
-            existing.push(r);
-        }
-    }
-    let events = parse_router_usage(&existing, AgentId::NineRouter, RouterUsageOptions::default())
-        .await
-        .unwrap();
-    if events.is_empty() {
-        assert!(nine_router::roots().len() >= 3);
-        return;
-    }
-    let e = &events[0];
-    assert_eq!(e.agent, AgentId::NineRouter);
-    assert!(e.input_tokens + e.output_tokens > 0.0);
-    assert!(!e.timestamp.is_empty());
+    assert!(nine_router::roots().len() >= 3);
 }
 
 #[tokio::test]
@@ -132,55 +119,14 @@ async fn xlabrouter_roots_resolve_without_throw() {
     assert!(roots
         .iter()
         .any(|r| r.contains("routerlab") || r.contains("xlabrouter") || r.contains("var")));
-    let mut existing: Vec<String> = Vec::new();
-    for r in &roots {
-        if path_exists(r).await {
-            existing.push(r.clone());
-        }
-    }
-    let events = parse_router_usage(&existing, AgentId::Routerlab, RouterUsageOptions::default())
-        .await
-        .unwrap();
-    for e in &events {
-        assert_eq!(e.agent, AgentId::Routerlab);
-    }
-    if existing.iter().any(|r| {
-        r.contains("mirrors")
-            || r.contains("routerlab\\data")
-            || r.contains("xlabrouter\\data")
-            || r.contains("xlabrouter/data")
-            || r.contains("routerlab/data")
-    }) {
-        assert!(!events.is_empty(), "expected routerlab events from {existing:?}");
-    }
 }
 
 #[tokio::test]
-async fn litellm_roots_resolve_and_parse_mirror_when_present() {
+async fn litellm_roots_resolve() {
     let _env = setup(None).await;
     let roots: Vec<String> = litellm::roots().into_iter().filter(|r| !r.is_empty()).collect();
     assert!(roots.len() >= 2);
     assert!(roots.iter().any(|r| r.contains("litellm")));
-    let mut existing: Vec<String> = Vec::new();
-    for r in &roots {
-        if path_exists(r).await {
-            existing.push(r.clone());
-        }
-    }
-    let events = parse_router_usage(&existing, AgentId::Litellm, RouterUsageOptions::default())
-        .await
-        .unwrap();
-    for e in &events {
-        assert_eq!(e.agent, AgentId::Litellm);
-    }
-    if existing
-        .iter()
-        .any(|r| r.contains("mirrors") || r.contains("litellm\\data") || r.contains("litellm/data"))
-    {
-        if !events.is_empty() {
-            assert!(events[0].input_tokens + events[0].output_tokens > 0.0);
-        }
-    }
 }
 
 #[tokio::test]

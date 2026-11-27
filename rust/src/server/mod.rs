@@ -1793,6 +1793,10 @@ const UBUNTU_REMOTE_HOME: &str = "/home/ubuntu";
 const MIRROR_SYNC_TIMEOUT_MS: u64 = 300_000;
 const MIRROR_SYNC_INTERVAL_MS: f64 = 60.0 * 60_000.0;
 const PMV_MIRROR_SYNC_INTERVAL_MS: f64 = 60_000.0;
+/// Retry delay after a failed VPS/Ubuntu mirror sync.
+const MIRROR_SYNC_RETRY_MS: f64 = 10.0 * 60_000.0;
+/// Last OpenRouter catalog fetch attempt (success or failure), for backoff.
+static OR_LAST_ATTEMPT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 const PMV_SYNC_TIMEOUT_MS: u64 = 15_000;
 
 fn ubuntu_mirror_base() -> String {
@@ -1905,10 +1909,25 @@ async fn run_python_script(script: &Path, args: &[String], timeout_ms: u64) -> b
         Ok(c) => c,
         Err(_) => return false,
     };
+    let child_pid = child.id();
     match tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait()).await {
         Ok(Ok(status)) => status.code() == Some(0),
         Ok(Err(_)) => false,
         Err(_) => {
+            #[cfg(windows)]
+            if let Some(pid) = child_pid {
+                // Kill grandchildren (ssh/python) too; no process groups here.
+                let mut tk = tokio::process::Command::new("taskkill");
+                tk.args(["/T", "/F", "/PID", &pid.to_string()])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .kill_on_drop(true)
+                    .creation_flags(0x0800_0000);
+                let _ = tokio::time::timeout(Duration::from_secs(5), tk.status()).await;
+            }
+            #[cfg(not(windows))]
+            let _ = child_pid;
             let _ = child.kill().await;
             false
         }
@@ -1986,6 +2005,9 @@ impl AppState {
                 if ok {
                     this.inner.lock().last_mirror_sync_at = now_ms();
                     slog(&format!("[tokenlab] VPS router mirrors synced ({reason})"));
+                } else {
+                    // Record the failed attempt so it retries after a backoff, not every tick.
+                    this.inner.lock().last_mirror_sync_at = now_ms() - (MIRROR_SYNC_INTERVAL_MS - MIRROR_SYNC_RETRY_MS);
                 }
                 ok
             },
@@ -2054,6 +2076,8 @@ impl AppState {
                     this.inner.lock().last_ubuntu_mirror_sync_at = now_ms();
                     this.restore_ubuntu_additional_roots().await;
                     slog(&format!("[tokenlab] Ubuntu usage mirror synced ({reason})"));
+                } else {
+                    this.inner.lock().last_ubuntu_mirror_sync_at = now_ms() - (MIRROR_SYNC_INTERVAL_MS - MIRROR_SYNC_RETRY_MS);
                 }
                 ok
             },
@@ -2102,7 +2126,20 @@ impl AppState {
         struct ManualGuard(Arc<AppState>);
         impl Drop for ManualGuard {
             fn drop(&mut self) {
-                self.0.inner.lock().manual_full_scan_promise = None;
+                let reset = {
+                    let mut g = self.0.inner.lock();
+                    g.manual_full_scan_promise = None;
+                    // A panic/cancel after announce_vps_sync must not leave scanning stuck.
+                    if g.scanning && g.scan_promise.is_none() {
+                        g.scanning = false;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if reset {
+                    self.0.bump_scan("error");
+                }
             }
         }
         let _guard = ManualGuard(self.clone());
@@ -2110,7 +2147,7 @@ impl AppState {
         let before = self.inner.lock().scan_promise.clone();
         if let Some(p) = before {
             // A prior scan failure should not block a fresh manual scan.
-            let _ = p.await;
+            let _ = tokio::time::timeout(Duration::from_secs(300), p).await;
         }
 
         self.announce_vps_sync();
@@ -2134,7 +2171,7 @@ impl AppState {
         let during = self.inner.lock().scan_promise.clone();
         if let Some(p) = during {
             // Scan again below after the mirror refresh, even if this scan failed.
-            let _ = p.await;
+            let _ = tokio::time::timeout(Duration::from_secs(300), p).await;
             self.announce_vps_sync();
         }
 
@@ -2199,7 +2236,7 @@ fn error_json(status: u16, code: &str, message: &str) -> Response {
 
 /// `readJsonBody`: trimmed UTF-8; empty / invalid / non-object gives `{}`.
 async fn read_json_body(body: Body) -> Map<String, Value> {
-    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+    let bytes = match axum::body::to_bytes(body, 512 * 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => return Map::new(),
     };
@@ -2508,7 +2545,11 @@ impl AppState {
     // ----- /api/health -----------------------------------------------------
 
     async fn route_health(self: &Arc<Self>) -> Result<Response, String> {
-        let agents = self.get_agents_status(false).await;
+        // Keep liveness probes fast: bound agent detection, fall back to empty.
+        let agents = match tokio::time::timeout(Duration::from_millis(500), self.get_agents_status(false)).await {
+            Ok(a) => a,
+            Err(_) => Arc::new(Vec::new()),
+        };
         let timezone = configured_time_zone();
         let now = now_ms();
         let today_start = to_iso_string(start_of_day_in_time_zone(Some(&timezone), now))
@@ -3336,7 +3377,16 @@ impl AppState {
         let stale = fetched_at == 0.0 || now_ms() - fetched_at > 6.0 * 60.0 * 60.0 * 1000.0;
         if force_or || get_open_router_models_sync().is_empty() || stale {
             // Keep empty / stale on failure; the UI can show offline.
-            let _ = fetch_open_router_models(force_or || stale).await;
+            // Never block the page on a slow/offline network: bound the wait and
+            // back off after an attempt so every refresh does not re-stall.
+            let empty = get_open_router_models_sync().is_empty();
+            let last_try = OR_LAST_ATTEMPT_MS.load(std::sync::atomic::Ordering::Relaxed) as f64;
+            let backoff_over = now_ms() - last_try > 5.0 * 60_000.0;
+            if force_or || (backoff_over && (empty || stale)) {
+                OR_LAST_ATTEMPT_MS.store(now_ms() as u64, std::sync::atomic::Ordering::Relaxed);
+                let cap = if force_or || empty { Duration::from_secs(10) } else { Duration::from_secs(3) };
+                let _ = tokio::time::timeout(cap, fetch_open_router_models(force_or || stale)).await;
+            }
         }
         let openrouter = get_open_router_models_sync();
         let custom: IndexMap<String, ModelRate> =
@@ -4055,6 +4105,14 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         state.ready.send_replace(false);
         handle.spawn(async move {
+        // Release API waiters even if a loader panics.
+        struct ReadyGuard(Arc<AppState>);
+        impl Drop for ReadyGuard {
+            fn drop(&mut self) {
+                self.0.ready.send_replace(true);
+            }
+        }
+        let _ready_guard = ReadyGuard(state.clone());
         // Events from other machines / restore, and the last local scan snapshot.
         let imported = load_imported_events().await;
         let disk = load_scan_cache().await;
@@ -4148,10 +4206,16 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         let this = state.clone();
         state.handle.spawn(async move {
             let _ = load_done.await;
-            let _ = futures::join!(
-                this.sync_vps_mirrors("boot", MIRROR_SYNC_TIMEOUT_MS),
-                this.sync_ubuntu_usage("boot")
-            );
+            // Bound the wait so an unreachable remote cannot delay the first local
+            // scan; the shared sync futures keep running in the background.
+            let _ = tokio::time::timeout(
+                Duration::from_secs(15),
+                futures::future::join(
+                    this.sync_vps_mirrors("boot", MIRROR_SYNC_TIMEOUT_MS),
+                    this.sync_ubuntu_usage("boot"),
+                ),
+            )
+            .await;
             if this.inner.lock().cache.is_empty() {
                 if let Err(err) = this.rescan(true).await {
                     swarn(&format!("[tokenlab] initial full scan failed: {err}"));

@@ -866,6 +866,7 @@ where
 
     if sorted_asc {
         let ts = timestamps_ms.unwrap();
+        let mut extra_scanned: usize = 0;
         // Ascending: walk from the end for recent window + lastRequestAt in one pass
         for i in (0..cache.len()).rev() {
             let t = ts[i];
@@ -876,7 +877,16 @@ where
                 last_ms = t;
             }
             if t < window_start {
-                break; // older than rate window
+                // Older than the rate window: keep walking back only to find
+                // lastRequestAt (bounded), never feeding the rate function.
+                if last_ms > 0.0 {
+                    break;
+                }
+                extra_scanned += 1;
+                if extra_scanned > 20_000 {
+                    break;
+                }
+                continue;
             }
             if cache[i].estimated != Some(true) {
                 recent.push(cache[i].clone());
@@ -894,8 +904,13 @@ where
             }
         }
     }
+    // Cache rows win over mirror twins of the same call (avoid double counting).
+    let cache_keys: std::collections::HashSet<String> = recent.iter().map(recent_key).collect();
     for e in &hot {
         consider_last(e, &mut last_ms);
+        if cache_keys.contains(&recent_key(e)) {
+            continue;
+        }
         recent.push(e.clone());
     }
 

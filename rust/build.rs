@@ -12,8 +12,8 @@
 //!   error; otherwise a warning is printed and the binary serves the API only.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::SystemTime;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime};
 
 fn newest_mtime(path: &Path) -> Option<SystemTime> {
     let meta = std::fs::metadata(path).ok()?;
@@ -41,10 +41,40 @@ fn npm(web: &Path, args: &[&str]) -> bool {
     } else {
         Command::new("npm")
     };
-    cmd.args(args).current_dir(web);
-    match cmd.status() {
-        Ok(s) => s.success(),
-        Err(_) => false,
+    cmd.args(args)
+        .args(["--no-audit", "--no-fund"])
+        .current_dir(web)
+        .stdin(Stdio::null());
+    println!("cargo:warning=running `npm {}` in web/ (this can take a few minutes)", args.join(" "));
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    // Bounded wait so an offline/proxied `npm ci` can never freeze the build forever.
+    let deadline = Instant::now() + Duration::from_secs(600);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    if cfg!(windows) {
+                        // `child` is the cmd.exe wrapper; kill the whole tree.
+                        let _ = Command::new("taskkill")
+                            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status();
+                    }
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    println!("cargo:warning=`npm {}` timed out after 600s and was killed", args.join(" "));
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(_) => return false,
+        }
     }
 }
 
@@ -108,6 +138,8 @@ fn main() {
             npm(&web, &["install"])
         };
         if !ok {
+            // Don't leave a half-installed tree that would make the next build skip install.
+            let _ = std::fs::remove_dir_all(web.join("node_modules"));
             let _ = std::fs::create_dir_all(&dist);
             fail("`npm install` failed in web/; UI is not embedded (binary will serve the API only)");
             return;

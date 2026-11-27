@@ -633,7 +633,9 @@ pub async fn migrate_legacy_data_dir() {
 
     // Sentinel so we only run the heavy copy once per machine.
     let sentinel = pjoin(&[target.as_str(), ".migrated-from-xlab-token"]);
-    if !path_exists(&sentinel).await {
+    let config_marker = pjoin(&[target.as_str(), ".config-merged-from-xlab-token"]);
+    let sentinel_existed = path_exists(&sentinel).await;
+    if !sentinel_existed {
         // Copy mirrors/ (VPS data) - only files missing in target.
         let r: std::io::Result<()> = async {
             if path_exists(&legacy_mirrors_root()).await {
@@ -642,10 +644,18 @@ pub async fn migrate_legacy_data_dir() {
             Ok(())
         }
         .await;
-        if let Err(e) = r {
-            log_error(&format!("migrateLegacyDataDir: mirrors copy failed: {}", err_msg(&e)));
+        match r {
+            Ok(()) => {
+                let _ = tokio::fs::write(&sentinel, to_iso_string(now_ms()).unwrap_or_default()).await;
+            }
+            Err(e) => {
+                // No sentinel: the (idempotent) mirrors copy is retried next launch.
+                log_error(&format!(
+                    "migrateLegacyDataDir: mirrors copy failed (will retry next launch): {}",
+                    err_msg(&e)
+                ));
+            }
         }
-        let _ = tokio::fs::write(&sentinel, to_iso_string(now_ms()).unwrap_or_default()).await;
     }
 
     // Per-file fallbacks - always run so a partial earlier migration heals.
@@ -693,8 +703,18 @@ pub async fn migrate_legacy_data_dir() {
         }
     }
 
-    // Merge legacy config.json into the new one - fill missing keys only.
+    // Merge legacy config.json into the new one - ONCE. Re-running it on every
+    // start would resurrect customRates / token the user deleted afterwards.
+    // Pre-upgrade installs (mirrors sentinel already present, no config marker)
+    // are treated as already merged.
+    let run_merge = !sentinel_existed && !path_exists(&config_marker).await;
+    if !run_merge && !path_exists(&config_marker).await {
+        let _ = tokio::fs::write(&config_marker, to_iso_string(now_ms()).unwrap_or_default()).await;
+    }
     let r: Result<(), String> = async {
+        if !run_merge {
+            return Ok(());
+        }
         let legacy_config_path = pjoin(&[legacy_data_root().as_str(), "config.json"]);
         if !path_exists(&legacy_config_path).await {
             return Ok(());
@@ -835,8 +855,13 @@ pub async fn migrate_legacy_data_dir() {
         Ok(())
     }
     .await;
-    if let Err(e) = r {
-        log_error(&format!("migrateLegacyDataDir: config merge failed: {}", e));
+    match r {
+        Ok(()) => {
+            if run_merge {
+                let _ = tokio::fs::write(&config_marker, to_iso_string(now_ms()).unwrap_or_default()).await;
+            }
+        }
+        Err(e) => log_error(&format!("migrateLegacyDataDir: config merge failed: {}", e)),
     }
 }
 
@@ -914,21 +939,51 @@ fn copy_dir_missing<'a>(
         }
         tokio::fs::create_dir_all(dest).await?;
         let mut rd = tokio::fs::read_dir(src).await?;
-        while let Some(ent) = rd.next_entry().await? {
+        // Best effort: keep going past per-entry errors, report the first one.
+        let mut first_err: Option<std::io::Error> = None;
+        loop {
+            let ent = match rd.next_entry().await {
+                Ok(Some(e)) => e,
+                Ok(None) => break,
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                    break;
+                }
+            };
             let name = ent.file_name().to_string_lossy().to_string();
             let s = pjoin(&[src, name.as_str()]);
             let d = pjoin(&[dest, name.as_str()]);
-            let ft = ent.file_type().await?;
+            let ft = match ent.file_type().await {
+                Ok(t) => t,
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                    continue;
+                }
+            };
             if ft.is_dir() {
-                copy_dir_missing(&s, &d).await?;
+                if let Err(e) = copy_dir_missing(&s, &d).await {
+                    first_err.get_or_insert(e);
+                }
             } else if ft.is_file() {
                 if path_exists(&d).await {
                     continue; // never overwrite - usage only grows
                 }
-                tokio::fs::copy(&s, &d).await?;
+                // Copy to a temp name then rename so a failed copy leaves no partial file.
+                let tmp = format!("{}.{}.tmp", d, std::process::id());
+                let r = match tokio::fs::copy(&s, &tmp).await {
+                    Ok(_) => tokio::fs::rename(&tmp, &d).await,
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = r {
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    first_err.get_or_insert(e);
+                }
             }
         }
-        Ok(())
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     })
 }
 
@@ -2119,12 +2174,23 @@ pub fn get_machine_id() -> String {
 }
 
 fn os_hostname() -> Option<String> {
-    let out = std::process::Command::new("hostname").output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Some(s)
+    static CACHE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            // Bounded: never block the caller on a stalled `hostname` child.
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let r = std::process::Command::new("hostname").output().ok().and_then(|out| {
+                    if !out.status.success() {
+                        return None;
+                    }
+                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                });
+                let _ = tx.send(r);
+            });
+            rx.recv_timeout(std::time::Duration::from_secs(2)).ok().flatten()
+        })
+        .clone()
 }
 
 /// Parse machine id from a Gist rollup.
@@ -2341,7 +2407,19 @@ pub async fn load_imported_events() -> Vec<UsageEvent> {
     if path_exists(&p).await {
         match read_json_value(&p).await {
             Ok(raw) => events = sanitize_events(&raw).unwrap_or_default(),
-            Err(e) => log_error(&format!("loadImportedEvents failed: {}", e)),
+            Err(e) => {
+                log_error(&format!("loadImportedEvents failed: {}", e));
+                // Truncated/corrupt: try salvage, then .bak.
+                if let Ok(bytes) = tokio::fs::read(&p).await {
+                    events = salvage_scan_cache_json(&String::from_utf8_lossy(&bytes));
+                }
+                if let Ok(bak_raw) = read_json_value(&format!("{}.bak", p)).await {
+                    let b = sanitize_events(&bak_raw).unwrap_or_default();
+                    if !b.is_empty() {
+                        events = merge_events_by_id_prefer_richer(&[&events, &b]);
+                    }
+                }
+            }
         }
     }
     // Legacy fallback: merge pre-rename imported-events.json so usage never
@@ -2369,7 +2447,47 @@ pub async fn save_imported_events(events: &[UsageEvent]) -> anyhow::Result<()> {
     let p = imported_events_path();
     tokio::fs::create_dir_all(path_flavor().dirname(&p)).await?;
     let clean = sanitize_typed_events(&mark_imported_events(events));
-    tokio::fs::write(&p, serde_json::to_string(&clean)?).await?;
+    let json = serde_json::to_string(&clean)?;
+    if !json.starts_with('[') || !json.ends_with(']') {
+        anyhow::bail!("imported events serialize produced non-array JSON");
+    }
+    static IMPORTED_SAVE_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+    let _g = IMPORTED_SAVE_LOCK.lock().await;
+    let tmp = format!("{}.{}.{}.tmp", p, std::process::id(), now_ms() as u64);
+    let bak = format!("{}.bak", p);
+    let r: anyhow::Result<()> = async {
+        tokio::fs::write(&tmp, &json).await?;
+        // Keep the previous file as .bak (best effort).
+        if path_exists(&p).await {
+            let _ = tokio::fs::copy(&p, &bak).await;
+        }
+        // Windows: rename over an existing file can fail transiently (AV/indexer).
+        let mut last: Option<std::io::Error> = None;
+        for attempt in 0..4u64 {
+            match tokio::fs::rename(&tmp, &p).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    last = Some(e);
+                    tokio::time::sleep(std::time::Duration::from_millis(50 * (attempt + 1))).await;
+                }
+            }
+        }
+        // Last resort: write in place.
+        tokio::fs::write(&p, &json).await.map_err(|e| {
+            anyhow::anyhow!(
+                "write imported events failed: {} (rename: {})",
+                e,
+                last.as_ref().map(|l| l.to_string()).unwrap_or_default()
+            )
+        })?;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        Ok(())
+    }
+    .await;
+    if let Err(e) = r {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
     log(&format!("saveImportedEvents: {} \u{2192} {}", clean.len(), p));
     Ok(())
 }
@@ -2571,6 +2689,12 @@ pub fn salvage_scan_cache_json(text: &str) -> Vec<UsageEvent> {
 }
 
 async fn load_scan_cache_candidate(file_path: &str) -> Option<Vec<UsageEvent>> {
+    load_scan_cache_candidate_ex(file_path).await.map(|(e, _)| e)
+}
+
+/// Like `load_scan_cache_candidate`; the bool is true when the events were
+/// salvaged from a corrupt/truncated file (i.e. possibly incomplete).
+async fn load_scan_cache_candidate_ex(file_path: &str) -> Option<(Vec<UsageEvent>, bool)> {
     if !path_exists(file_path).await {
         return None;
     }
@@ -2580,7 +2704,7 @@ async fn load_scan_cache_candidate(file_path: &str) -> Option<Vec<UsageEvent>> {
             if events.is_empty() {
                 None
             } else {
-                Some(events)
+                Some((events, false))
             }
         }
         Err(_) => {
@@ -2593,7 +2717,7 @@ async fn load_scan_cache_candidate(file_path: &str) -> Option<Vec<UsageEvent>> {
                         salvaged.len(),
                         file_path
                     ));
-                    return Some(salvaged);
+                    return Some((salvaged, true));
                 }
             }
             None
@@ -2662,9 +2786,14 @@ pub async fn load_scan_cache() -> Vec<UsageEvent> {
     let p = scan_cache_path();
 
     // FAST PATH: valid main -> return immediately.
-    if let Some(main_events) = load_scan_cache_candidate(&p).await {
+    let mut salvaged_main: Vec<UsageEvent> = Vec::new();
+    if let Some((main_events, salvaged)) = load_scan_cache_candidate_ex(&p).await {
         if !main_events.is_empty() {
-            return collapse_exact_usage_duplicates(&collapse_router_daily_events(&main_events));
+            if !salvaged {
+                return collapse_exact_usage_duplicates(&collapse_router_daily_events(&main_events));
+            }
+            // Truncated main: do not let it beat a complete .bak/archive; union below.
+            salvaged_main = main_events;
         }
     }
 
@@ -2689,6 +2818,16 @@ pub async fn load_scan_cache() -> Vec<UsageEvent> {
             best = events;
             best_score = score;
             best_from = candidate.clone();
+        }
+    }
+    if !salvaged_main.is_empty() {
+        if best.is_empty() {
+            best = salvaged_main;
+            best_from = p.clone();
+        } else {
+            // Richer rows win on id collisions; count can only grow.
+            best = merge_events_by_id_prefer_richer(&[&best, &salvaged_main]);
+            best_from = format!("{} + {}", best_from, p);
         }
     }
     // Union with legacy cache so usage only grows across the rename.
@@ -2775,6 +2914,82 @@ fn heartbeat() {
     crate::process_guard::write_heartbeat();
 }
 
+/// Run CPU-heavy synchronous work without starving other tasks on a
+/// multi-thread runtime (inline on current_thread runtimes, e.g. tests).
+fn cpu_heavy<R>(f: impl FnOnce() -> R) -> R {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(f)
+        }
+        _ => f(),
+    }
+}
+
+/// Cheap structural check: file starts with '[' and ends with ']' (ignoring whitespace).
+async fn scan_cache_file_looks_complete(path: &str) -> bool {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut f = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return true, // unknown: keep legacy behaviour
+    };
+    let len = match f.metadata().await {
+        Ok(m) => m.len(),
+        Err(_) => return true,
+    };
+    if len < 2 {
+        return false;
+    }
+    let mut head = [0u8; 8];
+    let hn = f.read(&mut head).await.unwrap_or(0);
+    let head_ok = head[..hn]
+        .iter()
+        .copied()
+        .find(|c| !c.is_ascii_whitespace() && *c != 0xEF && *c != 0xBB && *c != 0xBF)
+        == Some(b'[');
+    let start = len.saturating_sub(16);
+    if f.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return true;
+    }
+    let mut tail = [0u8; 16];
+    let tn = f.read(&mut tail).await.unwrap_or(0);
+    let tail_ok = tail[..tn].iter().rev().copied().find(|c| !c.is_ascii_whitespace()) == Some(b']');
+    head_ok && tail_ok
+}
+
+static SCAN_CACHE_TMP_SWEPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Best-effort, once per process: delete `<cache>.<pid>.<ms>.tmp` leftovers from
+/// killed processes (older than 10 minutes, not our own pid).
+async fn sweep_stale_scan_cache_tmp(cache_path: &str) {
+    if SCAN_CACHE_TMP_SWEPT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let path = std::path::Path::new(cache_path);
+    let (dir, name) = match (path.parent(), path.file_name()) {
+        (Some(d), Some(n)) => (d.to_path_buf(), n.to_string_lossy().to_string()),
+        _ => return,
+    };
+    let prefix = format!("{}.", name);
+    let own = format!("{}.{}.", name, std::process::id());
+    let mut rd = match tokio::fs::read_dir(&dir).await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    while let Ok(Some(ent)) = rd.next_entry().await {
+        let fname = ent.file_name().to_string_lossy().to_string();
+        if !fname.starts_with(&prefix) || !fname.ends_with(".tmp") || fname.starts_with(&own) {
+            continue;
+        }
+        let old = match ent.metadata().await.and_then(|m| m.modified()) {
+            Ok(t) => t.elapsed().map_or(false, |d| d.as_secs() > 600),
+            Err(_) => false,
+        };
+        if old {
+            let _ = tokio::fs::remove_file(ent.path()).await;
+        }
+    }
+}
+
 pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> anyhow::Result<()> {
     let mode = opts.mode;
     let p = scan_cache_path();
@@ -2786,36 +3001,46 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
     // Keep supervisor hang-watchdog happy during large JSON serialize/write.
     heartbeat();
 
+    sweep_stale_scan_cache_tmp(&p).await;
+
     // Same-process short-circuit BEFORE collapse/high-water (O(n) on 50k+ rows).
     {
-        let raw = drop_legacy_codex_proxy_attributions(events);
-        let early_fp = scan_cache_fingerprint(&raw);
+        let early_fp = cpu_heavy(|| {
+            let raw = drop_legacy_codex_proxy_attributions(events);
+            scan_cache_fingerprint(&raw)
+        });
+        let raw_len = events.len();
         let same = *LAST_SCAN_CACHE_WRITE_FP.lock() == early_fp;
         if same && path_exists(&p).await {
-            log(&format!("saveScanCache: skip unchanged (early) {} {}", raw.len(), mode_label(mode)));
+            log(&format!("saveScanCache: skip unchanged (early) {} {}", raw_len, mode_label(mode)));
             return Ok(());
         }
     }
 
-    let valid_events = drop_legacy_codex_proxy_attributions(events);
-    let mut clean: Vec<UsageEvent> = match mode {
-        SaveMode::Quick => valid_events,
-        SaveMode::Full => collapse_exact_usage_duplicates(&collapse_source_path_rollups(
-            &collapse_router_daily_events(&sanitize_typed_events(&valid_events)),
-        )),
-    };
+    let mut clean: Vec<UsageEvent> = cpu_heavy(|| {
+        let valid_events = drop_legacy_codex_proxy_attributions(events);
+        match mode {
+            SaveMode::Quick => valid_events,
+            SaveMode::Full => collapse_exact_usage_duplicates(&collapse_source_path_rollups(
+                &collapse_router_daily_events(&sanitize_typed_events(&valid_events)),
+            )),
+        }
+    });
 
     // Full save: never write a thinner all-time snapshot than what is on disk.
     if mode == SaveMode::Full {
         let existing = drop_legacy_codex_proxy_attributions(&load_scan_cache_main_only().await);
-        if !existing.is_empty() {
-            clean = reconcile_scan_cache_high_water(&existing, &clean);
-        }
-        // Persist timestamp-sorted for O(log n) period filters after next load.
-        clean = sort_events_by_time(&clean).0;
+        clean = cpu_heavy(|| {
+            let mut c = clean;
+            if !existing.is_empty() {
+                c = reconcile_scan_cache_high_water(&existing, &c);
+            }
+            // Persist timestamp-sorted for O(log n) period filters after next load.
+            sort_events_by_time(&c).0
+        });
     }
 
-    let fp = scan_cache_fingerprint(&clean);
+    let fp = cpu_heavy(|| scan_cache_fingerprint(&clean));
     let same = *LAST_SCAN_CACHE_WRITE_FP.lock() == fp;
     if same && path_exists(&p).await {
         log(&format!("saveScanCache: skip unchanged {} {}", clean.len(), mode_label(mode)));
@@ -2823,7 +3048,7 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
     }
 
     // One serialize only.
-    let json = serde_json::to_string(&clean)?;
+    let json = cpu_heavy(|| serde_json::to_string(&clean))?;
     if !json.starts_with('[') || !json.ends_with(']') {
         anyhow::bail!("scan cache serialize produced non-array JSON");
     }
@@ -2832,7 +3057,16 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
     let result: anyhow::Result<()> = async {
         tokio::fs::write(&tmp, &json).await?;
         // Rotate previous main -> .bak (rename, not a 20MB copy).
-        if path_exists(&p).await {
+        if path_exists(&p).await && !scan_cache_file_looks_complete(&p).await {
+            // Known-corrupt/truncated main: never rotate it over a good .bak.
+            let corrupt = format!("{}.corrupt", p);
+            let _ = tokio::fs::remove_file(&corrupt).await;
+            if let Err(err) = tokio::fs::rename(&p, &corrupt).await {
+                log_error(&format!("saveScanCache: could not set aside corrupt main: {}", err_msg(&err)));
+            } else {
+                log_error("saveScanCache: main was truncated/corrupt; kept .bak untouched");
+            }
+        } else if path_exists(&p).await {
             let _ = tokio::fs::remove_file(&bak).await;
             if let Err(err) = tokio::fs::rename(&p, &bak).await {
                 // Fallback: copy if rename fails (cross-device / locked)
@@ -2875,9 +3109,17 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
 // Mirrors
 // ---------------------------------------------------------------------------
 
+/// Best-effort walk: an unreadable entry/dir is logged and skipped, never
+/// aborts the listing (symlinks are not followed: `file_type` is lstat-like).
 fn list_files_recursive_sync(dir: &str, rel_prefix: &str, out: &mut Vec<String>) -> std::io::Result<()> {
     for ent in std::fs::read_dir(dir)? {
-        let ent = ent?;
+        let ent = match ent {
+            Ok(e) => e,
+            Err(e) => {
+                log_error(&format!("listFiles: entry error in {}: {}", dir, err_msg(&e)));
+                continue;
+            }
+        };
         let name = ent.file_name().to_string_lossy().to_string();
         let full = pjoin(&[dir, name.as_str()]);
         let rel = if rel_prefix.is_empty() {
@@ -2885,9 +3127,17 @@ fn list_files_recursive_sync(dir: &str, rel_prefix: &str, out: &mut Vec<String>)
         } else {
             format!("{}/{}", rel_prefix, name)
         };
-        let ft = ent.file_type()?;
+        let ft = match ent.file_type() {
+            Ok(t) => t,
+            Err(e) => {
+                log_error(&format!("listFiles: file_type failed for {}: {}", full, err_msg(&e)));
+                continue;
+            }
+        };
         if ft.is_dir() {
-            list_files_recursive_sync(&full, &rel, out)?;
+            if let Err(e) = list_files_recursive_sync(&full, &rel, out) {
+                log_error(&format!("listFiles: cannot read {}: {}", full, err_msg(&e)));
+            }
         } else if ft.is_file() {
             out.push(rel);
         }
@@ -2900,8 +3150,17 @@ async fn list_files_recursive(dir: &str) -> Vec<String> {
     if !path_exists(dir).await {
         return out;
     }
-    let _ = list_files_recursive_sync(dir, "", &mut out);
-    out
+    let d = dir.to_string();
+    match tokio::task::spawn_blocking(move || {
+        let mut o: Vec<String> = Vec::new();
+        let _ = list_files_recursive_sync(&d, "", &mut o);
+        o
+    })
+    .await
+    {
+        Ok(o) => o,
+        Err(_) => out,
+    }
 }
 
 /// Mirror export: daily / aggregate only. Never ship multi-MB per-request
@@ -3234,6 +3493,25 @@ pub fn safe_mirror_path(root: &str, rel: &str) -> Option<String> {
     if segs.iter().any(|p| *p == ".." || p.is_empty() || *p == ".") {
         return None;
     }
+    // Windows-hostile segments: NTFS alternate streams (':'), wildcard / illegal
+    // chars, control chars, trailing dot/space and reserved device names.
+    if segs.iter().any(|p| {
+        if p.chars().any(|c| matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*') || c.is_control()) {
+            return true;
+        }
+        if p.ends_with('.') || p.ends_with(' ') {
+            return true;
+        }
+        let stem = p.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        matches!(
+            stem.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL"
+                | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
+                | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        )
+    }) {
+        return None;
+    }
     let root_resolved = pf.resolve(&[root]);
     let mut parts: Vec<&str> = vec![root_resolved.as_str()];
     parts.extend(segs.iter().copied());
@@ -3266,8 +3544,22 @@ async fn restore_mirrors(mirrors: Option<&Value>) -> anyhow::Result<f64> {
             Some(f) => f,
             None => continue,
         };
-        tokio::fs::create_dir_all(path_flavor().dirname(&full)).await?;
-        tokio::fs::write(&full, content).await?;
+        // Best effort: one bad/locked mirror must not abort the whole restore
+        // (config has already been applied by then).
+        if let Err(e) = tokio::fs::create_dir_all(path_flavor().dirname(&full)).await {
+            log_error(&format!("restoreMirrors: mkdir failed for {}: {}", rel, err_msg(&e)));
+            continue;
+        }
+        let tmp = format!("{}.{}.tmp", full, std::process::id());
+        let r = match tokio::fs::write(&tmp, content).await {
+            Ok(()) => tokio::fs::rename(&tmp, &full).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = r {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            log_error(&format!("restoreMirrors: write failed for {}: {}", rel, err_msg(&e)));
+            continue;
+        }
         n += 1.0;
     }
     Ok(n)
@@ -3899,17 +4191,35 @@ fn github_headers(token: &str) -> reqwest::header::HeaderMap {
 }
 
 fn http_client() -> reqwest::Client {
-    reqwest::Client::new()
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// Fetch the existing Gist backup JSON (no restore). `None` if missing/invalid.
-/// Returns the raw JSON so callers keep every field verbatim.
+/// Fetch the existing Gist backup JSON (no restore). `None` if missing/invalid
+/// or on any transient failure. Returns the raw JSON so callers keep every
+/// field verbatim.
 pub async fn fetch_gist_backup_raw(token: &str, gist_id: &str) -> Option<Value> {
+    match try_fetch_gist_backup_raw(token, gist_id).await {
+        Ok(v) => v,
+        Err(msg) => {
+            log_error(&format!("fetchGistBackup failed: {}", msg));
+            None
+        }
+    }
+}
+
+/// Like [`fetch_gist_backup_raw`] but distinguishes "no usable remote backup"
+/// (`Ok(None)`: no id/token, 404, no file, invalid content) from a transient
+/// failure (`Err`: network error, 401/403/429/5xx, failed raw_url fetch).
+pub async fn try_fetch_gist_backup_raw(token: &str, gist_id: &str) -> Result<Option<Value>, String> {
     let gist_id = js_trim(gist_id).to_string();
     if gist_id.is_empty() || token.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let r: Result<Option<Value>, String> = async {
+    {
         let client = http_client();
         let res = client
             .get(format!("https://api.github.com/gists/{}", encode_uri_component(&gist_id)))
@@ -3918,8 +4228,12 @@ pub async fn fetch_gist_backup_raw(token: &str, gist_id: &str) -> Option<Value> 
             .await
             .map_err(|e| err_msg(&e))?;
         if !res.status().is_success() {
-            log(&format!("fetchGistBackup: {} for {}", res.status().as_u16(), gist_id));
-            return Ok(None);
+            let code = res.status().as_u16();
+            log(&format!("fetchGistBackup: {} for {}", code, gist_id));
+            if code == 404 {
+                return Ok(None);
+            }
+            return Err(format!("HTTP {} fetching gist", code));
         }
         let data: Value = res.json().await.map_err(|e| err_msg(&e))?;
         let files = data.get("files").and_then(|f| f.as_object());
@@ -3947,25 +4261,26 @@ pub async fn fetch_gist_backup_raw(token: &str, gist_id: &str) -> Option<Value> 
                     .map_err(|e| err_msg(&e))?;
                 if raw_res.status().is_success() {
                     text = raw_res.text().await.map_err(|e| err_msg(&e))?;
+                } else {
+                    return Err(format!("HTTP {} fetching gist raw_url", raw_res.status().as_u16()));
                 }
             }
         }
         if text.is_empty() {
             return Ok(None);
         }
-        let raw: Value = serde_json::from_str(&text).map_err(|e| err_msg(&e))?;
+        let raw: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                // Corrupt remote content: nothing to merge; a fresh upload repairs it.
+                log_error(&format!("fetchGistBackup: invalid JSON in gist: {}", e));
+                return Ok(None);
+            }
+        };
         if !is_xlab_backup(&raw) {
             return Ok(None);
         }
         Ok(Some(raw))
-    }
-    .await;
-    match r {
-        Ok(v) => v,
-        Err(msg) => {
-            log_error(&format!("fetchGistBackup failed: {}", msg));
-            None
-        }
     }
 }
 
@@ -4089,7 +4404,16 @@ pub async fn upload_backup_to_gist(opts: UploadOpts) -> anyhow::Result<UploadRes
     // Multi-machine: pull remote before overwrite
     let mut remote: Option<Value> = None;
     if !prev_id.is_empty() {
-        remote = fetch_gist_backup_raw(&token, &prev_id).await;
+        remote = match try_fetch_gist_backup_raw(&token, &prev_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                log_error(&format!("uploadBackupToGist: could not read existing Gist: {}", e));
+                anyhow::bail!(
+                    "Could not read the existing Gist ({}); upload aborted to avoid overwriting other machines' data. Try again later.",
+                    e
+                );
+            }
+        };
         if let Some(r) = &remote {
             let n = r.get("events").and_then(|e| e.as_array()).map_or(0, |a| a.len());
             let machines = r
@@ -4529,19 +4853,44 @@ pub async fn try_auto_daily_gist_backup(events: &[UsageEvent]) -> AutoDailyGistR
         }
     };
     match role {
-        Role::Follower(mut rx) => match rx.wait_for(|v| v.is_some()).await {
-            Ok(v) => v.clone().unwrap_or(AutoDailyGistResult::Failed {
-                ok: false,
-                error: "auto daily backup aborted".to_string(),
-            }),
-            Err(_) => AutoDailyGistResult::Failed {
-                ok: false,
-                error: "auto daily backup aborted".to_string(),
-            },
-        },
+        Role::Follower(mut rx) => {
+            let waited = tokio::time::timeout(
+                std::time::Duration::from_secs(300),
+                rx.wait_for(|v| v.is_some()),
+            )
+            .await;
+            match waited {
+                Ok(Ok(v)) => v.clone().unwrap_or(AutoDailyGistResult::Failed {
+                    ok: false,
+                    error: "auto daily backup aborted".to_string(),
+                }),
+                Ok(Err(_)) => AutoDailyGistResult::Failed {
+                    ok: false,
+                    error: "auto daily backup aborted".to_string(),
+                },
+                Err(_) => AutoDailyGistResult::Failed {
+                    ok: false,
+                    error: "auto daily backup timed out".to_string(),
+                },
+            }
+        }
         Role::Leader(tx) => {
             let _guard = AutoDailySlotGuard;
-            let result = auto_daily_work(events).await;
+            let result = match tokio::time::timeout(
+                std::time::Duration::from_secs(240),
+                auto_daily_work(events),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => {
+                    log_error("auto daily Gist backup timed out");
+                    AutoDailyGistResult::Failed {
+                        ok: false,
+                        error: "auto daily backup timed out".to_string(),
+                    }
+                }
+            };
             let _ = tx.send(Some(result.clone()));
             result
         }
@@ -4613,6 +4962,16 @@ mod tests {
         assert!(safe_mirror_path(root, "a/../../evil.json").is_none());
         assert!(safe_mirror_path(root, "").is_none());
         assert!(safe_mirror_path(root, "C:/evil.json").is_none());
+    }
+
+    #[test]
+    fn mirror_path_rejects_windows_hostile_segments() {
+        let root = if cfg!(windows) { "C:\\data\\mirrors" } else { "/data/mirrors" };
+        assert!(safe_mirror_path(root, "x/y:z.json").is_none());
+        assert!(safe_mirror_path(root, "x/CON.json").is_none());
+        assert!(safe_mirror_path(root, "x/nul").is_none());
+        assert!(safe_mirror_path(root, "x/a?.json").is_none());
+        assert!(safe_mirror_path(root, "x/ok.json").is_some());
     }
 
     #[test]

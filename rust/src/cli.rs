@@ -26,7 +26,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // logging: %LOCALAPPDATA%\tokenlab\server.txt
@@ -327,13 +327,36 @@ async fn cmd_serve(args: &[String]) -> anyhow::Result<i32> {
     // 2) flush scan-cache + close HTTP while heartbeat still ticks
     // 3) only then stop heartbeat / tray and exit
     // Skip stop.flag on SIGHUP (dev watch) so dev restarts keep working.
-    if signal != "SIGHUP" {
-        write_stop_sentinel().await;
-    }
+    // Bounded: a locked cache file / slow disk must never make Quit hang forever,
+    // and a second signal forces an immediate exit.
+    let graceful = async {
+        if signal != "SIGHUP" {
+            let _ = tokio::time::timeout(Duration::from_secs(3), write_stop_sentinel()).await;
+        }
+        srv.close().await;
+    };
     // Persist usage BEFORE exit — tray Quit used to race the supervisor kill
     // and drop today's cost/token totals.
-    srv.close().await;
-    log("Server closed (scan cache flushed)");
+    // Independent OS-thread watchdog: a synchronous stall inside close() cannot
+    // be interrupted by a tokio timeout, so force exit before the supervisor's
+    // 30s grace expires and it taskkills us mid-write.
+    let _ = std::thread::Builder::new()
+        .name("tokenlab-shutdown-watchdog".into())
+        .spawn(|| {
+            std::thread::sleep(Duration::from_secs(20));
+            log_error("Shutdown watchdog: close() did not finish in 20s - forcing exit");
+            std::process::exit(0);
+        });
+    tokio::select! {
+        r = tokio::time::timeout(Duration::from_secs(15), graceful) => {
+            if r.is_err() {
+                log_error("Server close timed out after 15s - exiting anyway");
+            } else {
+                log("Server closed (scan cache flushed)");
+            }
+        }
+        _ = rx.recv() => log("Second shutdown signal - forcing exit"),
+    }
     stop_heartbeat();
     if let Some(stop) = tray_stop {
         stop();

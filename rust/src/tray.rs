@@ -172,6 +172,18 @@ $form.add_FormClosing({
 })
 $form.add_Shown({ $form.Hide() })
 
+# Exit when the server process is gone (panic exit / taskkill leave no other signal)
+$parentPid = @@PPID@@
+$watch = New-Object System.Windows.Forms.Timer
+$watch.Interval = 3000
+$watch.add_Tick({
+  if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) {
+    try { $icon.Visible = $false; $icon.Dispose() } catch {}
+    [System.Windows.Forms.Application]::Exit()
+  }
+})
+$watch.Start()
+
 [System.Windows.Forms.Application]::Run($form)
 "##;
 
@@ -185,6 +197,7 @@ fn build_ps_script(_url: &str, title: &str, tooltip: &str, icon_path: Option<&st
     // Order matters: user-controlled values are substituted last-to-first so a
     // value containing a later placeholder cannot be re-expanded.
     PS_TEMPLATE
+        .replace("@@PPID@@", &std::process::id().to_string())
         .replace("@@TITLE@@", "\u{0}TITLE\u{0}")
         .replace("@@ICON@@", "\u{0}ICON\u{0}")
         .replace("@@TOOLTIP@@", "\u{0}TOOLTIP\u{0}")
@@ -200,10 +213,48 @@ fn build_ps_script(_url: &str, title: &str, tooltip: &str, icon_path: Option<&st
 
 const MAX_TRAY_RESTARTS: u32 = 20;
 
+/// Write the tray script with a UTF-8 BOM: Windows PowerShell 5.1 decodes a
+/// BOM-less `.ps1` with the ANSI code page (mojibake / broken non-ASCII paths).
+fn write_script_file(path: &str, script: &str) -> std::io::Result<()> {
+    let mut bytes: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend_from_slice(script.as_bytes());
+    std::fs::write(path, bytes)
+}
+
+/// Best-effort removal of `tray-*.ps1` files left by crashed/killed runs.
+fn sweep_stale_scripts(dir: &Path, keep: &Path) {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for ent in rd.flatten() {
+        let p = ent.path();
+        if p == keep {
+            continue;
+        }
+        let name = ent.file_name().to_string_lossy().to_string();
+        if !(name.starts_with("tray-") && name.ends_with(".ps1")) {
+            continue;
+        }
+        let old = ent
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| d > Duration::from_secs(24 * 3600))
+            .unwrap_or(false);
+        if old {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
 struct TrayState {
     url: String,
     on_quit: Arc<dyn Fn() + Send + Sync>,
     script_path: String,
+    script: String,
+    child_pid: AtomicU32,
     stopped: AtomicBool,
     user_quit: AtomicBool,
     restart_attempts: AtomicU32,
@@ -229,6 +280,35 @@ impl TrayState {
         // Wakes the supervisor loop: it kills the child / cancels a pending restart.
         self.wake.notify_one();
         self.cleanup_script();
+    }
+
+    /// Synchronously kill the PowerShell tray host (used right before
+    /// `process::exit`, when the async kill in `tray_loop` would never run).
+    fn kill_child_blocking(&self) {
+        let pid = self.child_pid.load(Ordering::SeqCst);
+        if pid == 0 {
+            return;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(0x0800_0000)
+                .status();
+        }
+    }
+
+    /// Make sure the script exists (Temp cleanup / AV may have removed it).
+    fn ensure_script(&self) {
+        if !std::path::Path::new(&self.script_path).exists() {
+            if let Err(e) = write_script_file(&self.script_path, &self.script) {
+                log_error(&format!("Failed to rewrite tray script: {e}"));
+            }
+        }
     }
 
     /// Sleep for `delay`, returning early (true) when stop was requested.
@@ -294,6 +374,7 @@ async fn tray_loop(state: Arc<TrayState>) {
         if state.should_stop() {
             return;
         }
+        state.ensure_script();
         match spawn_powershell(&state.script_path) {
             Err(e) => {
                 log_error(&format!("Failed to spawn PowerShell tray: {e}"));
@@ -313,6 +394,7 @@ async fn tray_loop(state: Arc<TrayState>) {
             Ok(mut child) => {
                 log(&format!("PowerShell child spawned, pid: {}", child.id().unwrap_or(0)));
                 state.child_alive.store(true, Ordering::SeqCst);
+                state.child_pid.store(child.id().unwrap_or(0), Ordering::SeqCst);
                 // After a successful spawn, slowly decay restart counter
                 {
                     let st = state.clone();
@@ -351,6 +433,7 @@ async fn tray_loop(state: Arc<TrayState>) {
                     }
                 };
                 state.child_alive.store(false, Ordering::SeqCst);
+                state.child_pid.store(0, Ordering::SeqCst);
                 // Drain remaining stdout so a final "quit"/"open" line is not lost.
                 for r in readers {
                     let _ = tokio::time::timeout(Duration::from_millis(500), r).await;
@@ -417,7 +500,8 @@ pub async fn start_tray(opts: TrayOptions) -> Option<TrayHandle> {
         let dir = std::env::temp_dir().join("tokenlab");
         let res = std::fs::create_dir_all(&dir).and_then(|_| {
             let p = dir.join(format!("tray-{}.ps1", std::process::id()));
-            std::fs::write(&p, &script).map(|_| p)
+            sweep_stale_scripts(&dir, &p);
+            write_script_file(&p.to_string_lossy(), &script).map(|_| p)
         });
         match res {
             Ok(p) => {
@@ -436,6 +520,8 @@ pub async fn start_tray(opts: TrayOptions) -> Option<TrayHandle> {
         url: opts.url,
         on_quit: opts.on_quit,
         script_path,
+        script,
+        child_pid: AtomicU32::new(0),
         stopped: AtomicBool::new(false),
         user_quit: AtomicBool::new(false),
         restart_attempts: AtomicU32::new(0),
@@ -447,7 +533,10 @@ pub async fn start_tray(opts: TrayOptions) -> Option<TrayHandle> {
 
     let st = state.clone();
     Some(TrayHandle {
-        stop_fn: Arc::new(move || st.stop()),
+        stop_fn: Arc::new(move || {
+            st.stop();
+            st.kill_child_blocking();
+        }),
     })
 }
 

@@ -9,9 +9,12 @@ use crate::agents::{parse_fn, AgentModule};
 use crate::pricing::apply_pricing;
 use crate::types::{AgentId, UsageEvent};
 use crate::util::{
-    js_num_to_string, now_ms, num_opt, parse_jsonl, path_exists, read_text, stable_id, to_iso_string, walk_files,
-    WalkOptions,
+    js_num_to_string, now_ms, num_opt, parse_jsonl, path_exists, read_text, stable_id, stamp_file, to_iso_string,
+    walk_files, WalkOptions, ELECTRON_CACHE_DIRS,
 };
+
+/// Skip individual files larger than this.
+const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Local data roots to scan on this machine.
 pub fn roots() -> Vec<String> {
@@ -36,7 +39,7 @@ pub async fn parse_cursor(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
         }
         let candidates = walk_files(
             root,
-            WalkOptions::new().max_depth(10).matching(|name: &str, full: &str| {
+            WalkOptions::new().max_depth(10).skipping(ELECTRON_CACHE_DIRS).matching(|name: &str, full: &str| {
                 let lower = name.to_lowercase();
                 if lower.ends_with(".jsonl") {
                     return true;
@@ -57,6 +60,11 @@ pub async fn parse_cursor(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
         .await;
 
         for file in candidates {
+            // Never slurp pathological files (multi-hundred-MB) into memory.
+            match stamp_file(&file).await {
+                Some(s) if s.size <= MAX_FILE_BYTES => {}
+                _ => continue,
+            }
             let text = match read_text(&file).await {
                 Some(t) if !t.is_empty() => t,
                 _ => continue,

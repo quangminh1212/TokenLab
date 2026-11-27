@@ -36,8 +36,11 @@ pub fn roots() -> Vec<String> {
 #[derive(Debug, Clone)]
 struct UsageCandidate {
     file: String,
-    row: Value,
-    message: Value,
+    /// Non-empty `row.uuid` (only the fields needed later are kept, not the whole row).
+    uuid: Option<String>,
+    model: Option<String>,
+    /// Valid ISO timestamp from the row, if any (fallback to "now" is applied at event build).
+    timestamp: Option<String>,
     buckets: TokenBuckets,
     request_key: String,
     row_index: usize,
@@ -89,7 +92,7 @@ fn is_richer_candidate(next: &UsageCandidate, previous: &UsageCandidate) -> bool
     next.row_index > previous.row_index
 }
 
-fn timestamp_from_row(row: &Value, message: &Value) -> String {
+fn timestamp_opt_from_row(row: &Value, message: &Value) -> Option<String> {
     let candidates = [row.get("timestamp"), row.get("ts"), message.get("timestamp"), message.get("ts")];
     for value in candidates.into_iter().flatten() {
         match value {
@@ -97,7 +100,7 @@ fn timestamp_from_row(row: &Value, message: &Value) -> String {
                 let ms = js_date_parse(s);
                 if !ms.is_nan() {
                     if let Some(iso) = to_iso_string(ms) {
-                        return iso;
+                        return Some(iso);
                     }
                 }
             }
@@ -106,7 +109,7 @@ fn timestamp_from_row(row: &Value, message: &Value) -> String {
                     if f.is_finite() && f > 0.0 {
                         let ms = if f > 1e12 { f } else { f * 1000.0 };
                         if let Some(iso) = to_iso_string(ms) {
-                            return iso;
+                            return Some(iso);
                         }
                     }
                 }
@@ -114,7 +117,7 @@ fn timestamp_from_row(row: &Value, message: &Value) -> String {
             _ => {}
         }
     }
-    to_iso_string(now_ms()).unwrap_or_default()
+    None
 }
 
 fn workspace_from_file(file: &str, roots: &[String]) -> Option<String> {
@@ -217,8 +220,15 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
                     }
                     local.push(UsageCandidate {
                         file: file.clone(),
-                        row: row.clone(),
-                        message: message.clone(),
+                        uuid: uuid.map(str::to_string),
+                        model: match message.get("model") {
+                            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                            _ => match row.get("model") {
+                                Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                                _ => None,
+                            },
+                        },
+                        timestamp: timestamp_opt_from_row(row, message),
                         buckets,
                         request_key: request_key_for(&file, row, message, row_index),
                         row_index,
@@ -231,7 +241,7 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
         .await?;
 
         for candidate in file_candidates.iter() {
-            if let Some(uuid) = non_empty_string(candidate.row.get("uuid")) {
+            if let Some(uuid) = candidate.uuid.as_deref() {
                 if seen_uuids.contains(uuid) {
                     continue;
                 }
@@ -255,18 +265,15 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
         } else {
             b.input_tokens
         };
-        let model = match candidate.message.get("model") {
-            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-            _ => match candidate.row.get("model") {
-                Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-                _ => None,
-            },
-        };
+        let model = candidate.model.clone();
         events.push(apply_pricing(UsageEvent {
             id: stable_id(&["claude-code", candidate.request_key.as_str()]),
             agent: AgentId::ClaudeCode,
             model,
-            timestamp: timestamp_from_row(&candidate.row, &candidate.message),
+            timestamp: candidate
+                .timestamp
+                .clone()
+                .unwrap_or_else(|| to_iso_string(now_ms()).unwrap_or_default()),
             input_tokens,
             output_tokens: b.output_tokens,
             cache_read_tokens: b.cache_read_tokens,

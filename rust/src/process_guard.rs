@@ -99,6 +99,17 @@ pub fn write_heartbeat() {
     let _ = std::fs::write(heartbeat_path(), body);
 }
 
+/// Last time (epoch ms) the tokio runtime ran our tick task; 0 = not tracked.
+static LAST_RUNTIME_TICK: AtomicU64 = AtomicU64::new(0);
+
+/// Max age of the runtime tick before the runtime counts as wedged. Stays well
+/// under the supervisor's 120s heartbeat threshold.
+const RUNTIME_STALL_MS: u64 = 45_000;
+
+fn runtime_alive(now: u64, last_tick: u64) -> bool {
+    last_tick == 0 || now.saturating_sub(last_tick) < RUNTIME_STALL_MS
+}
+
 /// Start the periodic heartbeat; the returned closure stops it and removes the
 /// heartbeat file.
 pub fn start_heartbeat(interval_ms: u64) -> Box<dyn Fn() + Send + Sync> {
@@ -110,12 +121,29 @@ pub fn start_heartbeat(interval_ms: u64) -> Box<dyn Fn() + Send + Sync> {
         *slot = Some(tx);
     }
     let interval = Duration::from_millis(interval_ms.max(1));
+    // Runtime liveness: a tokio task bumps a tick; the thread only refreshes the
+    // heartbeat while the tick keeps advancing, so a wedged runtime lets the
+    // file go stale and the supervisor kills the process.
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        LAST_RUNTIME_TICK.store(now_ms_u64(), Ordering::Relaxed);
+        handle.spawn(async {
+            let mut iv = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                iv.tick().await;
+                LAST_RUNTIME_TICK.store(now_ms_u64(), Ordering::Relaxed);
+            }
+        });
+    }
     // Daemon-style thread (does not keep the process alive, like `.unref()`).
     let _ = std::thread::Builder::new()
         .name("tokenlab-heartbeat".into())
         .spawn(move || loop {
             match rx.recv_timeout(interval) {
-                Err(RecvTimeoutError::Timeout) => write_heartbeat(),
+                Err(RecvTimeoutError::Timeout) => {
+                    if runtime_alive(now_ms_u64(), LAST_RUNTIME_TICK.load(Ordering::Relaxed)) {
+                        write_heartbeat();
+                    }
+                }
                 _ => break,
             }
         });
@@ -255,6 +283,13 @@ mod tests {
         let p = heartbeat_path();
         assert!(p.ends_with("heartbeat.txt"));
         assert!(p.contains("tokenlab"));
+    }
+
+    #[test]
+    fn runtime_liveness_rules() {
+        assert!(runtime_alive(1_000_000, 0));
+        assert!(runtime_alive(1_000_000, 990_000));
+        assert!(!runtime_alive(1_000_000, 900_000));
     }
 
     #[test]

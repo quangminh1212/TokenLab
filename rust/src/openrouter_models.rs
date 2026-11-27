@@ -328,7 +328,7 @@ async fn write_disk_cache(cache: &OpenRouterCache) -> anyhow::Result<()> {
     let p = openrouter_cache_path();
     let dir = path_flavor().dirname(&p);
     tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::write(&p, serde_json::to_string(cache)?).await?;
+    crate::config::write_atomic(&p, serde_json::to_string(cache)?.as_bytes()).await?;
     Ok(())
 }
 
@@ -337,7 +337,7 @@ async fn write_disk_cache(cache: &OpenRouterCache) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn fetch_network() -> anyhow::Result<Vec<OpenRouterModelEntry>> {
-    let client = reqwest::Client::builder().timeout(Duration::from_millis(45_000)).build()?;
+    let client = reqwest::Client::builder().connect_timeout(Duration::from_millis(8_000)).timeout(Duration::from_millis(25_000)).build()?;
     let res = client
         .get(OPENROUTER_MODELS_URL)
         .header("Accept", "application/json")

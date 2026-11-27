@@ -311,6 +311,14 @@ pub fn compute_day_activity(events: &[UsageEvent], thresholds: &FlagThresholds) 
 }
 
 /// Full flag report: per-day numbers plus each metric's day list.
+/// Minimum distinct active hours before a day can count as "round the clock"
+/// (a brief burst inside one hour trivially has zero idle hours).
+const MIN_ROUND_THE_CLOCK_HOURS: f64 = 6.0;
+
+fn is_round_the_clock(d: &DayActivity, thresholds: &FlagThresholds) -> bool {
+    d.idle_hours_in_span <= thresholds.max_idle_hours && d.hours_with_traffic >= MIN_ROUND_THE_CLOCK_HOURS
+}
+
 pub fn compute_flag_report(events: &[UsageEvent], thresholds: &FlagThresholds) -> FlagReport {
     let days = compute_day_activity(events, thresholds);
 
@@ -326,7 +334,7 @@ pub fn compute_flag_report(events: &[UsageEvent], thresholds: &FlagThresholds) -
         .collect();
     let days_round_the_clock: Vec<String> = days
         .iter()
-        .filter(|d| d.idle_hours_in_span <= thresholds.max_idle_hours)
+        .filter(|d| is_round_the_clock(d, thresholds))
         .map(|d| d.day.clone())
         .collect();
     let days_automated_cadence: Vec<String> = days
@@ -353,7 +361,7 @@ pub fn compute_flag_report(events: &[UsageEvent], thresholds: &FlagThresholds) -
                     js_num_to_string(thresholds.active_hours)
                 ));
             }
-            if d.idle_hours_in_span <= thresholds.max_idle_hours {
+            if is_round_the_clock(d, thresholds) {
                 reasons.push(format!(
                     "traffic in every hour across the span ({} idle hour(s) <= {})",
                     js_num_to_string(d.idle_hours_in_span),

@@ -19,7 +19,28 @@ pub struct WalkOptions {
     /// Default 8.
     pub max_depth: Option<usize>,
     pub matcher: Option<WalkMatch>,
+    /// Extra directory names (exact, case-insensitive) to prune in addition to the built-in list.
+    pub skip_dirs: Option<&'static [&'static str]>,
 }
+
+/// Chromium/Electron cache directories that never hold agent usage logs.
+pub const ELECTRON_CACHE_DIRS: &[&str] = &[
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "DawnCache",
+    "GrShaderCache",
+    "ShaderCache",
+    "CachedData",
+    "CachedExtensionVSIXs",
+    "Crashpad",
+    "IndexedDB",
+    "Service Worker",
+    "blob_storage",
+    "Session Storage",
+    "Local Storage",
+    "component_crx_cache",
+];
 
 impl WalkOptions {
     pub fn new() -> Self {
@@ -27,6 +48,10 @@ impl WalkOptions {
     }
     pub fn max_depth(mut self, d: usize) -> Self {
         self.max_depth = Some(d);
+        self
+    }
+    pub fn skipping(mut self, dirs: &'static [&'static str]) -> Self {
+        self.skip_dirs = Some(dirs);
         self
     }
     pub fn matching(mut self, f: impl Fn(&str, &str) -> bool + Send + Sync + 'static) -> Self {
@@ -42,7 +67,14 @@ fn skip_dir(name: &str) -> bool {
     )
 }
 
-fn walk_sync(dir: &str, depth: usize, max_depth: usize, m: &Option<WalkMatch>, out: &mut Vec<String>) {
+fn walk_sync(
+    dir: &str,
+    depth: usize,
+    max_depth: usize,
+    m: &Option<WalkMatch>,
+    extra_skip: Option<&'static [&'static str]>,
+    out: &mut Vec<String>,
+) {
     if depth > max_depth {
         return;
     }
@@ -60,7 +92,7 @@ fn walk_sync(dir: &str, depth: usize, max_depth: usize, m: &Option<WalkMatch>, o
             Err(_) => continue,
         };
         if ft.is_dir() {
-            if skip_dir(&name) {
+            if skip_dir(&name) || extra_skip.map_or(false, |l| l.iter().any(|s| s.eq_ignore_ascii_case(&name))) {
                 continue;
             }
             subdirs.push(full);
@@ -71,7 +103,7 @@ fn walk_sync(dir: &str, depth: usize, max_depth: usize, m: &Option<WalkMatch>, o
         }
     }
     for d in subdirs {
-        walk_sync(&d, depth + 1, max_depth, m, out);
+        walk_sync(&d, depth + 1, max_depth, m, extra_skip, out);
     }
 }
 
@@ -83,7 +115,7 @@ pub async fn walk_files(root: &str, options: WalkOptions) -> Vec<String> {
         if !path_exists_sync(&root) {
             return out;
         }
-        walk_sync(&root, 0, options.max_depth.unwrap_or(8), &options.matcher, &mut out);
+        walk_sync(&root, 0, options.max_depth.unwrap_or(8), &options.matcher, options.skip_dirs, &mut out);
         out
     })
     .await
@@ -96,7 +128,7 @@ pub fn walk_files_sync(root: &str, options: &WalkOptions) -> Vec<String> {
     if !path_exists_sync(root) {
         return out;
     }
-    walk_sync(root, 0, options.max_depth.unwrap_or(8), &options.matcher, &mut out);
+    walk_sync(root, 0, options.max_depth.unwrap_or(8), &options.matcher, options.skip_dirs, &mut out);
     out
 }
 

@@ -1177,11 +1177,15 @@ fn parse_digits(s: &str) -> Option<f64> {
     s.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
-fn note_prompt_peak(line: &str, prompt_peak: &mut IndexMap<String, PromptPeak>) {
+fn note_prompt_peak(line: &str, prompt_peak: &mut IndexMap<String, PromptPeak>, done: &HashSet<String>) {
     let pm = RE_PROMPT_ID.captures(line).or_else(|| RE_PROMPT_ID_SNAKE.captures(line));
     let Some(prompt_id) = pm.and_then(|c| c.get(1)).map(|m| m.as_str().to_string()) else {
         return;
     };
+    // Prompts already emitted/completed must never be re-added (stream meta after turn_completed).
+    if done.contains(&prompt_id) {
+        return;
+    }
 
     let mut prev = prompt_peak.get(&prompt_id).copied().unwrap_or_default();
     let mut changed = false;
@@ -1312,17 +1316,8 @@ async fn parse_updates_usage(updates_path: &str, ctx: &Ctx) -> Vec<UsageEvent> {
     let mut emitted_prompt_ids: HashSet<String> = HashSet::new();
 
     for line in split_lines(&text) {
-        note_prompt_peak(line, &mut prompt_peak);
-        // Stream meta after turn_completed can re-add peaks for completed prompts
-        // (same promptId on later tool/meta lines). Never residual those again.
-        if !prompt_peak.is_empty() && (!completed_with_usage.is_empty() || !emitted_prompt_ids.is_empty()) {
-            for id in &completed_with_usage {
-                prompt_peak.shift_remove(id);
-            }
-            for id in &emitted_prompt_ids {
-                prompt_peak.shift_remove(id);
-            }
-        }
+        // emitted_prompt_ids is a superset of completed_with_usage; completed prompts are never re-added.
+        note_prompt_peak(line, &mut prompt_peak, &emitted_prompt_ids);
 
         // Session-level stream floor (in-progress turns)
         if !line.contains("\"sessionUpdate\":\"turn_completed\"") && !line.contains("\"sessionUpdate\": \"turn_completed\"") {
@@ -1993,7 +1988,7 @@ mod tests {
         assert!(timestamp_from_session_id("019f93c8-b594-7391-9505-ba4981098f0c").is_some());
         assert_eq!(timestamp_from_session_id("nope"), None);
         let mut peaks: IndexMap<String, PromptPeak> = IndexMap::new();
-        note_prompt_peak(r#"{"_meta":{"totalTokens": 5, "cachedReadTokens": 3, "promptId": "p"}}"#, &mut peaks);
+        note_prompt_peak(r#"{"_meta":{"totalTokens": 5, "cachedReadTokens": 3, "promptId": "p"}}"#, &mut peaks, &HashSet::new());
         assert_eq!(peaks["p"].total, 5.0);
         assert_eq!(peaks["p"].cached, 3.0);
     }

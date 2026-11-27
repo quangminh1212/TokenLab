@@ -334,7 +334,13 @@ fn openclaw_keep_mask(openclaw: &[&UsageEvent], hermes: &[&UsageEvent]) -> Vec<b
         timestamp: f64,
         event: &'a UsageEvent,
     }
-    let mut hermes_by_model: HashMap<String, Vec<Row>> = HashMap::new();
+    fn scope_of(e: &UsageEvent) -> String {
+        match &e.machine_scope {
+            Some(s) if !s.is_empty() => s.clone(),
+            _ => "local".to_string(),
+        }
+    }
+    let mut hermes_by_model: HashMap<(String, String), Vec<Row>> = HashMap::new();
     for event in hermes {
         if event.request_count_or_1() != 1.0 {
             continue;
@@ -348,7 +354,10 @@ fn openclaw_keep_mask(openclaw: &[&UsageEvent], hermes: &[&UsageEvent]) -> Vec<b
             continue;
         }
         let key = js_trim(model).to_lowercase();
-        hermes_by_model.entry(key).or_default().push(Row { timestamp, event });
+        hermes_by_model.entry((scope_of(event), key)).or_default().push(Row { timestamp, event });
+    }
+    for rows in hermes_by_model.values_mut() {
+        rows.sort_by(|a, b| a.timestamp.total_cmp(&b.timestamp));
     }
 
     openclaw
@@ -365,21 +374,15 @@ fn openclaw_keep_mask(openclaw: &[&UsageEvent], hermes: &[&UsageEvent]) -> Vec<b
             if !timestamp.is_finite() {
                 return true;
             }
-            let candidates = match hermes_by_model.get(&js_trim(model).to_lowercase()) {
+            let candidates = match hermes_by_model.get(&(scope_of(event), js_trim(model).to_lowercase())) {
                 Some(c) => c,
                 None => return true,
             };
             let full_input = event.input_tokens + event.cache_read_tokens + event.cache_write_tokens;
-            let scope = |e: &UsageEvent| -> String {
-                match &e.machine_scope {
-                    Some(s) if !s.is_empty() => s.clone(),
-                    _ => "local".to_string(),
-                }
-            };
-            !candidates.iter().any(|row| {
+            let start = candidates.partition_point(|r| r.timestamp < timestamp - 1_000.0);
+            !candidates[start..].iter().take_while(|r| r.timestamp <= timestamp + 1_000.0).any(|row| {
                 let hermes = row.event;
-                scope(event) == scope(hermes)
-                    && (timestamp - row.timestamp).abs() <= 1_000.0
+                (timestamp - row.timestamp).abs() <= 1_000.0
                     && event.output_tokens == hermes.output_tokens
                     && event.total_tokens == hermes.total_tokens
                     && full_input == hermes.input_tokens + hermes.cache_read_tokens + hermes.cache_write_tokens
@@ -419,14 +422,22 @@ fn apply_machine_scope(job: &Job, parsed: Vec<UsageEvent>) -> Vec<UsageEvent> {
     let flavor = PathFlavor::host();
     let resolved_roots: Vec<String> = job.remote_roots.iter().map(|r| flavor.resolve(&[r.as_str()])).collect();
     let dotdot_sep = format!("..{}", flavor.sep());
+    let mut inside_cache: HashMap<String, bool> = HashMap::new();
     parsed
         .into_iter()
         .map(|mut event| {
-            let src = flavor.resolve(&[event.source_path.as_str()]);
-            let inside = resolved_roots.iter().any(|root| {
-                let rel = flavor.relative(root, &src);
-                rel.is_empty() || (rel != ".." && !rel.starts_with(&dotdot_sep) && !flavor.is_absolute(&rel))
-            });
+            let inside = match inside_cache.get(event.source_path.as_str()) {
+                Some(v) => *v,
+                None => {
+                    let src = flavor.resolve(&[event.source_path.as_str()]);
+                    let v = resolved_roots.iter().any(|root| {
+                        let rel = flavor.relative(root, &src);
+                        rel.is_empty() || (rel != ".." && !rel.starts_with(&dotdot_sep) && !flavor.is_absolute(&rel))
+                    });
+                    inside_cache.insert(event.source_path.clone(), v);
+                    v
+                }
+            };
             if inside {
                 event.machine_scope = Some(scope.clone());
             }
