@@ -167,7 +167,7 @@ fn push_from_object(events: &mut Vec<UsageEvent>, row: &Value, file: &str, idx: 
             js_num_to_string(output).as_str(),
         ]),
         agent: AgentId::Cursor,
-        model,
+        model: model.map(Into::into),
         timestamp: ts,
         input_tokens: input,
         output_tokens: output,
@@ -175,10 +175,10 @@ fn push_from_object(events: &mut Vec<UsageEvent>, row: &Value, file: &str, idx: 
         cache_write_tokens: cache_write,
         cache_reported: if cache_reported { Some(true) } else { None },
         workspace: match r.get("workspace") {
-            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::String(s)) => Some(s.clone().into()),
             _ => None,
         },
-        source_path: file.to_string(),
+        source_path: file.to_string().into(),
         ..Default::default()
     }));
 }

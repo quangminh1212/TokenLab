@@ -358,7 +358,7 @@ fn parse_openclaw_database(db_path: &str) -> Vec<UsageEvent> {
                 js_num_to_string(buckets.output_tokens).as_str(),
             ]),
             agent: AgentId::Openclaw,
-            model,
+            model: model.map(Into::into),
             timestamp: extract_timestamp(&[record, message, created_at]),
             input_tokens: buckets.input_tokens,
             output_tokens: buckets.output_tokens,
@@ -366,10 +366,10 @@ fn parse_openclaw_database(db_path: &str) -> Vec<UsageEvent> {
             cache_write_tokens: buckets.cache_write_tokens,
             cache_reported: if buckets.cache_reported == Some(true) { Some(true) } else { None },
             workspace: match g(record, "cwd") {
-                Some(Value::String(s)) => Some(s.clone()),
+                Some(Value::String(s)) => Some(s.clone().into()),
                 _ => None,
             },
-            source_path: db_path.to_string(),
+            source_path: db_path.to_string().into(),
             ..Default::default()
         }));
     }
@@ -438,15 +438,15 @@ async fn parse_session_file(events: &mut Vec<UsageEvent>, file: &str, seen: &mut
                 js_num_to_string(buckets.output_tokens).as_str(),
             ]),
             agent: AgentId::Openclaw,
-            model: model.clone(),
+            model: model.clone().map(Into::into),
             timestamp: ts,
             input_tokens: buckets.input_tokens,
             output_tokens: buckets.output_tokens,
             cache_read_tokens: buckets.cache_read_tokens,
             cache_write_tokens: buckets.cache_write_tokens,
             cache_reported: if buckets.cache_reported == Some(true) { Some(true) } else { None },
-            workspace: workspace.clone(),
-            source_path: file.to_string(),
+            workspace: workspace.clone().map(Into::into),
+            source_path: file.to_string().into(),
             ..Default::default()
         }));
     }

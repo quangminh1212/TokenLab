@@ -199,15 +199,15 @@ async fn parse_json_artifacts(root: &str, seen: &mut HashSet<String>) -> Vec<Usa
                     js_num_to_string(buckets.output_tokens).as_str(),
                 ]),
                 agent: AgentId::Windsurf,
-                model: extract_model(&[Some(row), r.get("usage"), r.get("message")]),
+                model: (extract_model(&[Some(row), r.get("usage"), r.get("message")])).map(Into::into),
                 timestamp: extract_timestamp(&[Some(row), r.get("usage"), r.get("message")]),
                 input_tokens: buckets.input_tokens,
                 output_tokens: buckets.output_tokens,
                 cache_read_tokens: buckets.cache_read_tokens,
                 cache_write_tokens: buckets.cache_write_tokens,
                 cache_reported: buckets.cache_reported,
-                workspace,
-                source_path: file.clone(),
+                workspace: workspace.map(Into::into),
+                source_path: file.clone().into(),
                 ..Default::default()
             }));
         }
@@ -376,7 +376,7 @@ fn parse_windsurf_sqlite_inner(
                             js_num_to_string(buckets.input_tokens).as_str(),
                         ]),
                         agent: AgentId::Windsurf,
-                        model: extract_model(&[Some(&row_v)]),
+                        model: (extract_model(&[Some(&row_v)])).map(Into::into),
                         timestamp: extract_timestamp(&[Some(&row_v)]),
                         input_tokens: buckets.input_tokens,
                         output_tokens: buckets.output_tokens,
@@ -384,7 +384,7 @@ fn parse_windsurf_sqlite_inner(
                         cache_write_tokens: buckets.cache_write_tokens,
                         cache_reported: buckets.cache_reported,
                         workspace: None,
-                        source_path: db_path.to_string(),
+                        source_path: db_path.to_string().into(),
                         ..Default::default()
                     }));
                     continue;
@@ -441,7 +441,7 @@ fn push_usage_from_unknown(events: &mut Vec<UsageEvent>, value: &Value, source_p
                 js_num_to_string(buckets.input_tokens).as_str(),
             ]),
             agent: AgentId::Windsurf,
-            model: extract_model(&[Some(c)]),
+            model: (extract_model(&[Some(c)])).map(Into::into),
             timestamp: extract_timestamp(&[Some(c)]),
             input_tokens: buckets.input_tokens,
             output_tokens: buckets.output_tokens,
@@ -449,7 +449,7 @@ fn push_usage_from_unknown(events: &mut Vec<UsageEvent>, value: &Value, source_p
             cache_write_tokens: buckets.cache_write_tokens,
             cache_reported: buckets.cache_reported,
             workspace: None,
-            source_path: source_path.to_string(),
+            source_path: source_path.to_string().into(),
             ..Default::default()
         }));
     }
@@ -597,14 +597,14 @@ async fn parse_cascade_sessions(root: &str, seen: &mut HashSet<String>) -> Vec<U
         events.push(apply_pricing(UsageEvent {
             id: stable_id(&["windsurf", kind, session_id.as_str(), file.as_str()]),
             agent: AgentId::Windsurf,
-            model: Some(model),
+            model: Some(model.into()),
             timestamp,
             input_tokens,
             output_tokens,
             cache_read_tokens,
             cache_write_tokens: 0.0,
             workspace: None,
-            source_path: file.clone(),
+            source_path: file.clone().into(),
             estimated: Some(!has_real),
             cache_reported: if cache_reported { Some(true) } else { None },
             ..Default::default()

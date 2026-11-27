@@ -7,6 +7,175 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
+/// Interned, immutable, cheaply clonable string. Equal values share one
+/// allocation (model names, source paths, workspaces repeat across ~1M events).
+/// Serializes exactly like `String`.
+#[derive(Clone, Default)]
+pub struct IStr(std::sync::Arc<str>);
+
+const SHARDS: usize = 16;
+type Shard = parking_lot::Mutex<std::collections::HashSet<std::sync::Arc<str>>>;
+
+fn interner() -> &'static [Shard; SHARDS] {
+    static I: std::sync::OnceLock<[Shard; SHARDS]> = std::sync::OnceLock::new();
+    I.get_or_init(|| std::array::from_fn(|_| Shard::default()))
+}
+
+fn shard_of(s: &str) -> usize {
+    // FNV-1a, only used to pick a shard.
+    let mut h: u32 = 0x811c_9dc5;
+    for b in s.as_bytes() {
+        h = (h ^ *b as u32).wrapping_mul(0x0100_0193);
+    }
+    (h as usize) % SHARDS
+}
+
+impl IStr {
+    pub fn new(s: &str) -> IStr {
+        let mut set = interner()[shard_of(s)].lock();
+        if let Some(a) = set.get(s) {
+            return IStr(a.clone());
+        }
+        let a: std::sync::Arc<str> = std::sync::Arc::from(s);
+        set.insert(a.clone());
+        IStr(a)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Drop interner entries no longer referenced by any `IStr`.
+    pub fn purge_unused() {
+        for sh in interner().iter() {
+            sh.lock().retain(|a| std::sync::Arc::strong_count(a) > 1);
+        }
+    }
+}
+
+impl std::ops::Deref for IStr {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+impl AsRef<str> for IStr {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+impl std::borrow::Borrow<str> for IStr {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+impl fmt::Debug for IStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&*self.0, f)
+    }
+}
+impl fmt::Display for IStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl PartialEq for IStr {
+    fn eq(&self, o: &IStr) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &o.0) || *self.0 == *o.0
+    }
+}
+impl Eq for IStr {}
+impl std::hash::Hash for IStr {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        (*self.0).hash(h)
+    }
+}
+impl PartialOrd for IStr {
+    fn partial_cmp(&self, o: &IStr) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for IStr {
+    fn cmp(&self, o: &IStr) -> std::cmp::Ordering {
+        (*self.0).cmp(&*o.0)
+    }
+}
+impl PartialEq<str> for IStr {
+    fn eq(&self, o: &str) -> bool {
+        &*self.0 == o
+    }
+}
+impl PartialEq<&str> for IStr {
+    fn eq(&self, o: &&str) -> bool {
+        &*self.0 == *o
+    }
+}
+impl PartialEq<String> for IStr {
+    fn eq(&self, o: &String) -> bool {
+        &*self.0 == o.as_str()
+    }
+}
+impl PartialEq<std::borrow::Cow<'_, str>> for IStr {
+    fn eq(&self, o: &std::borrow::Cow<'_, str>) -> bool {
+        &*self.0 == o.as_ref()
+    }
+}
+impl PartialEq<IStr> for str {
+    fn eq(&self, o: &IStr) -> bool {
+        self == &*o.0
+    }
+}
+impl PartialEq<IStr> for &str {
+    fn eq(&self, o: &IStr) -> bool {
+        *self == &*o.0
+    }
+}
+impl PartialEq<IStr> for String {
+    fn eq(&self, o: &IStr) -> bool {
+        self.as_str() == &*o.0
+    }
+}
+impl From<&str> for IStr {
+    fn from(s: &str) -> IStr {
+        IStr::new(s)
+    }
+}
+impl From<&String> for IStr {
+    fn from(s: &String) -> IStr {
+        IStr::new(s)
+    }
+}
+impl From<String> for IStr {
+    fn from(s: String) -> IStr {
+        IStr::new(&s)
+    }
+}
+impl From<IStr> for String {
+    fn from(s: IStr) -> String {
+        s.0.to_string()
+    }
+}
+impl Serialize for IStr {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+impl<'de> Deserialize<'de> for IStr {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = IStr;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a string")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<IStr, E> {
+                Ok(IStr::new(v))
+            }
+        }
+        d.deserialize_str(V)
+    }
+}
+
 /// Lenient number (de)serialization helpers shared by the data model.
 ///
 /// * serialize: integral finite values are written as integers (`12`, not
@@ -251,7 +420,7 @@ pub struct UsageEvent {
     #[serde(default)]
     pub agent: AgentId,
     #[serde(default)]
-    pub model: Option<String>,
+    pub model: Option<IStr>,
     #[serde(default)]
     pub timestamp: String,
     #[serde(default, with = "jsnum")]
@@ -267,13 +436,13 @@ pub struct UsageEvent {
     #[serde(default, serialize_with = "jsnum::ser_opt", deserialize_with = "jsnum::de_opt")]
     pub estimated_cost: Option<f64>,
     #[serde(default)]
-    pub currency: String,
+    pub currency: IStr,
     #[serde(default)]
     pub pricing_status: PricingStatus,
     #[serde(default)]
-    pub workspace: Option<String>,
+    pub workspace: Option<IStr>,
     #[serde(default)]
-    pub source_path: String,
+    pub source_path: IStr,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated: Option<bool>,
     // Serialization order follows TS `sanitizeEvents` (estimated, cacheReported,
@@ -285,7 +454,7 @@ pub struct UsageEvent {
     /// Runtime/persisted provenance scope used to keep foreign-machine restores
     /// separate from local usage during deduplication and high-water merges.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub machine_scope: Option<String>,
+    pub machine_scope: Option<IStr>,
     /// Real API request count represented by this row (defaults to 1).
     #[serde(
         default,
@@ -313,10 +482,10 @@ impl Default for UsageEvent {
             cache_write_tokens: 0.0,
             total_tokens: 0.0,
             estimated_cost: None,
-            currency: "USD".to_string(),
+            currency: IStr::new("USD"),
             pricing_status: PricingStatus::Priced,
             workspace: None,
-            source_path: String::new(),
+            source_path: IStr::default(),
             estimated: None,
             machine_scope: None,
             request_count: None,

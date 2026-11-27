@@ -205,9 +205,9 @@ fn base_event(id: String, model: Option<String>, workspace: Option<String>, sour
     UsageEvent {
         id,
         agent: AgentId::Hermes,
-        model,
-        workspace,
-        source_path: source_path.to_string(),
+        model: model.map(Into::into),
+        workspace: workspace.map(Into::into),
+        source_path: source_path.to_string().into(),
         ..UsageEvent::default()
     }
 }

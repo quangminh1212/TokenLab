@@ -83,7 +83,7 @@ fn light_event(id: &str, agent: AgentId, timestamp: &str, source_path: &str, inp
     UsageEvent {
         id: id.to_string(),
         agent,
-        model: Some("m".to_string()),
+        model: Some(("m".to_string()).into()),
         timestamp: timestamp.to_string(),
         input_tokens: input,
         output_tokens: output,
@@ -91,10 +91,10 @@ fn light_event(id: &str, agent: AgentId, timestamp: &str, source_path: &str, inp
         cache_write_tokens: 0.0,
         total_tokens: input + output,
         estimated_cost: Some(0.0),
-        currency: "USD".to_string(),
+        currency: ("USD".to_string()).into(),
         pricing_status: PricingStatus::Priced,
         workspace: None,
-        source_path: source_path.to_string(),
+        source_path: source_path.to_string().into(),
         ..Default::default()
     }
 }

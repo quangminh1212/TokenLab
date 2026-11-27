@@ -107,15 +107,15 @@ pub async fn parse_generic_jsonl(roots: &[String], options: &GenericJsonlOptions
                         js_num_to_string(buckets.output_tokens).as_str(),
                     ]),
                     agent: options.agent,
-                    model,
+                    model: model.map(Into::into),
                     timestamp,
                     input_tokens: buckets.input_tokens,
                     output_tokens: buckets.output_tokens,
                     cache_read_tokens: buckets.cache_read_tokens,
                     cache_write_tokens: buckets.cache_write_tokens,
                     cache_reported: buckets.cache_reported,
-                    workspace,
-                    source_path: file.clone(),
+                    workspace: workspace.map(Into::into),
+                    source_path: file.clone().into(),
                     ..Default::default()
                 }));
             }

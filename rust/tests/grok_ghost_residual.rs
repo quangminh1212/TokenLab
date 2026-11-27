@@ -38,7 +38,7 @@ impl Ev {
         UsageEvent {
             id: self.id.to_string(),
             agent: AgentId::Grok,
-            model: Some(self.model.to_string()),
+            model: Some(self.model.to_string().into()),
             timestamp: self.timestamp.to_string(),
             input_tokens: self.input,
             output_tokens: self.output,
@@ -47,7 +47,7 @@ impl Ev {
             total_tokens: self.input + self.output + self.cache_read,
             estimated: Some(self.estimated),
             estimated_cost: self.cost,
-            source_path: self.source_path,
+            source_path: self.source_path.into(),
             ..Default::default()
         }
     }

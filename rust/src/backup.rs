@@ -23,7 +23,7 @@ use crate::types::{jsnum, AgentId, GroupBy, PricingStatus, TokenTotals, UsageEve
 use crate::util::{
     app_data_dir, env_nonempty, filter_by_period, js_date_parse, js_num_to_string, js_number_from_str,
     js_round, js_to_fixed, js_trim, normalize_agent_id, normalize_model_name, now_ms, path_exists,
-    path_flavor, pjoin, sort_events_by_time, stable_id, start_of_day_in_time_zone, to_iso_string,
+    path_flavor, pjoin, sort_events_by_time_owned, stable_id, start_of_day_in_time_zone, to_iso_string,
 };
 use crate::version::VERSION;
 use indexmap::{IndexMap, IndexSet};
@@ -560,7 +560,7 @@ pub fn mark_imported_events(events: &[UsageEvent]) -> Vec<UsageEvent> {
                 e.clone()
             } else {
                 let mut c = e.clone();
-                c.machine_scope = Some(scope);
+                c.machine_scope = Some(scope.into());
                 c
             }
         })
@@ -1098,7 +1098,58 @@ pub fn merge_events_by_id_prefer_richer(lists: &[&[UsageEvent]]) -> Vec<UsageEve
     }
     // Policy: over-count rather than miss usage; usage only grows.
     let merged: Vec<UsageEvent> = by_id.into_values().cloned().collect();
-    collapse_exact_usage_duplicates(&collapse_source_path_rollups(&collapse_router_daily_events(&merged)))
+    collapse_exact_usage_duplicates_owned(collapse_source_path_rollups_owned(collapse_router_daily_events_owned(
+        merged,
+    )))
+}
+
+/// 128-bit digest of a key buffer. The buffer holds exactly the bytes the old
+/// `join("|")` string keys held, so equality of keys is preserved up to a
+/// 2^-128 collision probability.
+fn key128(buf: &str) -> u128 {
+    use std::hash::{Hash, Hasher};
+    let mut h1 = std::collections::hash_map::DefaultHasher::new();
+    buf.hash(&mut h1);
+    let mut h2 = std::collections::hash_map::DefaultHasher::new();
+    0x9e37_79b9_7f4a_7c15u64.hash(&mut h2);
+    buf.hash(&mut h2);
+    ((h1.finish() as u128) << 64) | h2.finish() as u128
+}
+
+/// Owned `merge_events_by_id_prefer_richer`: same result, but the inputs are
+/// consumed and no event is cloned (first-occurrence order, richer row wins).
+pub fn merge_events_by_id_prefer_richer_owned(lists: Vec<Vec<UsageEvent>>) -> Vec<UsageEvent> {
+    let total: usize = lists.iter().map(|l| l.len()).sum();
+    let mut out: Vec<UsageEvent> = Vec::with_capacity(total);
+    let mut index: HashMap<u128, usize> = HashMap::with_capacity(total);
+    let mut buf = String::new();
+    for list in lists {
+        for e in list {
+            if e.id.is_empty() {
+                continue;
+            }
+            buf.clear();
+            buf.push_str(&usage_machine_scope(&e));
+            buf.push('|');
+            buf.push_str(&e.id);
+            let key = key128(&buf);
+            match index.get(&key) {
+                None => {
+                    index.insert(key, out.len());
+                    out.push(e);
+                }
+                Some(&i) => {
+                    if std::ptr::eq(prefer_richer_event(&out[i], &e), &e) {
+                        out[i] = e;
+                    }
+                }
+            }
+        }
+    }
+    drop(index);
+    out.shrink_to_fit();
+    // Policy: over-count rather than miss usage; usage only grows.
+    collapse_exact_usage_duplicates_owned(collapse_source_path_rollups_owned(collapse_router_daily_events_owned(out)))
 }
 
 fn normalized_source_path(source_path: &str) -> String {
@@ -1135,6 +1186,33 @@ pub fn drop_previous_agent_source_events(
         })
         .cloned()
         .collect()
+}
+
+/// In-place `drop_previous_agent_source_events` (consumes `previous`).
+pub fn drop_previous_agent_source_events_owned(
+    mut previous: Vec<UsageEvent>,
+    fresh: &[UsageEvent],
+    agent: &str,
+) -> Vec<UsageEvent> {
+    let wanted = normalize_agent_id(Some(agent));
+    let mut fresh_paths: HashSet<String> = HashSet::new();
+    for e in fresh {
+        if normalize_agent_id(Some(e.agent.as_str())) != wanted {
+            continue;
+        }
+        let source = normalized_source_path(&e.source_path);
+        if !source.is_empty() {
+            fresh_paths.insert(source);
+        }
+    }
+    if fresh_paths.is_empty() {
+        return previous;
+    }
+    previous.retain(|e| {
+        normalize_agent_id(Some(e.agent.as_str())) != wanted
+            || !fresh_paths.contains(&normalized_source_path(&e.source_path))
+    });
+    previous
 }
 
 /// Fresh-source replacement followed by the normal richer-row merge.
@@ -1183,6 +1261,51 @@ pub fn prune_stale_source_events(previous: &[UsageEvent], fresh: &[UsageEvent]) 
         })
         .cloned()
         .collect()
+}
+
+/// In-place `prune_stale_source_events` (consumes `previous`).
+pub fn prune_stale_source_events_owned(mut previous: Vec<UsageEvent>, fresh: &[UsageEvent]) -> Vec<UsageEvent> {
+    if fresh.is_empty() {
+        return previous;
+    }
+    let mut fresh_keys: HashSet<String> = HashSet::new();
+    let mut fresh_ids: HashSet<&str> = HashSet::new();
+    for e in fresh {
+        fresh_ids.insert(e.id.as_str());
+        let source = normalized_source_path(&e.source_path);
+        if source.is_empty() {
+            continue;
+        }
+        fresh_keys.insert(format!("{}|{}", normalize_agent_id(Some(e.agent.as_str())).as_str(), source));
+    }
+    if fresh_keys.is_empty() {
+        return previous;
+    }
+    previous.retain(|e| {
+        if fresh_ids.contains(e.id.as_str()) {
+            return true;
+        }
+        let source = normalized_source_path(&e.source_path);
+        if source.is_empty() {
+            return true;
+        }
+        !fresh_keys.contains(&format!(
+            "{}|{}",
+            normalize_agent_id(Some(e.agent.as_str())).as_str(),
+            source
+        ))
+    });
+    previous
+}
+
+/// In-place `drop_legacy_codex_proxy_attributions`.
+pub fn drop_legacy_codex_proxy_attributions_owned(mut events: Vec<UsageEvent>) -> Vec<UsageEvent> {
+    events.retain(|e| !is_legacy_codex_proxy(e));
+    events
+}
+
+fn is_legacy_codex_proxy(e: &UsageEvent) -> bool {
+    e.agent == AgentId::Codex && e.workspace.as_deref().unwrap_or("").contains("via:tokenrouter")
 }
 
 /// Remove Codex rows created by the old time/model-only LiteLLM proxy join.
@@ -1248,6 +1371,33 @@ pub fn drop_previous_agent_session_events(
         .collect()
 }
 
+/// In-place `drop_previous_agent_session_events` (consumes `previous`).
+pub fn drop_previous_agent_session_events_owned(
+    mut previous: Vec<UsageEvent>,
+    fresh: &[UsageEvent],
+    agent: &str,
+) -> Vec<UsageEvent> {
+    let wanted = normalize_agent_id(Some(agent));
+    let mut fresh_sessions: HashSet<String> = HashSet::new();
+    for e in fresh {
+        if normalize_agent_id(Some(e.agent.as_str())) != wanted || is_est(e) {
+            continue;
+        }
+        let session = source_session_path(&e.source_path);
+        if !session.is_empty() {
+            fresh_sessions.insert(session);
+        }
+    }
+    if fresh_sessions.is_empty() {
+        return previous;
+    }
+    previous.retain(|e| {
+        normalize_agent_id(Some(e.agent.as_str())) != wanted
+            || !fresh_sessions.contains(&source_session_path(&e.source_path))
+    });
+    previous
+}
+
 /// Fresh-session replacement followed by the normal richer-row merge.
 pub fn replace_fresh_agent_session_events(
     fresh: &[UsageEvent],
@@ -1261,32 +1411,56 @@ pub fn replace_fresh_agent_session_events(
 /// Windsurf progressive rescans mint new ids for the same .pb when tokens
 /// grow; keep the richest row per file. Also drops stale Grok residuals.
 pub fn collapse_source_path_rollups(events: &[UsageEvent]) -> Vec<UsageEvent> {
+    collapse_source_path_rollups_owned(events.to_vec())
+}
+
+/// In-place `collapse_source_path_rollups`: only Windsurf `.pb` rows move out
+/// of the vector; everything else is compacted where it stands.
+pub fn collapse_source_path_rollups_owned(mut events: Vec<UsageEvent>) -> Vec<UsageEvent> {
     if events.is_empty() {
-        return Vec::new();
+        return events;
     }
     let mut best: IndexMap<String, UsageEvent> = IndexMap::new();
-    let mut out: Vec<UsageEvent> = Vec::new();
-
-    for e in events {
-        if e.source_path.is_empty() {
-            out.push(e.clone());
-            continue;
-        }
-        let sp = norm_path(&e.source_path);
+    let mut w = 0usize;
+    for r in 0..events.len() {
         // Only Windsurf cascade files: one logical session per .pb.
-        if e.agent == AgentId::Windsurf && sp.ends_with(".pb") {
-            let key = format!("ws|{}|{}", usage_machine_scope(e), sp);
-            let next = match best.get(&key) {
-                Some(prev) => prefer_richer_event(prev, e).clone(),
-                None => e.clone(),
-            };
-            best.insert(key, next);
-            continue;
+        let ws_sp = {
+            let e = &events[r];
+            if !e.source_path.is_empty() && e.agent == AgentId::Windsurf {
+                let sp = norm_path(&e.source_path);
+                if sp.ends_with(".pb") {
+                    Some(sp)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        match ws_sp {
+            Some(sp) => {
+                let e = std::mem::take(&mut events[r]);
+                let key = format!("ws|{}|{}", usage_machine_scope(&e), sp);
+                match best.get_mut(&key) {
+                    Some(prev) => {
+                        if std::ptr::eq(prefer_richer_event(&*prev, &e), &e) {
+                            *prev = e;
+                        }
+                    }
+                    None => {
+                        best.insert(key, e);
+                    }
+                }
+            }
+            None => {
+                events.swap(w, r);
+                w += 1;
+            }
         }
-        out.push(e.clone());
     }
-    out.extend(best.into_values());
-    drop_grok_stale_residuals(&out)
+    events.truncate(w);
+    events.extend(best.into_values());
+    drop_grok_stale_residuals_owned(events)
 }
 
 /// Router mirror roots are additive; every router collapse key carries this
@@ -1312,6 +1486,37 @@ fn is_router_usage_agent_id(a: AgentId) -> bool {
 
 /// Migrate a pre-additive local scan cache once the parser starts returning
 /// scoped mirror rows.
+pub fn drop_legacy_router_mirror_rows_owned(mut previous: Vec<UsageEvent>, fresh: &[UsageEvent]) -> Vec<UsageEvent> {
+    let already_additive = previous.iter().any(|event| {
+        let agent = normalize_agent_id(Some(event.agent.as_str()));
+        if !is_router_usage_agent_id(agent) {
+            return false;
+        }
+        event.source_path.contains("#mirror-root=") || event.source_path.starts_with("daily-rollup|")
+    });
+    if already_additive {
+        return previous;
+    }
+    let mut additive_agents: HashSet<AgentId> = HashSet::new();
+    for event in fresh {
+        let agent = normalize_agent_id(Some(event.agent.as_str()));
+        if is_router_usage_agent_id(agent) && router_mirror_scope(event) != "primary" {
+            additive_agents.insert(agent);
+        }
+    }
+    if additive_agents.is_empty() {
+        return previous;
+    }
+    previous.retain(|event| {
+        let agent = normalize_agent_id(Some(event.agent.as_str()));
+        if !additive_agents.contains(&agent) {
+            return true;
+        }
+        usage_machine_scope(event) != LOCAL_MACHINE_SCOPE
+    });
+    previous
+}
+
 pub fn drop_legacy_router_mirror_rows(previous: &[UsageEvent], fresh: &[UsageEvent]) -> Vec<UsageEvent> {
     // Once one additive scan has persisted scoped rows, the migration is done.
     let already_additive = previous.iter().any(|event| {
@@ -1461,7 +1666,7 @@ fn gap_fill_router_day_from_dailies(dailies: &[UsageEvent], requests: &[UsageEve
         });
         ne.timestamp = d.timestamp.clone();
         ne.source_path = if d.source_path.is_empty() {
-            "gapfill-daily".to_string()
+            ("gapfill-daily".to_string()).into()
         } else {
             d.source_path.clone()
         };
@@ -1496,42 +1701,64 @@ struct DayBucket {
 /// Router days: collapse multi-version estimated rollups to the richest per
 /// model, then keep max(daily totals, request totals) for that day.
 pub fn collapse_router_daily_events(events: &[UsageEvent]) -> Vec<UsageEvent> {
+    collapse_router_daily_events_owned(events.to_vec())
+}
+
+/// In-place `collapse_router_daily_events`: non-router rows are compacted
+/// where they stand; only router rows with a valid day move into buckets.
+pub fn collapse_router_daily_events_owned(mut events: Vec<UsageEvent>) -> Vec<UsageEvent> {
     if events.is_empty() {
-        return Vec::new();
+        return events;
     }
 
-    let mut non_router: Vec<UsageEvent> = Vec::new();
     let mut by_agent_day: IndexMap<String, DayBucket> = IndexMap::new();
-
-    for e in events {
-        if !is_router_usage_agent_id(e.agent) {
-            non_router.push(e.clone());
-            continue;
-        }
-        let day = slice_prefix(&e.timestamp, 10);
-        if !is_ymd(&day) {
-            non_router.push(e.clone());
-            continue;
-        }
+    let mut w = 0usize;
+    for r in 0..events.len() {
+        let router_day = {
+            let e = &events[r];
+            if is_router_usage_agent_id(e.agent) {
+                let day = slice_prefix(&e.timestamp, 10);
+                if is_ymd(&day) {
+                    Some(day)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        let day = match router_day {
+            Some(d) => d,
+            None => {
+                events.swap(w, r);
+                w += 1;
+                continue;
+            }
+        };
+        let e = std::mem::take(&mut events[r]);
         let key = format!(
             "{}|{}|{}|{}",
-            usage_machine_scope(e),
+            usage_machine_scope(&e),
             e.agent.as_str(),
-            router_mirror_scope(e),
+            router_mirror_scope(&e),
             day
         );
         let bucket = by_agent_day.entry(key).or_insert_with(|| DayBucket {
             dailies: Vec::new(),
             requests: Vec::new(),
         });
-        if is_est(e) {
-            bucket.dailies.push(e.clone());
+        if is_est(&e) {
+            bucket.dailies.push(e);
         } else {
-            bucket.requests.push(e.clone());
+            bucket.requests.push(e);
         }
     }
+    events.truncate(w);
+    if by_agent_day.is_empty() {
+        return events;
+    }
 
-    let mut out: Vec<UsageEvent> = non_router;
+    let mut out: Vec<UsageEvent> = events;
     for bucket in by_agent_day.values() {
         // Same logical daily rollup rewritten many times: keep richest per
         // day+model+workspace (see TS comments for why not by model / id).
@@ -1711,7 +1938,23 @@ pub fn drop_grok_stale_residuals(events: &[UsageEvent]) -> Vec<UsageEvent> {
     if events.is_empty() {
         return Vec::new();
     }
+    drop_grok_stale_residuals_owned(events.to_vec())
+}
 
+/// In-place `drop_grok_stale_residuals`.
+pub fn drop_grok_stale_residuals_owned(mut events: Vec<UsageEvent>) -> Vec<UsageEvent> {
+    if events.is_empty() {
+        return events;
+    }
+    let drop_keys = grok_drop_keys(&events);
+    if drop_keys.is_empty() {
+        return events;
+    }
+    events.retain(|e| !drop_keys.contains(&format!("{}|{}", usage_machine_scope(e), e.id)));
+    events
+}
+
+fn grok_drop_keys(events: &[UsageEvent]) -> HashSet<String> {
     let mut by_path: IndexMap<String, GrokPathInfo> = IndexMap::new();
     for (idx, e) in events.iter().enumerate() {
         if e.agent != AgentId::Grok {
@@ -1769,14 +2012,7 @@ pub fn drop_grok_stale_residuals(events: &[UsageEvent]) -> Vec<UsageEvent> {
         }
     }
 
-    if drop_keys.is_empty() {
-        return events.to_vec();
-    }
-    events
-        .iter()
-        .filter(|e| !drop_keys.contains(&format!("{}|{}", usage_machine_scope(e), e.id)))
-        .cloned()
-        .collect()
+    drop_keys
 }
 
 fn is_router_rollup(e: &UsageEvent) -> bool {
@@ -1829,34 +2065,39 @@ struct MonoBucket {
     cache_reported: f64,
 }
 
-fn bucketize(list: &[UsageEvent]) -> IndexMap<String, MonoBucket> {
+fn bucketize_owned(list: Vec<UsageEvent>) -> IndexMap<String, MonoBucket> {
     let mut map: IndexMap<String, MonoBucket> = IndexMap::new();
-    for e in list {
+    let mut key = String::new();
+    for mut e in list {
         let agent = normalize_agent_id(Some(e.agent.as_str()));
         let day = slice_prefix(&e.timestamp, 10);
-        let scope = usage_machine_scope(e);
-        let key = if is_ymd(&day) {
-            format!("{}|{}|{}", scope, agent.as_str(), day)
+        let scope = usage_machine_scope(&e);
+        key.clear();
+        if is_ymd(&day) {
+            key.push_str(&format!("{}|{}|{}", scope, agent.as_str(), day));
         } else {
-            format!("{}|{}|__noday__|{}", scope, agent.as_str(), e.id)
-        };
-        let b = map.entry(key).or_default();
-        let mut ne = e.clone();
-        ne.agent = agent;
-        b.events.push(ne);
-        b.tok += mono_token_weight(e);
-        b.cost += cost_of(e);
-        b.billed_cost += billed_cost_of(e);
+            key.push_str(&format!("{}|{}|__noday__|{}", scope, agent.as_str(), e.id));
+        }
+        if !map.contains_key(key.as_str()) {
+            map.insert(key.clone(), MonoBucket::default());
+        }
+        let b = map.get_mut(key.as_str()).unwrap();
+        // Weights are computed on the row as parsed (before agent normalisation).
+        b.tok += mono_token_weight(&e);
+        b.cost += cost_of(&e);
+        b.billed_cost += billed_cost_of(&e);
         b.cache_read += n0(e.cache_read_tokens);
         if e.cache_reported == Some(true) {
             b.cache_reported += 1.0;
         }
-        b.req += req_floor_or_1(e);
-        if !is_est(e) {
+        b.req += req_floor_or_1(&e);
+        if !is_est(&e) {
             b.live += 1.0;
         } else if n0(e.output_tokens) > 0.0 {
             b.est_out_pos += 1.0;
         }
+        e.agent = agent;
+        b.events.push(e);
     }
     map
 }
@@ -1956,34 +2197,41 @@ fn better<'a>(a: &'a MonoBucket, b: &'a MonoBucket) -> &'a MonoBucket {
 /// Per agent x day high-water mark: never replace a richer previous day
 /// snapshot with a thinner rescan. Usage totals can only grow across rescans.
 pub fn enforce_monotonic_agent_days(prev: &[UsageEvent], next: &[UsageEvent]) -> Vec<UsageEvent> {
+    enforce_monotonic_agent_days_owned(prev.to_vec(), next.to_vec())
+}
+
+/// Owned `enforce_monotonic_agent_days`: both snapshots are consumed and the
+/// winning rows are moved (never cloned) into the result.
+pub fn enforce_monotonic_agent_days_owned(prev: Vec<UsageEvent>, next: Vec<UsageEvent>) -> Vec<UsageEvent> {
     if prev.is_empty() {
-        return next.to_vec();
+        return next;
     }
     if next.is_empty() {
-        return drop_grok_stale_residuals(prev);
+        return drop_grok_stale_residuals_owned(prev);
     }
 
-    let prev = drop_grok_stale_residuals(prev);
-    let next = drop_grok_stale_residuals(next);
+    let prev = drop_grok_stale_residuals_owned(prev);
+    let next = drop_grok_stale_residuals_owned(next);
+    let total = prev.len() + next.len();
 
-    let prev_map = bucketize(&prev);
-    let next_map = bucketize(&next);
-    let mut keys: IndexSet<&String> = IndexSet::new();
+    let mut prev_map = bucketize_owned(prev);
+    let mut next_map = bucketize_owned(next);
+    let mut keys: IndexSet<String> = IndexSet::new();
     for k in prev_map.keys() {
-        keys.insert(k);
+        keys.insert(k.clone());
     }
     for k in next_map.keys() {
-        keys.insert(k);
+        keys.insert(k.clone());
     }
-    let mut out: Vec<UsageEvent> = Vec::new();
+    let mut out: Vec<UsageEvent> = Vec::with_capacity(total);
 
     for key in keys {
-        let p = prev_map.get(key);
-        let n = next_map.get(key);
+        let p = prev_map.swap_remove(key.as_str());
+        let n = next_map.swap_remove(key.as_str());
         match (p, n) {
             (Some(p), Some(n)) => {
-                let winner = better(p, n);
-                let loser = if std::ptr::eq(winner, p) { n } else { p };
+                let p_wins = std::ptr::eq(better(&p, &n), &p);
+                let (winner, loser) = if p_wins { (p, n) } else { (n, p) };
                 // Carry cacheReported provenance onto the retained rows.
                 let reported_by_id: HashSet<&str> = loser
                     .events
@@ -1991,28 +2239,30 @@ pub fn enforce_monotonic_agent_days(prev: &[UsageEvent], next: &[UsageEvent]) ->
                     .filter(|ev| ev.cache_reported == Some(true))
                     .map(|ev| ev.id.as_str())
                     .collect();
-                for event in &winner.events {
+                for mut event in winner.events {
                     if event.cache_reported != Some(true) && reported_by_id.contains(event.id.as_str()) {
-                        let mut c = event.clone();
-                        c.cache_reported = Some(true);
-                        out.push(c);
-                    } else {
-                        out.push(event.clone());
+                        event.cache_reported = Some(true);
                     }
+                    out.push(event);
                 }
             }
-            (None, Some(n)) => out.extend(n.events.iter().cloned()),
-            (Some(p), None) => out.extend(p.events.iter().cloned()),
+            (None, Some(n)) => out.extend(n.events),
+            (Some(p), None) => out.extend(p.events),
             (None, None) => {}
         }
     }
     // Final strip: whichever side won must not reintroduce Grok residual stacks
-    drop_grok_stale_residuals(&out)
+    drop_grok_stale_residuals_owned(out)
 }
 
 /// Remove prior local LiteLLM daily rows when a fresh scan rebuilds the same
 /// mirror root and day.
 pub fn drop_previous_litellm_daily_rollups(previous: &[UsageEvent], fresh: &[UsageEvent]) -> Vec<UsageEvent> {
+    drop_previous_litellm_daily_rollups_owned(previous.to_vec(), fresh)
+}
+
+/// In-place `drop_previous_litellm_daily_rollups` (consumes `previous`).
+pub fn drop_previous_litellm_daily_rollups_owned(mut previous: Vec<UsageEvent>, fresh: &[UsageEvent]) -> Vec<UsageEvent> {
     let coverage_key = |event: &UsageEvent| -> Option<String> {
         if normalize_agent_id(Some(event.agent.as_str())) != AgentId::Litellm {
             return None;
@@ -2046,16 +2296,13 @@ pub fn drop_previous_litellm_daily_rollups(previous: &[UsageEvent], fresh: &[Usa
         }
     }
     if fresh_days.is_empty() {
-        return previous.to_vec();
+        return previous;
     }
+    previous.retain(|event| match previous_daily_key(event) {
+        None => true,
+        Some(k) => !fresh_days.contains(&k),
+    });
     previous
-        .iter()
-        .filter(|event| match previous_daily_key(event) {
-            None => true,
-            Some(k) => !fresh_days.contains(&k),
-        })
-        .cloned()
-        .collect()
 }
 
 /// Reconcile a freshly scanned cache with the persisted high-water snapshot.
@@ -2063,58 +2310,101 @@ pub fn reconcile_scan_cache_high_water(existing: &[UsageEvent], next: &[UsageEve
     if existing.is_empty() {
         return next.to_vec();
     }
-    let baseline = drop_legacy_router_mirror_rows(
-        &drop_previous_agent_source_events(
-            &drop_previous_litellm_daily_rollups(existing, next),
-            next,
+    reconcile_scan_cache_high_water_owned(existing.to_vec(), next.to_vec())
+}
+
+/// Owned `reconcile_scan_cache_high_water`: both snapshots are consumed and
+/// every stage works in place.
+pub fn reconcile_scan_cache_high_water_owned(existing: Vec<UsageEvent>, next: Vec<UsageEvent>) -> Vec<UsageEvent> {
+    if existing.is_empty() {
+        return next;
+    }
+    let baseline = drop_legacy_router_mirror_rows_owned(
+        drop_previous_agent_source_events_owned(
+            drop_previous_litellm_daily_rollups_owned(existing, &next),
+            &next,
             "claude-code",
         ),
-        next,
+        &next,
     );
-    let merged = enforce_monotonic_agent_days(&baseline, next);
-    collapse_exact_usage_duplicates(&collapse_source_path_rollups(&collapse_router_daily_events(&merged)))
+    let merged = enforce_monotonic_agent_days_owned(baseline, next);
+    collapse_exact_usage_duplicates_owned(collapse_source_path_rollups_owned(collapse_router_daily_events_owned(
+        merged,
+    )))
 }
 
 /// Drop byte-identical clones (same agent/time/tokens/source, different id).
 pub fn collapse_exact_usage_duplicates(events: &[UsageEvent]) -> Vec<UsageEvent> {
+    collapse_exact_usage_duplicates_owned(events.to_vec())
+}
+
+/// In-place `collapse_exact_usage_duplicates`. The first occurrence of each
+/// key keeps its slot; a later duplicate replaces it only when richer. Keys are
+/// 128-bit digests of the exact `join("|")` bytes (no per-row String kept).
+pub fn collapse_exact_usage_duplicates_owned(mut events: Vec<UsageEvent>) -> Vec<UsageEvent> {
     if events.is_empty() {
-        return Vec::new();
+        return events;
     }
-    let mut best: IndexMap<String, UsageEvent> = IndexMap::new();
-    for e in events {
-        let key = if is_router_usage_agent_id(e.agent) {
-            [
-                usage_machine_scope(e),
-                e.agent.as_str().to_string(),
-                router_mirror_scope(e),
-                slice_prefix(&e.timestamp, 19),
-                e.model.clone().unwrap_or_default(),
-                js_num_to_string(n0(e.input_tokens)),
-                js_num_to_string(n0(e.output_tokens)),
-                e.workspace.clone().unwrap_or_default(),
-            ]
-            .join("|")
-        } else {
-            [
-                usage_machine_scope(e),
-                e.agent.as_str().to_string(),
-                e.timestamp.clone(),
-                e.model.clone().unwrap_or_default(),
-                js_num_to_string(n0(e.input_tokens)),
-                js_num_to_string(n0(e.output_tokens)),
-                js_num_to_string(n0(e.cache_read_tokens)),
-                js_num_to_string(n0(e.cache_write_tokens)),
-                e.source_path.clone(),
-            ]
-            .join("|")
-        };
-        let next = match best.get(&key) {
-            Some(prev) => prefer_richer_event(prev, e).clone(),
-            None => e.clone(),
-        };
-        best.insert(key, next);
+    let mut index: HashMap<u128, usize> = HashMap::with_capacity(events.len());
+    let mut buf = String::with_capacity(256);
+    let mut w = 0usize;
+    for r in 0..events.len() {
+        {
+            let e = &events[r];
+            buf.clear();
+            buf.push_str(&usage_machine_scope(e));
+            buf.push('|');
+            buf.push_str(e.agent.as_str());
+            buf.push('|');
+            if is_router_usage_agent_id(e.agent) {
+                buf.push_str(&router_mirror_scope(e));
+                buf.push('|');
+                buf.push_str(&slice_prefix(&e.timestamp, 19));
+                buf.push('|');
+                buf.push_str(e.model.as_deref().unwrap_or(""));
+                buf.push('|');
+                buf.push_str(&js_num_to_string(n0(e.input_tokens)));
+                buf.push('|');
+                buf.push_str(&js_num_to_string(n0(e.output_tokens)));
+                buf.push('|');
+                buf.push_str(e.workspace.as_deref().unwrap_or(""));
+            } else {
+                buf.push_str(&e.timestamp);
+                buf.push('|');
+                buf.push_str(e.model.as_deref().unwrap_or(""));
+                buf.push('|');
+                buf.push_str(&js_num_to_string(n0(e.input_tokens)));
+                buf.push('|');
+                buf.push_str(&js_num_to_string(n0(e.output_tokens)));
+                buf.push('|');
+                buf.push_str(&js_num_to_string(n0(e.cache_read_tokens)));
+                buf.push('|');
+                buf.push_str(&js_num_to_string(n0(e.cache_write_tokens)));
+                buf.push('|');
+                buf.push_str(&e.source_path);
+            }
+        }
+        let key = key128(&buf);
+        match index.get(&key) {
+            Some(&k) => {
+                let take_new = {
+                    let (head, tail) = events.split_at(r);
+                    std::ptr::eq(prefer_richer_event(&head[k], &tail[0]), &tail[0])
+                };
+                if take_new {
+                    events.swap(k, r);
+                }
+            }
+            None => {
+                index.insert(key, w);
+                events.swap(w, r);
+                w += 1;
+            }
+        }
     }
-    best.into_values().collect()
+    drop(index);
+    events.truncate(w);
+    events
 }
 
 // ---------------------------------------------------------------------------
@@ -2303,7 +2593,7 @@ fn sanitize_event_value(item: &Value) -> Option<UsageEvent> {
     Some(UsageEvent {
         id,
         agent,
-        model,
+        model: model.map(Into::into),
         timestamp,
         input_tokens,
         output_tokens,
@@ -2311,12 +2601,12 @@ fn sanitize_event_value(item: &Value) -> Option<UsageEvent> {
         cache_write_tokens,
         total_tokens,
         estimated_cost,
-        currency,
+        currency: currency.into(),
         pricing_status: pricing_status_from(o.get("pricingStatus").and_then(|v| v.as_str())),
-        workspace,
-        source_path,
+        workspace: workspace.map(Into::into),
+        source_path: source_path.into(),
         estimated: Some(o.get("estimated").map_or(false, js_truthy)),
-        machine_scope,
+        machine_scope: machine_scope.map(Into::into),
         request_count,
         cache_reported,
         cost_parity_gap: None,
@@ -2333,6 +2623,55 @@ pub fn sanitize_events(raw: &Value) -> Option<Vec<UsageEvent>> {
         }
     }
     Some(out)
+}
+
+/// In-place `sanitize_typed_events` (same coercions, no per-row clone).
+fn sanitize_typed_events_owned(mut events: Vec<UsageEvent>) -> Vec<UsageEvent> {
+    for e in events.iter_mut() {
+        let agent = normalize_agent_id(Some(e.agent.as_str()));
+        let input_tokens = n0(e.input_tokens);
+        let output_tokens = n0(e.output_tokens);
+        let cache_read_tokens = n0(e.cache_read_tokens);
+        let cache_write_tokens = n0(e.cache_write_tokens);
+        let legacy_devin = e.cache_reported.is_none()
+            && agent == AgentId::Devin
+            && (cache_read_tokens > 0.0 || cache_write_tokens > 0.0);
+        let total_raw = n0(e.total_tokens);
+        let total_tokens = if total_raw != 0.0 {
+            total_raw
+        } else {
+            input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+        };
+        let request_count = match e.request_count {
+            Some(rc) if rc.is_finite() && rc > 0.0 => Some(rc.floor()),
+            _ => None,
+        };
+        let estimated = Some(is_est(e));
+        let machine_scope = e
+            .machine_scope
+            .as_deref()
+            .map(|s| js_trim(s).to_string())
+            .filter(|s| !s.is_empty())
+            .map(Into::into);
+        let cache_reported = if e.cache_reported == Some(true) || legacy_devin {
+            Some(true)
+        } else {
+            None
+        };
+        e.agent = agent;
+        e.input_tokens = input_tokens;
+        e.output_tokens = output_tokens;
+        e.cache_read_tokens = cache_read_tokens;
+        e.cache_write_tokens = cache_write_tokens;
+        e.total_tokens = total_tokens;
+        e.estimated_cost = e.estimated_cost.filter(|c| !c.is_nan());
+        e.estimated = estimated;
+        e.machine_scope = machine_scope;
+        e.request_count = request_count;
+        e.cache_reported = cache_reported;
+        e.cost_parity_gap = None;
+    }
+    events
 }
 
 /// `sanitizeEvents` applied to already-typed events (same coercions).
@@ -2374,11 +2713,11 @@ fn sanitize_typed_events(events: &[UsageEvent]) -> Vec<UsageEvent> {
                 workspace: e.workspace.clone(),
                 source_path: e.source_path.clone(),
                 estimated: Some(is_est(e)),
-                machine_scope: e
+                machine_scope: (e
                     .machine_scope
                     .as_deref()
                     .map(|s| js_trim(s).to_string())
-                    .filter(|s| !s.is_empty()),
+                    .filter(|s| !s.is_empty())).map(Into::into),
                 request_count,
                 cache_reported: if e.cache_reported == Some(true) || legacy_devin {
                     Some(true)
@@ -2591,8 +2930,16 @@ fn json_array_element_ranges(b: &[u8]) -> Option<Vec<(usize, usize)>> {
 /// Parallel equivalent of `read_json_value` + `sanitize_events`. None means
 /// "use the serial path".
 fn parse_events_parallel(bytes: &[u8]) -> Option<Vec<UsageEvent>> {
-    use rayon::prelude::*;
     let ranges = json_array_element_ranges(bytes)?;
+    let mut out = Vec::with_capacity(ranges.len());
+    append_parsed_ranges(bytes, &ranges, &mut out)?;
+    Some(out)
+}
+
+/// Parse `bytes[a..b]` element ranges in parallel (input order preserved) and
+/// append the sanitized events. None when any element fails to parse.
+fn append_parsed_ranges(bytes: &[u8], ranges: &[(usize, usize)], out: &mut Vec<UsageEvent>) -> Option<()> {
+    use rayon::prelude::*;
     let chunk = (ranges.len() / (rayon::current_num_threads() * 4)).max(256);
     let parts: Vec<Option<Vec<UsageEvent>>> = ranges
         .par_chunks(chunk)
@@ -2607,14 +2954,148 @@ fn parse_events_parallel(bytes: &[u8]) -> Option<Vec<UsageEvent>> {
             Some(v)
         })
         .collect();
-    let mut out = Vec::with_capacity(ranges.len());
     for p in parts {
         out.extend(p?);
     }
+    Some(())
+}
+
+/// Streaming equivalent of `parse_events_parallel`: the file is read in 1 MiB
+/// blocks, split into top-level array elements with the same structural rules
+/// as `json_array_element_ranges`, and parsed in ~16 MiB batches. The whole
+/// file is never resident. None means "not a plain array of objects" (or an
+/// I/O error): callers fall back to the whole-file / salvage path.
+fn parse_events_streaming<R: std::io::BufRead>(mut rd: R, size_hint: usize) -> Option<Vec<UsageEvent>> {
+    const FLUSH_BYTES: usize = 16 << 20;
+    #[derive(Clone, Copy, PartialEq)]
+    enum St {
+        Start,
+        First,
+        InElem,
+        After,
+        NextElem,
+        Done,
+    }
+    let ws = |c: u8| c == b' ' || c == b'\n' || c == b'\r' || c == b'\t';
+    let mut out: Vec<UsageEvent> = Vec::with_capacity(size_hint / 256);
+    let mut batch: Vec<u8> = Vec::new();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut st = St::Start;
+    let (mut depth, mut in_str, mut esc) = (0i64, false, false);
+    let mut cur_start = 0usize;
+    let mut first_block = true;
+    loop {
+        let buf = match rd.fill_buf() {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+        if buf.is_empty() {
+            break;
+        }
+        let n = buf.len();
+        let mut i = 0usize;
+        if first_block {
+            first_block = false;
+            if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                i = 3;
+            }
+        }
+        let mut seg_start = 0usize;
+        while i < n {
+            let c = buf[i];
+            match st {
+                St::InElem => {
+                    if in_str {
+                        if esc {
+                            esc = false;
+                        } else if c == b'\\' {
+                            esc = true;
+                        } else if c == b'"' {
+                            in_str = false;
+                        }
+                    } else if c == b'"' {
+                        in_str = true;
+                    } else if c == b'{' || c == b'[' {
+                        depth += 1;
+                    } else if c == b'}' || c == b']' {
+                        depth -= 1;
+                        if depth == 0 {
+                            batch.extend_from_slice(&buf[seg_start..=i]);
+                            ranges.push((cur_start, batch.len()));
+                            st = St::After;
+                            if batch.len() >= FLUSH_BYTES {
+                                append_parsed_ranges(&batch, &ranges, &mut out)?;
+                                batch.clear();
+                                ranges.clear();
+                            }
+                        }
+                    }
+                }
+                St::Start => {
+                    if c == b'[' {
+                        st = St::First;
+                    } else if !ws(c) {
+                        return None;
+                    }
+                }
+                St::First | St::NextElem => {
+                    if c == b'{' {
+                        st = St::InElem;
+                        depth = 1;
+                        in_str = false;
+                        esc = false;
+                        cur_start = batch.len();
+                        seg_start = i;
+                    } else if c == b']' && st == St::First {
+                        st = St::Done;
+                    } else if !ws(c) {
+                        return None;
+                    }
+                }
+                St::After => {
+                    if c == b',' {
+                        st = St::NextElem;
+                    } else if c == b']' {
+                        st = St::Done;
+                    } else if !ws(c) {
+                        return None;
+                    }
+                }
+                St::Done => {
+                    if !ws(c) {
+                        return None;
+                    }
+                }
+            }
+            i += 1;
+        }
+        if st == St::InElem {
+            batch.extend_from_slice(&buf[seg_start..n]);
+        }
+        rd.consume(n);
+    }
+    if st != St::Done {
+        return None;
+    }
+    append_parsed_ranges(&batch, &ranges, &mut out)?;
+    out.shrink_to_fit();
     Some(out)
 }
 
 async fn read_events_file(file_path: &str) -> Result<Vec<UsageEvent>, String> {
+    // Fast path: stream-parse straight from disk (no whole-file buffer).
+    let path = file_path.to_string();
+    let streamed = tokio::task::spawn_blocking(move || -> Result<Option<Vec<UsageEvent>>, String> {
+        let f = std::fs::File::open(&path).map_err(|e| err_msg(&e))?;
+        let len = f.metadata().map(|m| m.len() as usize).unwrap_or(0);
+        Ok(parse_events_streaming(std::io::BufReader::with_capacity(1 << 20, f), len))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if let Some(events) = streamed {
+        return Ok(events);
+    }
+    // Not a plain array of objects (or truncated/corrupt): whole-file path.
     let bytes = tokio::fs::read(file_path).await.map_err(|e| err_msg(&e))?;
     let (fast, bytes) = tokio::task::spawn_blocking(move || {
         let r = parse_events_parallel(&bytes);
@@ -2700,7 +3181,7 @@ async fn load_scan_cache_candidate_ex(file_path: &str) -> Option<(Vec<UsageEvent
     }
     match read_scan_cache_file(file_path).await {
         Ok(events) => {
-            let events = drop_legacy_codex_proxy_attributions(&events);
+            let events = drop_legacy_codex_proxy_attributions_owned(events);
             if events.is_empty() {
                 None
             } else {
@@ -2752,10 +3233,16 @@ fn score_better(score: ScanScore, best: ScanScore) -> bool {
 
 /// Fingerprint for no-op save detection (count + token weight + cost + max ts).
 pub fn scan_cache_fingerprint(events: &[UsageEvent]) -> String {
+    fingerprint_iter(events.iter())
+}
+
+fn fingerprint_iter<'a>(events: impl Iterator<Item = &'a UsageEvent>) -> String {
     let mut tokens = 0.0;
     let mut cost = 0.0;
     let mut max_ts = 0.0;
+    let mut count = 0usize;
     for e in events {
+        count += 1;
         tokens += event_token_weight(e);
         cost += cost_of(e);
         let t = js_date_parse(&e.timestamp);
@@ -2765,7 +3252,7 @@ pub fn scan_cache_fingerprint(events: &[UsageEvent]) -> String {
     }
     format!(
         "{}|{}|{}|{}",
-        events.len(),
+        count,
         js_num_to_string(tokens),
         js_to_fixed(cost, 4),
         js_num_to_string(max_ts)
@@ -2776,7 +3263,7 @@ pub fn scan_cache_fingerprint(events: &[UsageEvent]) -> String {
 pub async fn load_scan_cache_main_only() -> Vec<UsageEvent> {
     match load_scan_cache_candidate(&scan_cache_path()).await {
         Some(events) if !events.is_empty() => {
-            collapse_exact_usage_duplicates(&collapse_router_daily_events(&events))
+            collapse_exact_usage_duplicates_owned(collapse_router_daily_events_owned(events))
         }
         _ => Vec::new(),
     }
@@ -2790,7 +3277,9 @@ pub async fn load_scan_cache() -> Vec<UsageEvent> {
     if let Some((main_events, salvaged)) = load_scan_cache_candidate_ex(&p).await {
         if !main_events.is_empty() {
             if !salvaged {
-                return collapse_exact_usage_duplicates(&collapse_router_daily_events(&main_events));
+                let mut v = collapse_exact_usage_duplicates_owned(collapse_router_daily_events_owned(main_events));
+                v.shrink_to_fit();
+                return v;
             }
             // Truncated main: do not let it beat a complete .bak/archive; union below.
             salvaged_main = main_events;
@@ -2826,7 +3315,7 @@ pub async fn load_scan_cache() -> Vec<UsageEvent> {
             best_from = p.clone();
         } else {
             // Richer rows win on id collisions; count can only grow.
-            best = merge_events_by_id_prefer_richer(&[&best, &salvaged_main]);
+            best = merge_events_by_id_prefer_richer_owned(vec![std::mem::take(&mut best), salvaged_main]);
             best_from = format!("{} + {}", best_from, p);
         }
     }
@@ -2857,13 +3346,15 @@ pub async fn load_scan_cache() -> Vec<UsageEvent> {
             best_from = legacy_best_from;
         } else {
             // Union: richer rows win on id collisions; net count can only grow.
-            let union = merge_events_by_id_prefer_richer(&[&best, &legacy_best]);
-            if union.len() >= best.len() {
+            let best_len = best.len();
+            let legacy_len = legacy_best.len();
+            let union = merge_events_by_id_prefer_richer_owned(vec![best.clone(), legacy_best]);
+            if union.len() >= best_len {
                 log(&format!(
                     "loadScanCache: merged legacy cache \u{2192} {} (best={} + legacy={} \u{2192} union={})",
                     legacy_best_from,
-                    best.len(),
-                    legacy_best.len(),
+                    best_len,
+                    legacy_len,
                     union.len()
                 ));
                 best = union;
@@ -2878,7 +3369,9 @@ pub async fn load_scan_cache() -> Vec<UsageEvent> {
             best_from
         ));
         // Heal legacy unstable daily ids + exact clones so restart totals stay honest.
-        return collapse_exact_usage_duplicates(&collapse_router_daily_events(&best));
+        let mut v = collapse_exact_usage_duplicates_owned(collapse_router_daily_events_owned(best));
+        v.shrink_to_fit();
+        return v;
     }
     log_error("loadScanCache: no valid cache file (main + .bak + archive all failed)");
     Vec::new()
@@ -3005,10 +3498,7 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
 
     // Same-process short-circuit BEFORE collapse/high-water (O(n) on 50k+ rows).
     {
-        let early_fp = cpu_heavy(|| {
-            let raw = drop_legacy_codex_proxy_attributions(events);
-            scan_cache_fingerprint(&raw)
-        });
+        let early_fp = cpu_heavy(|| fingerprint_iter(events.iter().filter(|e| !is_legacy_codex_proxy(e))));
         let raw_len = events.len();
         let same = *LAST_SCAN_CACHE_WRITE_FP.lock() == early_fp;
         if same && path_exists(&p).await {
@@ -3017,27 +3507,35 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
         }
     }
 
-    let mut clean: Vec<UsageEvent> = cpu_heavy(|| {
-        let valid_events = drop_legacy_codex_proxy_attributions(events);
-        match mode {
-            SaveMode::Quick => valid_events,
-            SaveMode::Full => collapse_exact_usage_duplicates(&collapse_source_path_rollups(
-                &collapse_router_daily_events(&sanitize_typed_events(&valid_events)),
-            )),
+    // Quick saves serialize the caller's slice directly (no copy) unless legacy
+    // rows must be filtered; Full saves work on one owned copy, in place.
+    let mut clean: std::borrow::Cow<[UsageEvent]> = cpu_heavy(|| match mode {
+        SaveMode::Quick => {
+            if events.iter().any(is_legacy_codex_proxy) {
+                std::borrow::Cow::Owned(drop_legacy_codex_proxy_attributions(events))
+            } else {
+                std::borrow::Cow::Borrowed(events)
+            }
         }
+        SaveMode::Full => std::borrow::Cow::Owned(collapse_exact_usage_duplicates_owned(
+            collapse_source_path_rollups_owned(collapse_router_daily_events_owned(sanitize_typed_events_owned(
+                drop_legacy_codex_proxy_attributions(events),
+            ))),
+        )),
     });
 
     // Full save: never write a thinner all-time snapshot than what is on disk.
     if mode == SaveMode::Full {
-        let existing = drop_legacy_codex_proxy_attributions(&load_scan_cache_main_only().await);
-        clean = cpu_heavy(|| {
-            let mut c = clean;
+        let existing = drop_legacy_codex_proxy_attributions_owned(load_scan_cache_main_only().await);
+        let c = clean.into_owned();
+        clean = std::borrow::Cow::Owned(cpu_heavy(|| {
+            let mut c = c;
             if !existing.is_empty() {
-                c = reconcile_scan_cache_high_water(&existing, &c);
+                c = reconcile_scan_cache_high_water_owned(existing, c);
             }
             // Persist timestamp-sorted for O(log n) period filters after next load.
-            sort_events_by_time(&c).0
-        });
+            sort_events_by_time_owned(c).0
+        }));
     }
 
     let fp = cpu_heavy(|| scan_cache_fingerprint(&clean));
@@ -3046,16 +3544,20 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
         log(&format!("saveScanCache: skip unchanged {} {}", clean.len(), mode_label(mode)));
         return Ok(());
     }
-
-    // One serialize only.
-    let json = cpu_heavy(|| serde_json::to_string(&clean))?;
-    if !json.starts_with('[') || !json.ends_with(']') {
-        anyhow::bail!("scan cache serialize produced non-array JSON");
-    }
+    let clean_len = clean.len();
 
     let tmp = format!("{}.{}.{}.tmp", p, std::process::id(), now_ms() as u64);
     let result: anyhow::Result<()> = async {
-        tokio::fs::write(&tmp, &json).await?;
+        // One streaming serialize straight into the tmp file (no giant String).
+        cpu_heavy(|| -> anyhow::Result<()> {
+            let f = std::fs::File::create(&tmp)?;
+            let mut w = std::io::BufWriter::with_capacity(1 << 20, f);
+            serde_json::to_writer(&mut w, &*clean)?;
+            w.flush()?;
+            Ok(())
+        })?;
+        // Release the (possibly owned) snapshot before the rotate/copy phase.
+        drop(std::mem::take(&mut clean));
         // Rotate previous main -> .bak (rename, not a 20MB copy).
         if path_exists(&p).await && !scan_cache_file_looks_complete(&p).await {
             // Known-corrupt/truncated main: never rotate it over a good .bak.
@@ -3093,7 +3595,7 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
             }
         }
         *LAST_SCAN_CACHE_WRITE_FP.lock() = fp.clone();
-        log(&format!("saveScanCache: {} {} \u{2192} {}", clean.len(), mode_label(mode), p));
+        log(&format!("saveScanCache: {} {} \u{2192} {}", clean_len, mode_label(mode), p));
         heartbeat();
         Ok(())
     }
@@ -3854,7 +4356,7 @@ fn rollup_acc_to_event(row: &RollupAcc, machine_id: &str) -> UsageEvent {
     UsageEvent {
         id: stable_id(&[prefix, mid.as_str(), row.bucket.as_str(), row.agent.as_str(), model_key]),
         agent: row.agent,
-        model: row.model.clone(),
+        model: row.model.clone().map(Into::into),
         timestamp: to_iso_string(row.last_ts).unwrap_or_default(),
         input_tokens: row.input_tokens,
         output_tokens: row.output_tokens,
@@ -3862,10 +4364,10 @@ fn rollup_acc_to_event(row: &RollupAcc, machine_id: &str) -> UsageEvent {
         cache_write_tokens: row.cache_write_tokens,
         total_tokens: row.total_tokens,
         estimated_cost: Some(row.estimated_cost),
-        currency: "USD".to_string(),
+        currency: ("USD".to_string()).into(),
         pricing_status: PricingStatus::Estimated,
-        workspace: Some(mid.clone()),
-        source_path: format!("{}:{}", base_path, mid),
+        workspace: Some(mid.clone().into()),
+        source_path: format!("{}:{}", base_path, mid).into(),
         estimated: Some(true),
         ..Default::default()
     }
@@ -4910,14 +5412,14 @@ mod tests {
         UsageEvent {
             id: id.to_string(),
             agent: AgentId::ClaudeCode,
-            model: Some(model.to_string()),
+            model: Some(model.to_string().into()),
             timestamp: ts.to_string(),
             input_tokens: tokens,
             total_tokens: tokens,
             estimated_cost: Some(cost),
-            currency: "USD".to_string(),
+            currency: ("USD".to_string()).into(),
             pricing_status: PricingStatus::Priced,
-            source_path: "x.jsonl".to_string(),
+            source_path: ("x.jsonl".to_string()).into(),
             ..Default::default()
         }
     }

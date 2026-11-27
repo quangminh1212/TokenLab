@@ -37,6 +37,7 @@ use crate::aggregate::{
     DashPeriodKey, PrecomputedPeriodStats, SortBy,
 };
 use crate::backup::{
+    collapse_exact_usage_duplicates_owned, collapse_router_daily_events_owned, collapse_source_path_rollups_owned, drop_legacy_codex_proxy_attributions_owned, drop_legacy_router_mirror_rows_owned, drop_previous_litellm_daily_rollups_owned, enforce_monotonic_agent_days_owned, prune_stale_source_events_owned, reconcile_scan_cache_high_water_owned, merge_events_by_id_prefer_richer_owned, drop_previous_agent_source_events_owned, drop_previous_agent_session_events_owned,
     build_full_backup, build_settings_backup, collapse_exact_usage_duplicates, collapse_router_daily_events,
     collapse_source_path_rollups, drop_legacy_codex_proxy_attributions, drop_legacy_router_mirror_rows,
     drop_previous_agent_session_events, drop_previous_agent_source_events, drop_previous_litellm_daily_rollups,
@@ -69,7 +70,7 @@ use crate::util::{
     app_data_dir, build_timestamp_index, cwd_string, env_nonempty, filter_by_period,
     filter_by_period_sorted_detailed, sorted_period_range, host_platform, js_date_parse, js_num_to_string, js_number_from_str,
     js_to_fixed, js_trim, normalize_model_for_agent, normalize_model_name, now_ms, parse_since, pjoin,
-    sort_events_by_time, start_of_day_in_time_zone, to_iso_string, utc_parts, PathFlavor,
+    sort_events_by_time, sort_events_by_time_owned, start_of_day_in_time_zone, to_iso_string, utc_parts, PathFlavor,
 };
 use crate::version::VERSION;
 
@@ -599,6 +600,11 @@ pub(crate) struct AppState {
 #[derive(Default)]
 struct ScanLocal {
     by_agent: IndexMap<String, Vec<UsageEvent>>,
+    /// Full scan: previous cache the not-yet-materialized agents still live in.
+    prev: Option<Arc<Vec<UsageEvent>>>,
+    /// Agents in `by_agent` whose (empty) placeholder stands for their previous
+    /// rows in `prev` (agent -> row count). Avoids cloning the whole cache up front.
+    lazy: HashMap<String, usize>,
     /// Light tick: agents that returned rows. Empty means "file unchanged".
     fresh_by_agent: IndexMap<String, Vec<UsageEvent>>,
     agent_stats: Vec<AgentStat>,
@@ -721,15 +727,15 @@ fn merge_agent_scan_light(fresh: Vec<UsageEvent>, mut prev: Vec<UsageEvent>) -> 
                 true
             })
             .collect();
-        prev_for_merge = drop_previous_agent_session_events(&filtered, &fresh, "grok");
+        prev_for_merge = drop_previous_agent_session_events_owned(filtered, &fresh, "grok");
     }
     if agent == "claude-code" {
-        prev_for_merge = drop_previous_agent_source_events(&prev_for_merge, &fresh, "claude-code");
+        prev_for_merge = drop_previous_agent_source_events_owned(prev_for_merge, &fresh, "claude-code");
     }
     if agent == "opencode" {
-        prev_for_merge = drop_previous_agent_source_events(&prev_for_merge, &fresh, "opencode");
+        prev_for_merge = drop_previous_agent_source_events_owned(prev_for_merge, &fresh, "opencode");
     }
-    (merge_events_by_id_prefer_richer(&[&fresh, &prev_for_merge]), grok_sessions)
+    (merge_events_by_id_prefer_richer_owned(vec![fresh, prev_for_merge]), grok_sessions)
 }
 
 fn opt_num_sig(x: Option<f64>) -> String {
@@ -745,7 +751,7 @@ fn usage_sig(e: &UsageEvent) -> String {
         js_num_to_string(e.cache_write_tokens),
         opt_num_sig(e.request_count),
         opt_num_sig(e.estimated_cost),
-        e.model.clone().unwrap_or_default(),
+        (e.model.clone().unwrap_or_default()).to_string(),
         if e.cache_reported == Some(true) { "reported".to_string() } else { String::new() },
     ]
     .join(":")
@@ -807,33 +813,33 @@ fn rebuild_merge(
     grok_replaced_sessions: &HashSet<String>,
     imported: &[UsageEvent],
 ) -> (Vec<UsageEvent>, Option<Vec<f64>>) {
-    let collapse = |events: &[UsageEvent]| -> Vec<UsageEvent> {
-        collapse_exact_usage_duplicates(&collapse_source_path_rollups(&collapse_router_daily_events(events)))
+    let collapse = |events: Vec<UsageEvent>| -> Vec<UsageEvent> {
+        collapse_exact_usage_duplicates_owned(collapse_source_path_rollups_owned(collapse_router_daily_events_owned(
+            events,
+        )))
     };
     let previous_for_monotonic = || -> Vec<UsageEvent> {
-        let valid = drop_legacy_codex_proxy_attributions(prev);
+        let mut valid = drop_legacy_codex_proxy_attributions(prev);
         if codex_replaced_paths.is_empty() && grok_replaced_sessions.is_empty() {
             return valid;
         }
+        valid.retain(|e| {
+            if e.agent.as_str() == "codex" && codex_replaced_paths.contains(&usage_source_key(&e.source_path)) {
+                return false;
+            }
+            if e.agent.as_str() == "grok" && grok_replaced_sessions.contains(&grok_session_key(&e.source_path)) {
+                return false;
+            }
+            true
+        });
         valid
-            .into_iter()
-            .filter(|e| {
-                if e.agent.as_str() == "codex" && codex_replaced_paths.contains(&usage_source_key(&e.source_path)) {
-                    return false;
-                }
-                if e.agent.as_str() == "grok" && grok_replaced_sessions.contains(&grok_session_key(&e.source_path)) {
-                    return false;
-                }
-                true
-            })
-            .collect()
     };
     // Baseline for the high-water guard: previous rows, minus anything the
     // current scan has just re-parsed.
     let monotonic_baseline = |scanned: &[UsageEvent]| -> Vec<UsageEvent> {
-        prune_stale_source_events(
-            &drop_legacy_router_mirror_rows(
-                &drop_previous_litellm_daily_rollups(&previous_for_monotonic(), scanned),
+        prune_stale_source_events_owned(
+            drop_legacy_router_mirror_rows_owned(
+                drop_previous_litellm_daily_rollups_owned(previous_for_monotonic(), scanned),
                 scanned,
             ),
             scanned,
@@ -848,19 +854,29 @@ fn rebuild_merge(
         scanned.extend(list);
     }
     if finalize {
-        scanned = drop_legacy_codex_proxy_attributions(&scanned);
-        scanned = collapse(&scanned);
-        scanned = enforce_monotonic_agent_days(&monotonic_baseline(&scanned), &scanned);
-        scanned = collapse(&scanned);
+        scanned = drop_legacy_codex_proxy_attributions_owned(scanned);
+        scanned = collapse(scanned);
+        let base = monotonic_baseline(&scanned);
+        scanned = enforce_monotonic_agent_days_owned(base, scanned);
+        scanned = collapse(scanned);
     }
-    let mut merged = merge_local_prefer_over_gist_rollups(&scanned, imported, None);
+    let mut merged = if imported.is_empty() {
+        scanned
+    } else {
+        let m = merge_local_prefer_over_gist_rollups(&scanned, imported, None);
+        drop(scanned);
+        m
+    };
     if finalize {
-        merged = drop_legacy_codex_proxy_attributions(&merged);
-        merged = enforce_monotonic_agent_days(&monotonic_baseline(&merged), &merged);
-        merged = collapse(&merged);
-        let (events, ts) = sort_events_by_time(&merged);
+        merged = drop_legacy_codex_proxy_attributions_owned(merged);
+        let base = monotonic_baseline(&merged);
+        merged = enforce_monotonic_agent_days_owned(base, merged);
+        merged = collapse(merged);
+        let (mut events, ts) = sort_events_by_time_owned(merged);
+        events.shrink_to_fit();
         (events, Some(ts))
     } else {
+        merged.shrink_to_fit();
         (merged, None)
     }
 }
@@ -1502,16 +1518,26 @@ impl AppState {
         // copy the cache only after a parser reports a real change.
         if full {
             let source = prev.clone();
-            let seeded = tokio::task::spawn_blocking(move || {
-                let mut by_agent: IndexMap<String, Vec<UsageEvent>> = IndexMap::new();
+            let (order, lazy) = tokio::task::spawn_blocking(move || {
+                let mut counts: IndexMap<String, usize> = IndexMap::new();
                 for e in source.iter() {
-                    by_agent.entry(e.agent.as_str().to_string()).or_default().push(e.clone());
+                    match counts.get_mut(e.agent.as_str()) {
+                        Some(n) => *n += 1,
+                        None => {
+                            counts.insert(e.agent.as_str().to_string(), 1);
+                        }
+                    }
                 }
-                by_agent
+                let by_agent: IndexMap<String, Vec<UsageEvent>> =
+                    counts.keys().map(|k| (k.clone(), Vec::new())).collect();
+                (by_agent, counts.into_iter().collect::<HashMap<String, usize>>())
             })
             .await
             .map_err(|e| e.to_string())?;
-            local.lock().by_agent = seeded;
+            let mut l = local.lock();
+            l.by_agent = order;
+            l.lazy = lazy;
+            l.prev = Some(prev.clone());
         }
 
         // Light periodic: only hot agents (mirrors + common IDEs). Full: everyone.
@@ -1570,6 +1596,8 @@ impl AppState {
 
         // LiteLLM is kept independent: its usage is added as-is and is never
         // reconciled against DSH.
+        Self::materialize_lazy(local, "openclaw");
+        Self::materialize_lazy(local, "hermes");
         let openclaw = {
             let mut l = local.lock();
             let has = l.by_agent.get("openclaw").map_or(false, |v| !v.is_empty());
@@ -1598,8 +1626,9 @@ impl AppState {
         if !existing.is_empty() {
             let current = self.inner.lock().cache.clone();
             let reconciled = tokio::task::spawn_blocking(move || {
-                let merged = reconcile_scan_cache_high_water(&existing, &current);
-                sort_events_by_time(&merged)
+                let merged = reconcile_scan_cache_high_water_owned(existing, (*current).clone());
+                drop(current);
+                sort_events_by_time_owned(merged)
             })
             .await;
             match reconciled {
@@ -1643,6 +1672,25 @@ impl AppState {
             }
         });
         Ok(len)
+    }
+
+    /// Fill a still-lazy agent list from the previous cache (full scan only).
+    fn materialize_lazy(local: &Arc<Mutex<ScanLocal>>, agent: &str) {
+        let src = {
+            let l = local.lock();
+            if !l.lazy.contains_key(agent) {
+                return;
+            }
+            l.prev.clone()
+        };
+        let rows: Vec<UsageEvent> = match src {
+            Some(p) => p.iter().filter(|e| e.agent.as_str() == agent).cloned().collect(),
+            None => Vec::new(),
+        };
+        let mut l = local.lock();
+        if l.lazy.remove(agent).is_some() {
+            l.by_agent.insert(agent.to_string(), rows);
+        }
     }
 
     fn clear_progress_timer(progress: &Arc<Mutex<Progress>>) {
@@ -1707,20 +1755,23 @@ impl AppState {
 
             // Take the previous list out (position preserved) so the merge runs
             // without holding the lock.
-            let (prev_list, existed) = {
+            let (mut prev_list, existed, lazy_n, prev_src) = {
                 let mut l = local.lock();
+                let lazy_n = l.lazy.get(&agent_name).copied();
+                let prev_src = l.prev.clone();
                 match l.by_agent.get_mut(&agent_name) {
-                    Some(v) => (std::mem::take(v), true),
-                    None => (Vec::new(), false),
+                    Some(v) => (std::mem::take(v), true, lazy_n, prev_src),
+                    None => (Vec::new(), false, lazy_n, prev_src),
                 }
             };
-            let keep_prev = (error.is_some() && n_new == 0) || (n_new == 0 && !prev_list.is_empty());
+            let prev_len = lazy_n.unwrap_or(prev_list.len());
+            let keep_prev = (error.is_some() && n_new == 0) || (n_new == 0 && prev_len > 0);
             let mut codex_paths: Vec<String> = Vec::new();
             let mut grok_sessions: HashSet<String> = HashSet::new();
             let (store, kept) = if keep_prev {
                 // Timeout/crash with nothing parsed, or an empty re-parse over
                 // existing data: keep previous (never wipe).
-                let kept = prev_list.len();
+                let kept = prev_len;
                 (if existed { Some(prev_list) } else { None }, if existed { kept } else { n_new })
             } else {
                 if agent_name == "codex" {
@@ -1734,6 +1785,11 @@ impl AppState {
                 let list = if error.is_none() && n_new > 0 {
                     events
                 } else {
+                    if lazy_n.is_some() {
+                        if let Some(src) = &prev_src {
+                            prev_list = src.iter().filter(|e| e.agent.as_str() == agent_name).cloned().collect();
+                        }
+                    }
                     let (merged, sessions) = merge_agent_scan_light(events, prev_list);
                     grok_sessions = sessions;
                     merged
@@ -1745,6 +1801,9 @@ impl AppState {
             {
                 let mut l = local.lock();
                 if let Some(list) = store {
+                    if !keep_prev {
+                        l.lazy.remove(&agent_name);
+                    }
                     l.by_agent.insert(agent_name.clone(), list);
                 }
                 l.codex_replaced_paths.extend(codex_paths);
@@ -1796,11 +1855,13 @@ impl AppState {
         prev: &Arc<Vec<UsageEvent>>,
         local: &Arc<Mutex<ScanLocal>>,
     ) -> Result<(), String> {
-        let (by_agent, codex, grok) = {
+        let (by_agent, lazy, codex, grok) = {
             let mut l = local.lock();
             l.rebuilt = true;
+            l.prev = None;
             (
                 std::mem::take(&mut l.by_agent),
+                std::mem::take(&mut l.lazy),
                 l.codex_replaced_paths.clone(),
                 l.grok_replaced_sessions.clone(),
             )
@@ -1808,6 +1869,16 @@ impl AppState {
         let imported = self.inner.lock().imported_events.clone();
         let source = prev.clone();
         let (events, ts) = tokio::task::spawn_blocking(move || {
+            let mut by_agent = by_agent;
+            if !lazy.is_empty() {
+                for e in source.iter() {
+                    if lazy.contains_key(e.agent.as_str()) {
+                        if let Some(v) = by_agent.get_mut(e.agent.as_str()) {
+                            v.push(e.clone());
+                        }
+                    }
+                }
+            }
             rebuild_merge(full, finalize, &source, by_agent, &codex, &grok, &imported)
         })
         .await
@@ -3193,7 +3264,7 @@ fn seen_models_of(cache: &[UsageEvent]) -> Vec<String> {
             continue;
         }
         let norm = normalize_model_for_agent(e.model.as_deref(), Some(e.agent.as_str())).filter(|s| !s.is_empty());
-        let picked = norm.or_else(|| e.model.clone().filter(|s| !s.is_empty()));
+        let picked = norm.or_else(|| (e.model.clone().filter(|s| !s.is_empty())).map(|s| s.to_string()));
         if let Some(m) = picked {
             out.insert(m);
         }
@@ -4227,12 +4298,15 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         let imported_for_merge = imported.clone();
         let merged = tokio::task::spawn_blocking(move || {
             let merged = merge_local_prefer_over_gist_rollups(&disk, &imported_for_merge, None);
-            let mono = enforce_monotonic_agent_days(&disk, &merged);
-            let c1 = collapse_router_daily_events(&mono);
-            let c2 = collapse_source_path_rollups(&c1);
-            let c3 = collapse_exact_usage_duplicates(&c2);
-            // Disk saves write timestamp-sorted; sort once more for safety then index.
-            sort_events_by_time(&c3)
+            // Owned, in-place pipeline: at most disk + merged are alive together.
+            let mono = enforce_monotonic_agent_days_owned(disk, merged);
+            let c3 = collapse_exact_usage_duplicates_owned(collapse_source_path_rollups_owned(
+                collapse_router_daily_events_owned(mono),
+            ));
+            // Disk saves write timestamp-sorted (already-sorted input is left untouched).
+            let (mut events, ts) = sort_events_by_time_owned(c3);
+            events.shrink_to_fit();
+            (events, ts)
         })
         .await;
         let (events, ts) = match merged {

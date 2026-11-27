@@ -183,7 +183,7 @@ fn scope_router_event(ev: &mut REvent, root_scope: &str) {
     }
     ev.event.id = stable_id(&["router-mirror-event", root_scope, &ev.event.id]);
     if !ev.event.source_path.contains(ROUTER_MIRROR_MARKER) {
-        ev.event.source_path = format!("{}{}{}", ev.event.source_path, ROUTER_MIRROR_MARKER, root_scope);
+        ev.event.source_path = format!("{}{}{}", ev.event.source_path, ROUTER_MIRROR_MARKER, root_scope).into();
     }
 }
 
@@ -418,14 +418,14 @@ fn row_to_event(row: &Value, agent: AgentId, source: &str, tag: &str) -> Option<
     let partial = UsageEvent {
         id,
         agent,
-        model: model_label,
+        model: model_label.map(Into::into),
         timestamp: ts,
         input_tokens: effective_input,
         output_tokens,
         cache_read_tokens,
         cache_write_tokens,
-        workspace: provider.as_ref().filter(|p| !p.is_empty()).map(|p| format!("provider:{}", p)),
-        source_path: source.to_string(),
+        workspace: (provider.as_ref().filter(|p| !p.is_empty()).map(|p| format!("provider:{}", p))).map(Into::into),
+        source_path: source.to_string().into(),
         request_count: Some(request_count),
         cache_reported: Some(has_cache_field),
         cost_parity_gap: Some(cost_parity_gap),
@@ -439,7 +439,7 @@ fn row_to_event(row: &Value, agent: AgentId, source: &str, tag: &str) -> Option<
     let mut event = price_event(partial, router_cost);
 
     if !endpoint.is_empty() && event.workspace.is_none() {
-        event.workspace = Some(endpoint);
+        event.workspace = Some(endpoint.into());
     }
     event.request_count = Some(request_count);
 
@@ -819,7 +819,7 @@ fn latest_timestamp_for_model(events: &[UsageEvent], model: &str) -> Option<Stri
         .iter()
         .filter(|e| {
             let m = normalize_model_name(e.model.as_deref())
-                .or_else(|| e.model.clone().filter(|s| !s.is_empty()))
+                .or_else(|| (e.model.clone().filter(|s| !s.is_empty())).map(|s| s.to_string()))
                 .unwrap_or_default();
             m == model
         })
@@ -1272,10 +1272,10 @@ fn content_fingerprint(e: &UsageEvent) -> String {
     [
         e.agent.as_str().to_string(),
         ts,
-        e.model.clone().unwrap_or_default(),
+        (e.model.clone().unwrap_or_default()).to_string(),
         num_str(or0(e.input_tokens)),
         num_str(or0(e.output_tokens)),
-        e.workspace.clone().unwrap_or_default(),
+        (e.workspace.clone().unwrap_or_default()).to_string(),
     ]
     .join("|")
 }

@@ -280,14 +280,14 @@ fn parse_opencode_record(
     let event = apply_pricing(UsageEvent {
         id: stable_id(&["opencode", key.as_str()]),
         agent: AgentId::Opencode,
-        model,
+        model: model.map(Into::into),
         timestamp,
         input_tokens: buckets.input_tokens,
         output_tokens: buckets.output_tokens,
         cache_read_tokens: buckets.cache_read_tokens,
         cache_write_tokens: buckets.cache_write_tokens,
-        workspace,
-        source_path: source_path.to_string(),
+        workspace: workspace.map(Into::into),
+        source_path: source_path.to_string().into(),
         estimated: if estimated { Some(true) } else { None },
         // Carry the extractor's cache-presence verdict; the synthesized
         // total-only fallback above never sets it, which is correct.
@@ -701,8 +701,8 @@ fn parse_open_code_database_blocking(db_path: &str, index: &mut EventIndex) -> r
         detail.cache_read_tokens += indexed.event.cache_read_tokens;
         detail.cache_write_tokens += indexed.event.cache_write_tokens;
         if let Some(m) = &indexed.event.model {
-            if !m.is_empty() && !detail.models.contains(m) {
-                detail.models.push(m.clone());
+            if !m.is_empty() && !detail.models.contains(&m.to_string()) {
+                detail.models.push(m.to_string());
             }
         }
     }
@@ -741,14 +741,14 @@ fn parse_open_code_database_blocking(db_path: &str, index: &mut EventIndex) -> r
         let event = apply_pricing(UsageEvent {
             id: stable_id(&["opencode", key.as_str()]),
             agent: AgentId::Opencode,
-            model,
+            model: model.map(Into::into),
             timestamp: extract_timestamp(&[rollup.updated_at.as_ref(), rollup.created_at.as_ref()]),
             input_tokens,
             output_tokens,
             cache_read_tokens,
             cache_write_tokens,
-            workspace: rollup.directory.clone(),
-            source_path: db_path.to_string(),
+            workspace: rollup.directory.clone().map(Into::into),
+            source_path: db_path.to_string().into(),
             estimated: Some(true),
             cache_reported: if rollup.cache_reported { Some(true) } else { None },
             ..Default::default()

@@ -507,7 +507,7 @@ fn row_to_live_event(row: &Map<String, Value>, agent: &str, source: &str) -> Opt
     Some(UsageEvent {
         id: format!("hotlive:{agent}:{native_id}"),
         agent: AgentId::from_id(agent).unwrap_or(AgentId::Custom),
-        model,
+        model: model.map(Into::into),
         timestamp: ts,
         input_tokens,
         output_tokens,
@@ -515,10 +515,10 @@ fn row_to_live_event(row: &Map<String, Value>, agent: &str, source: &str) -> Opt
         cache_write_tokens,
         total_tokens: input_tokens + output_tokens + cache_read_tokens + cache_write_tokens,
         estimated_cost: if cost > 0.0 { Some(cost) } else { None },
-        currency: "USD".to_string(),
+        currency: ("USD".to_string()).into(),
         pricing_status: if cost > 0.0 { PricingStatus::Priced } else { PricingStatus::Estimated },
-        workspace: str_field(row, "provider").map(|p| format!("provider:{p}")),
-        source_path: source.to_string(),
+        workspace: (str_field(row, "provider").map(|p| format!("provider:{p}"))).map(Into::into),
+        source_path: source.to_string().into(),
         estimated: Some(false),
         request_count: Some(request_count),
         ..UsageEvent::default()
@@ -677,7 +677,7 @@ fn recent_key(e: &UsageEvent) -> String {
     [
         agent.to_string(),
         ts,
-        e.model.clone().unwrap_or_default(),
+        (e.model.clone().unwrap_or_default()).to_string(),
         js_num_to_string(or_zero(e.input_tokens)),
         js_num_to_string(or_zero(e.output_tokens)),
     ]

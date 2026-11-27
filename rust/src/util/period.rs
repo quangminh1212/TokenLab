@@ -86,6 +86,49 @@ pub fn sort_events_by_time(events: &[UsageEvent]) -> (Vec<UsageEvent>, Vec<f64>)
     (out_events, out_ts)
 }
 
+/// Owned, in-place variant of [`sort_events_by_time`]: no row clones, and an
+/// already-sorted input (the common case) is returned untouched.
+pub fn sort_events_by_time_owned(mut events: Vec<UsageEvent>) -> (Vec<UsageEvent>, Vec<f64>) {
+    let n = events.len();
+    if n == 0 {
+        return (events, Vec::new());
+    }
+    let ts = build_timestamp_index(&events);
+    if ts.windows(2).all(|w| w[0].partial_cmp(&w[1]).map_or(true, |o| o != std::cmp::Ordering::Greater)) {
+        return (events, ts);
+    }
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| {
+        ts[a]
+            .partial_cmp(&ts[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.cmp(&b))
+    });
+    // order[k] = source index of the row that belongs at position k.
+    // Apply the permutation in place by following cycles.
+    for start in 0..n {
+        if order[start] == start {
+            continue;
+        }
+        let mut cur = start;
+        loop {
+            let src = order[cur];
+            order[cur] = cur;
+            if src == start {
+                break;
+            }
+            events.swap(cur, src);
+            cur = src;
+        }
+    }
+    let out_ts = {
+        let mut v = ts;
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        v
+    };
+    (events, out_ts)
+}
+
 /// First index with ts >= target.
 pub fn bisect_left_ts(ts: &[f64], target: f64) -> usize {
     ts.partition_point(|&t| t < target)

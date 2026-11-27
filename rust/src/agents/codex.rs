@@ -1028,14 +1028,14 @@ async fn parse_codex_sqlite_state(root: &str, seen_rollouts: &mut HashSet<String
                 events.push(apply_pricing(UsageEvent {
                     id: summary_id.clone(),
                     agent: AgentId::Codex,
-                    model: Some(model),
+                    model: Some(model.into()),
                     timestamp: ts,
                     input_tokens: js_round(tokens),
                     output_tokens: 0.0,
                     cache_read_tokens: 0.0,
                     cache_write_tokens: 0.0,
-                    workspace: cwd,
-                    source_path: db_path.clone(),
+                    workspace: cwd.map(Into::into),
+                    source_path: db_path.clone().into(),
                     estimated: Some(true),
                     ..Default::default()
                 }));
@@ -1462,14 +1462,14 @@ fn parse_jsonl_rows(events: &mut Vec<UsageEvent>, rows: &[Value], file: &str, fi
                 js_num_to_string(output).as_str(),
             ]),
             agent: AgentId::Codex,
-            model: row_model,
+            model: row_model.map(Into::into),
             timestamp: ts,
             input_tokens: input,
             output_tokens: output,
             cache_read_tokens: cache_read,
             cache_write_tokens: cache_write,
-            workspace: workspace.clone(),
-            source_path: file.to_string(),
+            workspace: workspace.clone().map(Into::into),
+            source_path: file.to_string().into(),
             cache_reported: if buckets.cache_reported { Some(true) } else { None },
             ..Default::default()
         }));
@@ -1525,14 +1525,14 @@ fn emit_content_estimates(
                 js_num_to_string(output).as_str(),
             ]),
             agent: AgentId::Codex,
-            model: Some(m),
+            model: Some(m.into()),
             timestamp: ts,
             input_tokens: input,
             output_tokens: output,
             cache_read_tokens: 0.0,
             cache_write_tokens: 0.0,
-            workspace: workspace.map(|s| s.to_string()),
-            source_path: file.to_string(),
+            workspace: (workspace.map(|s| s.to_string())).map(Into::into),
+            source_path: file.to_string().into(),
             estimated: Some(true),
             ..Default::default()
         }));
@@ -1555,14 +1555,14 @@ fn collect_from_json(events: &mut Vec<UsageEvent>, data: &Value, file: &str, fil
                 events.push(apply_pricing(UsageEvent {
                     id: stable_id(&["codex", file, "json", i.to_string().as_str(), js_num_to_string(b.input).as_str()]),
                     agent: AgentId::Codex,
-                    model: extract_model(&[Some(row)]),
+                    model: (extract_model(&[Some(row)])).map(Into::into),
                     timestamp: extract_timestamp(&[Some(row), Some(&mtime_val)]),
                     input_tokens: b.input,
                     output_tokens: b.output,
                     cache_read_tokens: b.cache_read,
                     cache_write_tokens: b.cache_write,
-                    workspace: pick_string(Some(row), &["cwd", "workspace"]),
-                    source_path: file.to_string(),
+                    workspace: (pick_string(Some(row), &["cwd", "workspace"])).map(Into::into),
+                    source_path: file.to_string().into(),
                     cache_reported: if b.cache_reported { Some(true) } else { None },
                     ..Default::default()
                 }));

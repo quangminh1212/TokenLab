@@ -203,14 +203,14 @@ fn base_event(
     UsageEvent {
         id,
         agent: AgentId::Qwencoder,
-        model: Some(model),
+        model: Some(model.into()),
         timestamp,
         input_tokens: input,
         output_tokens: output,
         cache_read_tokens: cache_read,
         cache_write_tokens: cache_write,
         workspace: None,
-        source_path: file.to_string(),
+        source_path: file.to_string().into(),
         estimated: Some(true),
         ..Default::default()
     }

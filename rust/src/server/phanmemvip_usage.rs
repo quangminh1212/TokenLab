@@ -221,7 +221,7 @@ mod tests {
     fn litellm_event(model: &str, ts: &str) -> UsageEvent {
         UsageEvent {
             agent: AgentId::Litellm,
-            model: Some(model.to_string()),
+            model: Some(model.to_string().into()),
             timestamp: ts.to_string(),
             ..Default::default()
         }

@@ -121,14 +121,14 @@ pub async fn parse_gemini(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
                         js_num_to_string(output).as_str(),
                     ]),
                     agent: AgentId::Gemini,
-                    model,
+                    model: model.map(Into::into),
                     timestamp: ts,
                     input_tokens: input,
                     output_tokens: output,
                     cache_read_tokens: cache_read,
                     cache_write_tokens: 0.0,
                     workspace: None,
-                    source_path: file.clone(),
+                    source_path: file.clone().into(),
                     cache_reported: if cache_reported { Some(true) } else { None },
                     ..Default::default()
                 }));

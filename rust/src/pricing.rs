@@ -797,7 +797,7 @@ pub fn apply_pricing_with(partial: UsageEvent, router_cost: Option<f64>) -> Usag
     let currency = pricing_cfg
         .and_then(|p| p.currency.clone())
         .filter(|c| !c.is_empty())
-        .or_else(|| Some(partial.currency.clone()).filter(|c| !c.is_empty()))
+        .or_else(|| (Some(partial.currency.clone()).filter(|c| !c.is_empty())).map(|s| s.to_string()))
         .unwrap_or_else(|| "USD".to_string());
     let prefer_router = pricing_cfg.and_then(|p| p.prefer_router_cost) != Some(false);
     let router_cost = match router_cost.filter(|c| c.is_finite()) {
@@ -821,7 +821,7 @@ pub fn apply_pricing_with(partial: UsageEvent, router_cost: Option<f64>) -> Usag
                 _ => 0.0,
             }),
             pricing_status: PricingStatus::ZeroRate,
-            currency,
+            currency: currency.into(),
             ..partial
         };
     }
@@ -837,7 +837,7 @@ pub fn apply_pricing_with(partial: UsageEvent, router_cost: Option<f64>) -> Usag
                 } else {
                     PricingStatus::Priced
                 },
-                currency,
+                currency: currency.into(),
                 ..partial
             };
         }
@@ -855,7 +855,7 @@ pub fn apply_pricing_with(partial: UsageEvent, router_cost: Option<f64>) -> Usag
         total_tokens,
         estimated_cost: Some(priced.estimated_cost),
         pricing_status: if partial.estimated == Some(true) { PricingStatus::Estimated } else { priced.pricing_status },
-        currency: priced.currency,
+        currency: priced.currency.into(),
         ..partial
     }
 }

@@ -319,7 +319,7 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
         events.push(apply_pricing(UsageEvent {
             id: stable_id(&["claude-code", candidate.request_key.as_str()]),
             agent: AgentId::ClaudeCode,
-            model,
+            model: model.map(Into::into),
             timestamp: candidate
                 .timestamp
                 .clone()
@@ -328,8 +328,8 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
             output_tokens: b.output_tokens,
             cache_read_tokens: b.cache_read_tokens,
             cache_write_tokens: b.cache_write_tokens,
-            workspace: workspace_from_file(&candidate.file, &all_roots),
-            source_path: candidate.file.to_string(),
+            workspace: (workspace_from_file(&candidate.file, &all_roots)).map(Into::into),
+            source_path: candidate.file.to_string().into(),
             estimated: Some(false),
             // Claude Code always writes the cache buckets, so a zero here is a real
             // measurement rather than a missing field.

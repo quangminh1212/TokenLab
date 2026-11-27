@@ -361,15 +361,15 @@ fn parse_session_file_sync(file: &str) -> Option<Vec<UsageEvent>> {
         events.push(apply_pricing(UsageEvent {
             id: stable_id(&["dsh", file, seq.as_str()]),
             agent: AgentId::Dsh,
-            model,
+            model: model.map(Into::into),
             timestamp: extract_timestamp(&[p, message]),
             input_tokens,
             output_tokens: buckets.output_tokens,
             cache_read_tokens,
             cache_write_tokens: buckets.cache_write_tokens,
             request_count: Some(1.0),
-            workspace: workspace.clone(),
-            source_path: file.to_string(),
+            workspace: workspace.clone().map(Into::into),
+            source_path: file.to_string().into(),
             cache_reported: Some(reported),
             ..Default::default()
         }));

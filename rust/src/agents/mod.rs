@@ -336,7 +336,7 @@ fn openclaw_keep_mask(openclaw: &[&UsageEvent], hermes: &[&UsageEvent]) -> Vec<b
     }
     fn scope_of(e: &UsageEvent) -> String {
         match &e.machine_scope {
-            Some(s) if !s.is_empty() => s.clone(),
+            Some(s) if !s.is_empty() => s.clone().to_string(),
             _ => "local".to_string(),
         }
     }
@@ -434,12 +434,12 @@ fn apply_machine_scope(job: &Job, parsed: Vec<UsageEvent>) -> Vec<UsageEvent> {
                         let rel = flavor.relative(root, &src);
                         rel.is_empty() || (rel != ".." && !rel.starts_with(&dotdot_sep) && !flavor.is_absolute(&rel))
                     });
-                    inside_cache.insert(event.source_path.clone(), v);
+                    inside_cache.insert(event.source_path.clone().to_string(), v);
                     v
                 }
             };
             if inside {
-                event.machine_scope = Some(scope.clone());
+                event.machine_scope = Some(scope.clone().into());
             }
             event
         })

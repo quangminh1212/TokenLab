@@ -251,7 +251,7 @@ fn parse_devin_sqlite_blocking(db_path: &str, events: &mut Vec<UsageEvent>) -> r
             // cache fields were refined and double-counted cache usage.
             id: stable_id(&["devin", db_key.as_str(), sid.as_str(), row_id_str.as_str()]),
             agent: AgentId::Devin,
-            model,
+            model: model.map(Into::into),
             timestamp: ts,
             input_tokens: buckets.input_tokens,
             output_tokens: buckets.output_tokens,
@@ -259,7 +259,7 @@ fn parse_devin_sqlite_blocking(db_path: &str, events: &mut Vec<UsageEvent>) -> r
             cache_write_tokens: buckets.cache_write_tokens,
             cache_reported: buckets.cache_reported,
             workspace: None,
-            source_path: db_path.to_string(),
+            source_path: db_path.to_string().into(),
             ..Default::default()
         }));
     }
