@@ -14,6 +14,7 @@ pub mod pathx;
 pub mod scan_index;
 pub mod period;
 pub mod phase;
+pub mod snapshot;
 pub mod zstd;
 
 pub use cache::*;

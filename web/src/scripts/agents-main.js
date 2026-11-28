@@ -44,9 +44,9 @@ const CATEGORIES = [
 ];
 
 const AVATAR_COLORS = [
-  '#00A19A', '#0d9488', '#2dd4bf', '#37C88F', '#0f766e',
-  '#14b8a6', '#5eead4', '#2CA072', '#115e59', '#06b6d4',
-  '#10B981', '#0ea5e9', '#64748b', '#334155', '#475569',
+  '#188078', '#126660', '#3fb0a6', '#102020', '#2f4a52',
+  '#5b7f86', '#8fd0c8', '#4a9c8f', '#0e4a45', '#6fa3ab',
+  '#1d9a90', '#3a5f66', '#7fb5ac', '#223a3a', '#4d6e6b',
 ];
 
 // Cache-bust when icons are replaced (browser was sticky on short max-age)
@@ -243,7 +243,7 @@ function renderProviders() {
           </div>
         </div>
       </div>`).join('')
-    : `<div class="empty" style="grid-column:1/-1">Chua co agent live. Dung AI tools roi Rescan.</div>`;
+    : `<div class="empty" style="grid-column:1/-1">No live agents. Run an AI tool, then select Refresh.</div>`;
 
   const used = new Set();
   const sections = [];
@@ -272,7 +272,7 @@ function renderProviders() {
   }
 
   $('providerSections').innerHTML = sections.join('') ||
-    `<div class="empty">Khong co agent khop bo loc.</div>`;
+    `<div class="empty">No agents match this filter. Clear the search or choose All.</div>`;
 }
 
 /** Category sections default collapsed; expand on click. Auto-open when searching/filtering. */
@@ -371,7 +371,7 @@ async function loadOnce() {
     renderProviders();
     if (awaitingData) scheduleScanPoll();
   } catch (e) {
-    $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+    $('meta').innerHTML = '<span class="err">Server unreachable. Start TokenLab, then reload.</span>';
     if (awaitingData) scheduleScanPoll();
   }
 }

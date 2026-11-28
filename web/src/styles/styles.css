@@ -1,21 +1,28 @@
 /* Design tokens from C:\\Dev\\XLab_Web (tailwind + globals.css) */
     :root {
-      --xlab: #00A19A;           /* primary.500 / xlab.500 */
-      --xlab-600: #0d9488;       /* primary.600 */
-      --xlab-400: #2dd4bf;       /* primary.400 */
-      --xlab-50: #f0fdfc;        /* primary.50 */
-      --xlab-100: #ccfbf1;
-      --secondary: #37C88F;      /* secondary.500 */
+      /* Logo palette: ink #102020 / #101820, teal facet #188078, white #F8F8F8 */
+      --logo-ink: #102020;
+      --logo-ink-2: #101820;
+      --logo-teal: #188078;
+      --logo-white: #F8F8F8;
+      --xlab: #188078;           /* logo teal */
+      --xlab-600: #126660;       /* teal shade */
+      --xlab-400: #3fb0a6;       /* teal tint */
+      --xlab-50: #eef7f6;
+      --xlab-100: #cfe8e5;
+      --on-accent: #ffffff;
+      --secondary: #4a9c8f;      /* muted teal-green from the logo teal */
+      --c1: #188078; --c2: #102020; --c3: #3fb0a6; --c4: #5b7f86; --c5: #8fd0c8; --c6: #2f4a52;
       --bg: #FFFFFF;
-      --bg-soft: #F9FAFB;        /* gray.50 */
-      --text: #111827;           /* gray.900 */
-      --text-secondary: #374151; /* gray.700 */
-      --muted: #6B7280;          /* gray.500 */
-      --border: #E5E7EB;         /* gray.200 */
-      --border-soft: #F3F4F6;    /* gray.100 */
+      --bg-soft: #F5F9F9;
+      --text: #102020;           /* logo ink */
+      --text-secondary: #2c3d3d;
+      --muted: #5a6b6b;
+      --border: #dbe5e4;
+      --border-soft: #eaf1f0;
       --panel: #FFFFFF;
-      --panel-soft: #F3F4F6;
-      --panel-hover: #F9FAFB;
+      --panel-soft: #eef4f3;
+      --panel-hover: #f5f9f9;
       --shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
       --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
       --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
@@ -26,11 +33,14 @@
       --radius: 0.5rem;          /* XLab --radius */
       --radius-lg: 0.75rem;
       --radius-xl: 1rem;
-      --ring: rgba(0, 161, 154, 0.28);
+      --ring: rgba(24, 128, 120, 0.30);
       --card-bg: #FFFFFF;
       --header-bg: rgba(255, 255, 255, 0.95);
-      --header-border: #F3F4F6;
-      --teal-glow: rgba(0, 161, 154, 0.08);
+      --header-border: #eaf1f0;
+      --teal-glow: rgba(24, 128, 120, 0.08);
+      --xlab-text: #126660; /* teal for small text on light, about 6.6:1 */
+      --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 40px;
+      --r-control: 4px; --r-panel: 8px;
     }
     html.dark {
       /*
@@ -38,22 +48,24 @@
        * bg #1f1f1f | surface #292a2d | elevated #3c4043 | text #e8eaed
        * Brand accent stays XLab teal
        */
-      --xlab: #00d4aa;
-      --xlab-600: #00A19A;
-      --xlab-400: #5eead4;
-      --xlab-50: #0b1f1c;
-      --xlab-100: #115e59;
-      --secondary: #37c88f;
-      --bg: #1f1f1f;              /* Drive main background */
-      --bg-soft: #292a2d;         /* Drive surface / sidebar */
-      --text: #e8eaed;            /* Drive primary text */
-      --text-secondary: #bdc1c6;  /* Drive secondary text */
-      --muted: #9aa0a6;           /* Drive muted / icons */
-      --border: #3c4043;          /* Drive dividers */
-      --border-soft: #2d2e30;
-      --panel: #292a2d;           /* Drive cards / panels */
-      --panel-soft: #35363a;      /* slightly raised */
-      --panel-hover: #3c4043;     /* Drive hover */
+      --xlab: #3fb5ab;            /* logo teal lifted for dark surfaces */
+      --xlab-600: #188078;
+      --xlab-400: #7fd4cb;
+      --xlab-50: #0f2523;
+      --xlab-100: #14504b;
+      --on-accent: #0b1818;
+      --secondary: #6fb8ad;
+      --c1: #3fb5ab; --c2: #F8F8F8; --c3: #188078; --c4: #8aa9b0; --c5: #a8e0d9; --c6: #5b7f86;
+      --bg: #101820;              /* logo ink */
+      --bg-soft: #142222;         /* surface / sidebar */
+      --text: #F8F8F8;
+      --text-secondary: #c3d0cf;
+      --muted: #94a6a5;
+      --border: #2a3d3d;
+      --border-soft: #1d2d2d;
+      --panel: #142222;
+      --panel-soft: #1b2e2e;
+      --panel-hover: #223636;
       --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
       --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.4);
       --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
@@ -61,12 +73,13 @@
       --success-soft: rgba(129, 201, 149, 0.14);
       --warn: #fdd663;
       --error: #f28b82;
-      --ring: rgba(0, 212, 170, 0.22);
-      --card-bg: #292a2d;
-      --header-bg: rgba(31, 31, 31, 0.92);
-      --header-border: #3c4043;
-      --teal-glow: rgba(0, 161, 154, 0.05);
-      --grid-line: rgba(232, 234, 237, 0.04);
+      --ring: rgba(63, 181, 171, 0.28);
+      --card-bg: #142222;
+      --header-bg: rgba(16, 24, 32, 0.92);
+      --header-border: #2a3d3d;
+      --teal-glow: rgba(63, 181, 171, 0.05);
+      --grid-line: rgba(248, 248, 248, 0.04);
+      --xlab-text: #3fb5ab;
     }
     /* Instant same-origin navigations in Chromium (no JS required) */
     @view-transition { navigation: auto; }
@@ -146,8 +159,8 @@
       letter-spacing: -0.03em; line-height: 1;
     }
     .brand-mark .x { color: var(--text); }
-    .brand-mark .lab { color: #00A19A; }
-    html.dark .brand-mark .lab { color: #00d4aa; }
+    .brand-mark .lab { color: var(--xlab-text); }
+    html.dark .brand-mark .lab { color: var(--xlab); }
     .top-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
     .meta-chip {
       font-size: 0.78rem; color: var(--muted);
@@ -215,7 +228,7 @@
     .btn:hover { border-color: var(--xlab); color: var(--xlab); }
     .btn:active, .icon-btn:active { transform: translateY(1px); }
     .btn-primary {
-      background: var(--xlab); color: #fff; border-color: transparent;
+      background: var(--xlab); color: var(--on-accent); border-color: transparent;
     }
     .btn-primary:hover {
       background: var(--xlab-600); color: #fff; border-color: transparent;
@@ -291,7 +304,7 @@
     }
     .kpi .dot {
       width: 7px; height: 7px; border-radius: 50%;
-      background: var(--xlab); box-shadow: 0 0 0 3px rgba(0, 161, 154, 0.15);
+      background: var(--xlab); box-shadow: 0 0 0 3px color-mix(in srgb, var(--xlab) 18%, transparent);
     }
     .kpi .value { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.03em; }
     .kpi .hint { margin-top: 0.2rem; font-size: 0.72rem; color: var(--muted); }
@@ -561,15 +574,15 @@
    Usage dashboard - layout inspired by 9router /dashboard/usage
    ============================================================ */
 :root {
-  --chart-tokens: #6366f1;
-  --chart-cost: #f59e0b;
-  --chart-rpm: #14b8a6;
-  --info: #3b82f6;
-  --u-radius: 14px;
-  --u-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px -8px rgba(15,23,42,0.08);
+  --chart-tokens: var(--xlab);
+  --chart-cost: var(--c2);
+  --chart-rpm: var(--c4);
+  --info: var(--c4);
+  --u-radius: 8px;
+  --u-shadow: var(--shadow);
 }
 html.dark {
-  --u-shadow: 0 1px 2px rgba(0,0,0,0.35), 0 12px 28px -8px rgba(0,0,0,0.45);
+  --u-shadow: var(--shadow);
   --info: #60a5fa;
 }
 
@@ -2017,4 +2030,105 @@ html.dark .or-badge.custom { color: var(--xlab-400); }
     border-color: color-mix(in srgb, var(--xlab) 45%, var(--border));
     background: color-mix(in srgb, var(--xlab) 6%, var(--panel));
   }
+}
+
+/* ============================================================
+   Design pass: see docs/DESIGN.md. Overrides above; keep additive.
+   ============================================================ */
+body { background-image: none; transition: none; }
+html.dark body { background-image: none; }
+.brand-logo-wrap { transition: none; }
+.brand-logo-wrap:hover { transform: none; }
+.kpi:hover, .provider-card:hover { transform: none; box-shadow: none; }
+.hero {
+  background: none; box-shadow: none; border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--border); padding: var(--s-4) 0; margin: var(--s-5) 0 var(--s-4);
+}
+.toolbar--flush { margin: 0; }
+.agents-summary { font-size: 0.8125rem; margin-bottom: var(--s-3); }
+
+/* Radius hierarchy: 4px controls, 8px panels, pills stay pills */
+.btn, select, .search, .or-select, .model-add-row input, .seg-btn { border-radius: var(--r-control); }
+.seg { border-radius: var(--r-panel); }
+.provider-card, .active-chip, .u-card, .ov-card { border-radius: var(--r-panel); }
+code { border-radius: 0; border: 0; background: none; padding: 0; font-size: 0.85em; font-weight: 500; }
+
+/* Labels: sentence case, no tracking */
+.kpi .label, .ov-label, .u-card-title, th, .usage-table th, .recent-card .u-card-title,
+.settings-kv-label, .or-head, .or-badge {
+  text-transform: none; letter-spacing: 0;
+}
+.ov-label { font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary); }
+.u-card-title, .recent-card .u-card-title { margin: 0; font-size: 0.9375rem; font-weight: 650; color: var(--text); }
+th, .usage-table th, .or-head { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
+.or-badge { font-size: 0.7rem; }
+.settings-kv-label { font-size: 0.75rem; }
+.chart-title { margin: 0; font-size: 0.9375rem; font-weight: 650; }
+
+/* Figures */
+.ov-value, .kpi .value, td, .recent-model, .recent-tokens, .recent-when, .usage-table td,
+.or-row .price-input, .chart-tick { font-variant-numeric: tabular-nums; }
+.ov-value.tone-primary, .ov-value.tone-info, .ov-value.tone-success, .ov-value.tone-warn { color: var(--text); }
+.usage-table .toned-cost { color: var(--text); }
+.pill { color: var(--xlab-text); }
+.chart-tick { font-size: 11px; fill-opacity: 0.8; }
+
+/* Layout: chart leads at full width; stat strip and recent requests below it */
+.chart-card { min-height: 300px; }
+.chart-head { justify-content: space-between; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.usage-chart { height: 260px; color: var(--text-secondary); }
+.usage-mid { grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: var(--s-4); align-items: start; }
+@media (max-width: 900px) { .usage-mid { grid-template-columns: 1fr; } .usage-chart { height: 220px; } }
+@media (max-width: 400px) { .usage-chart { height: 200px; } .chart-card { min-height: 240px; } }
+@media (min-width: 1280px) { .usage-mid { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); } }
+
+/* Overview: one bordered strip with hairline dividers, left aligned */
+.overview-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--r-panel);
+  overflow: hidden; align-self: start;
+}
+.ov-card {
+  align-items: flex-start; text-align: left;
+  background: transparent; border: 0; border-radius: 0; box-shadow: 1px 0 0 var(--border), 0 1px 0 var(--border);
+  padding: var(--s-3) var(--s-4);
+}
+.ov-label, .ov-hint, .ov-value { text-align: left; }
+.ov-value { font-size: 1.125rem; font-weight: 650; letter-spacing: 0; }
+.ov-hint { font-size: 0.75rem; color: var(--text-secondary); }
+.ov-card--cost { grid-column: span 2; }
+.ov-card--cost .ov-value { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; color: var(--xlab-text); }
+@media (min-width: 641px) and (max-width: 1199px) { .overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ov-value { font-size: 1.0625rem; } }
+@media (max-width: 400px) { .ov-card { padding: var(--s-3); } }
+
+/* Surfaces: one shadow token, panels only where they group content */
+.u-card { box-shadow: none; border-color: var(--border); }
+.u-card-head { background: transparent; }
+.table-card { border-left: 0; border-right: 0; border-radius: 0; background: transparent; }
+.usage-table thead { background: transparent; }
+
+/* Controls on small screens: scroll instead of shrinking type */
+@media (max-width: 640px) {
+  .usage-toolbar > .seg .seg-btn { font-size: 0.8125rem; padding: 0.4rem 0.75rem; min-height: 40px; }
+  .usage-toolbar { align-items: stretch; }
+  .usage-toolbar > .seg { flex: 1 1 100%; scroll-snap-type: x proximity; }
+  .seg-btn { scroll-snap-align: start; }
+}
+@media (max-width: 480px) { .meta-chip { max-width: 34vw; } }
+
+/* Keyboard focus: a visible 2px outline on every interactive element */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--xlab); outline-offset: 2px;
+}
+.search:focus-visible, select:focus-visible, .or-search-input:focus-visible, .btn:focus-visible, .icon-btn:focus-visible,
+.or-prov-dd-opt:focus-visible, .or-row .price-input:focus-visible { outline: 2px solid var(--xlab); outline-offset: 2px; }
+
+/* Motion: no scattered hover or page transitions; reduced motion is fully static */
+@view-transition { navigation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .fetch-spin { animation: none; border-top-color: var(--border); border-right-color: var(--xlab); }
+  .section-chevron { transition: none; }
 }

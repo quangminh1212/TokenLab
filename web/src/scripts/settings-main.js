@@ -135,7 +135,7 @@ async function loadHealth() {
     updateScanWordHint(h, lastScanValues);
     return Boolean(h.scanning);
   } catch {
-    $('meta').innerHTML = '<span class="err">API offline</span>';
+    $('meta').innerHTML = '<span class="err">Server unreachable. Start TokenLab, then reload.</span>';
     return null;
   } finally {
     healthBusy = false;
@@ -239,7 +239,7 @@ function applyScanForm(scan, health) {
 }
 
 function describeScanAge(iso) {
-  if (!iso) return 'No background scan yet this session';
+  if (!iso) return 'Hasn\'t scanned yet this session';
   const ms = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ms) || ms < 0) return 'Last scan: just now';
   const mins = Math.floor(ms / 60000);
@@ -560,7 +560,7 @@ $('savePrefs').onclick = async () => {
     void loadHealth();
     setTimeout(() => { $('prefsStatus').textContent = ''; }, 2200);
   } catch {
-    $('prefsStatus').textContent = 'Save failed';
+    $('prefsStatus').textContent = 'Couldn\'t save settings. Try again.';
   } finally {
     btn.disabled = false;
   }

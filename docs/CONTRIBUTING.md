@@ -91,6 +91,12 @@ feat(claude-code): add support for new session format
 - Keep functions small and focused
 - Write meaningful variable names
 
+### UI changes
+
+- UI changes in `web/` must follow `.claude/skills/frontend-design` and `docs/DESIGN.md`.
+- Keep the XLab teal palette and the light and dark themes; avoid the generic tells listed in the brief.
+- Run `npm run build` in `web/` before committing; the Rust server embeds `web/dist`.
+
 ## Testing
 
 ### Running Tests

@@ -3,45 +3,44 @@ import Base from '../layouts/Base.astro';
 import dashboardMain from '../scripts/dashboard-main.js?raw';
 ---
 <Base title="Dashboard" active="dashboard" mainClass="usage-page">
-  <!-- Toolbar: period + actions (9router Usage style) -->
   <div class="usage-toolbar">
     <div class="seg" id="periodSeg" role="tablist" aria-label="Time range">
       <button type="button" class="seg-btn active" data-period="today">Today</button>
-      <button type="button" class="seg-btn" data-period="24h">24h</button>
-      <button type="button" class="seg-btn" data-period="7d">7D</button>
-      <button type="button" class="seg-btn" data-period="30d">30D</button>
-      <button type="button" class="seg-btn" data-period="">All</button>
+      <button type="button" class="seg-btn" data-period="24h">24 hours</button>
+      <button type="button" class="seg-btn" data-period="7d">7 days</button>
+      <button type="button" class="seg-btn" data-period="30d">30 days</button>
+      <button type="button" class="seg-btn" data-period="">All time</button>
     </div>
     <div class="usage-actions">
       <span class="fetch-spin hidden" id="fetchSpin" aria-hidden="true"></span>
-      <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Sync VPS BNIX, rescan agents, and reload stats">Refresh</button>
+      <button class="btn btn-primary btn-with-icon" id="refresh" type="button" title="Rescan agent logs and reload">Refresh</button>
     </div>
   </div>
 
-  <!-- Overview cards -->
-  <div class="overview-grid" id="overview"></div>
-
-  <!-- Chart + Recent -->
-  <div class="usage-mid">
-    <section class="u-card chart-card">
+  <!-- Trend chart leads: comparison over time is the primary job -->
+  <section class="u-card chart-card">
       <div class="chart-head">
+        <h2 class="chart-title">Usage over time</h2>
         <div class="seg seg-sm" id="chartMode" role="tablist" aria-label="Chart metric">
           <button type="button" class="seg-btn active" data-mode="tokens">Tokens</button>
           <button type="button" class="seg-btn" data-mode="cost">Cost</button>
           <button type="button" class="seg-btn" data-mode="rpm">RPM</button>
         </div>
       </div>
-      <div class="chart-body" id="chartBody">
-        <div class="chart-empty">Loading&hellip;</div>
+      <div class="chart-body" id="chartBody" role="status" aria-live="polite">
+        <div class="chart-empty">Loading usage&hellip;</div>
       </div>
-    </section>
+  </section>
+
+  <div class="usage-mid">
+    <div class="overview-grid" id="overview"></div>
 
     <section class="u-card recent-card">
       <div class="u-card-head">
-        <span class="u-card-title">Recent requests</span>
+        <h2 class="u-card-title">Recent requests</h2>
       </div>
-      <div class="recent-scroll" id="recentBody">
-        <div class="chart-empty">Loading&hellip;</div>
+      <div class="recent-scroll" id="recentBody" role="status" aria-live="polite">
+        <div class="chart-empty">Loading recent requests&hellip;</div>
       </div>
     </section>
   </div>
@@ -73,8 +72,7 @@ import dashboardMain from '../scripts/dashboard-main.js?raw';
   </section>
 
   <footer>
-    <div>Layout inspired by <strong>9router Usage</strong> &middot; accent XLab teal</div>
-    <div>localhost only &middot; estimated cost, not billing</div>
+    <div>Runs locally. Costs are estimates, not billing.</div>
   </footer>
   <Fragment slot="scripts">
     <script is:inline set:html={dashboardMain} />

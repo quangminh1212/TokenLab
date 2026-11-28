@@ -601,6 +601,11 @@ pub fn scan_cache_path() -> String {
     pjoin(&[data_root().as_str(), "scan-cache.json"])
 }
 
+/// Derived binary boot snapshot of `scan_cache_path()` (see `util::snapshot`).
+pub fn scan_cache_snapshot_path() -> String {
+    pjoin(&[data_root().as_str(), "scan-cache.snap"])
+}
+
 pub fn scan_cache_backup_path() -> String {
     format!("{}.bak", scan_cache_path())
 }
@@ -3169,6 +3174,61 @@ pub fn salvage_scan_cache_json(text: &str) -> Vec<UsageEvent> {
     out
 }
 
+/// Boot fast path: decode `scan-cache.snap` when it provably belongs to the
+/// `scan-cache.json` now on disk. `None` on ANY problem (missing, stale, corrupt,
+/// disabled) so the caller falls back to parsing the JSON. The decoded rows go
+/// through the same sanitizer the JSON parser applies, so the result equals
+/// `read_scan_cache_file`.
+async fn load_scan_cache_snapshot(main_path: &str) -> Option<Vec<UsageEvent>> {
+    if env_nonempty("TOKENLAB_NO_SNAPSHOT").is_some() {
+        return None;
+    }
+    let snap = scan_cache_snapshot_path();
+    if !path_exists(&snap).await {
+        return None;
+    }
+    let main = main_path.to_string();
+    let res = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(|| {
+            crate::util::snapshot::load(std::path::Path::new(&snap), std::path::Path::new(&main))
+        })
+    })
+    .await;
+    match res {
+        Ok(Ok(Ok(events))) if !events.is_empty() => {
+            crate::util::phase("scan cache snapshot decoded");
+            Some(sanitize_typed_events_owned(events))
+        }
+        Ok(Ok(Err(e))) => {
+            log(&format!("scan-cache.snap ignored ({e}); parsing JSON"));
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Best-effort: finish `<cache>.snap.*.tmp` (body already written, header still a
+/// placeholder) into `scan-cache.snap` for the freshly renamed main file. Never
+/// fails the save; the tmp file is always removed.
+async fn publish_scan_cache_snapshot(main_path: &str, tmp: &str, info: Option<crate::util::snapshot::BodyInfo>) {
+    let Some(info) = info else {
+        let _ = tokio::fs::remove_file(tmp).await;
+        return;
+    };
+    let (main, tmpp) = (main_path.to_string(), tmp.to_string());
+    let final_path = scan_cache_snapshot_path();
+    let ok = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        let stamp = crate::util::snapshot::stamp_of(std::path::Path::new(&main))?;
+        crate::util::snapshot::finalize_header(std::path::Path::new(&tmpp), &info, &stamp)?;
+        std::fs::rename(&tmpp, &final_path)
+    })
+    .await;
+    if !matches!(ok, Ok(Ok(()))) {
+        log("saveScanCache: snapshot not published");
+        let _ = tokio::fs::remove_file(tmp).await;
+    }
+}
+
 async fn load_scan_cache_candidate(file_path: &str) -> Option<Vec<UsageEvent>> {
     load_scan_cache_candidate_ex(file_path).await.map(|(e, _)| e)
 }
@@ -3179,7 +3239,12 @@ async fn load_scan_cache_candidate_ex(file_path: &str) -> Option<(Vec<UsageEvent
     if !path_exists(file_path).await {
         return None;
     }
-    match read_scan_cache_file(file_path).await {
+    let snap_events = if file_path == scan_cache_path() { load_scan_cache_snapshot(file_path).await } else { None };
+    let parsed = match snap_events {
+        Some(ev) => Ok(ev),
+        None => read_scan_cache_file(file_path).await,
+    };
+    match parsed {
         Ok(events) => {
             crate::util::phase("scan cache json parsed");
             let events = drop_legacy_codex_proxy_attributions_owned(events);
@@ -3549,6 +3614,8 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
     let clean_len = clean.len();
 
     let tmp = format!("{}.{}.{}.tmp", p, std::process::id(), now_ms() as u64);
+    let snap_tmp = format!("{}.snap.{}.{}.tmp", p, std::process::id(), now_ms() as u64);
+    let mut snap_info: Option<crate::util::snapshot::BodyInfo> = None;
     let result: anyhow::Result<()> = async {
         // One streaming serialize straight into the tmp file (no giant String).
         cpu_heavy(|| -> anyhow::Result<()> {
@@ -3558,6 +3625,16 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
             w.flush()?;
             Ok(())
         })?;
+        // Derived binary snapshot (body now, header after the main rename).
+        snap_info = if clean_len > 0 && env_nonempty("TOKENLAB_NO_SNAPSHOT").is_none() {
+            cpu_heavy(|| {
+                std::fs::File::create(&snap_tmp)
+                    .and_then(|f| crate::util::snapshot::write_body(f, &clean))
+                    .ok()
+            })
+        } else {
+            None
+        };
         // Release the (possibly owned) snapshot before the rotate/copy phase.
         drop(std::mem::take(&mut clean));
         // Rotate previous main -> .bak (rename, not a 20MB copy).
@@ -3584,6 +3661,7 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
             }
         }
         tokio::fs::rename(&tmp, &p).await?;
+        publish_scan_cache_snapshot(&p, &snap_tmp, snap_info.take()).await;
         // First write (or rotate failed): seed .bak so corrupt-main recovery works.
         if !path_exists(&bak).await {
             if let Err(err) = tokio::fs::copy(&p, &bak).await {
@@ -3604,6 +3682,7 @@ pub async fn save_scan_cache(events: &[UsageEvent], opts: SaveScanCacheOpts) -> 
     .await;
     if let Err(err) = result {
         let _ = tokio::fs::remove_file(&tmp).await;
+        let _ = tokio::fs::remove_file(&snap_tmp).await;
         return Err(err);
     }
     Ok(())

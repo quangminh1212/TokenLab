@@ -15,11 +15,11 @@ const prefetch = [
 ].filter(([, k]) => k !== active);
 ---
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{title} &middot; TokenLab</title>
+  <title>{title} - TokenLab</title>
   <link rel="icon" type="image/png" href="/assets/logo.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
@@ -43,10 +43,10 @@ const prefetch = [
       <nav class="nav" aria-label="Main">
         <a class:list={['nav-link', { active: active === 'dashboard' }]} href="/">Dashboard</a>
         <a class:list={['nav-link', { active: active === 'agents' }]} href="/agents">Agents</a>
-        <a class:list={['nav-link', { active: active === 'model' }]} href="/model">Model</a>
+        <a class:list={['nav-link', { active: active === 'model' }]} href="/model">Models</a>
       </nav>
       <div class="top-actions">
-        <span class="meta-chip" id="meta">Loading&hellip;</span>
+        <span class="meta-chip" id="meta" role="status" aria-live="polite">Loading&hellip;</span>
         <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"></button>
         {active === 'settings'
           ? <a class="icon-btn settings-btn is-active" id="settingsBtn" href="/settings" title="Settings" aria-label="Settings" aria-current="page"></a>

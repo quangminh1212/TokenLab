@@ -572,7 +572,7 @@
 
     function cacheMetricTitle(t) {
       const records = Number(t && t.cacheReportedEvents) || 0;
-      if (!cacheWasReported(t)) return 'No usage record in this period reported cache token fields.';
+      if (!cacheWasReported(t)) return 'No usage record in this period reported cache tokens.';
       const source = records > 0 ? `Reported on ${fmtFull(records)} usage record${records === 1 ? '' : 's'}. ` : '';
       return `${source}Cache values are separate details and may already be included in prompt or total tokens.`;
     }
@@ -585,25 +585,25 @@
         maximumFractionDigits: 1,
       });
       // Peak metric — no subtitle under RPM
-      const rpmCard = overviewCard('RPM', rpmVal, 'tone-primary');
+      const rpmCard = overviewCard('RPM', rpmVal, '');
       // Show measured active minutes for Today and wider weekly/monthly periods.
       // For 7d/30d, the hint normalizes usage to a daily share of 24 hours.
       const active = ['today', '7d', '30d'].includes(state.period) ? activeTimeLabel() : null;
       const activeCard = active
-        ? overviewCard('Active time', active.value, 'tone-primary', active.hint, active.title)
+        ? overviewCard('Active time', active.value, '', active.hint, active.title)
         : '';
       // Cache fields are provider-reported details and can overlap prompt input.
       // Keep them visible without changing the existing input/total calculations.
       const cacheTitle = cacheMetricTitle(t);
-      const cacheHint = cacheWasReported(t) ? 'Provider reported' : 'No cache data';
+      const cacheHint = cacheWasReported(t) ? 'Reported by provider' : 'Not reported';
       const cards = [
-        overviewCard('Input tokens', fmtFull(t.inputTokens || 0), 'tone-primary'),
-        overviewCard('Cache read', fmtCacheTokens(t, 'cacheReadTokens'), 'tone-primary', cacheHint, cacheTitle),
-        overviewCard('Cache write', fmtCacheTokens(t, 'cacheWriteTokens'), 'tone-primary', cacheHint, cacheTitle),
-        overviewCard('Output tokens', fmtFull(t.outputTokens || 0), 'tone-success'),
+        overviewCard('Input tokens', fmtFull(t.inputTokens || 0), ''),
+        overviewCard('Cache read', fmtCacheTokens(t, 'cacheReadTokens'), '', cacheHint, cacheTitle),
+        overviewCard('Cache write', fmtCacheTokens(t, 'cacheWriteTokens'), '', cacheHint, cacheTitle),
+        overviewCard('Output tokens', fmtFull(t.outputTokens || 0), ''),
         overviewCard('Total requests', fmtFull(t.eventCount || 0)),
         rpmCard,
-        overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), 'tone-warn', 'Estimated, not actual billing', undefined, 'ov-card--cost'),
+        overviewCard('Est. cost', '~' + money(t.estimatedCost || 0), '', 'Estimate, not a bill', undefined, 'ov-card--cost'),
         activeCard,
       ].filter(Boolean);
       $('overview').innerHTML = cards.join('');
@@ -626,12 +626,12 @@
       // Only show "scanning" empty state when we truly have no data yet
       if ((state.scanning || state.awaitingData) && state.lastEventCount === 0) {
         return kind === 'table'
-          ? 'Đang quét agents\u2026 dữ liệu sẽ hiện ngay khi xong.'
+          ? 'Scanning agents\u2026 Usage appears here when the scan finishes.'
           : 'Scanning agents\u2026';
       }
-      if (kind === 'chart') return 'No data for this period';
-      if (kind === 'table') return 'Chưa có usage. Dùng AI agents rồi bấm Refresh.';
-      return 'No requests yet.';
+      if (kind === 'chart') return 'No usage in this period. Pick a longer range.';
+      if (kind === 'table') return 'No usage yet. Use a coding agent, then select Refresh.';
+      return 'No requests yet. Use a coding agent, then select Refresh.';
     }
 
     function recentEventsForDisplay(eventsRes, since) {
@@ -771,23 +771,28 @@
         <svg class="usage-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${mode === 'rpm' ? 'Requests per minute chart' : 'Usage chart'}">
           <defs>
             <linearGradient id="gradTok" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stop-color="rgba(99,102,241,0.28)" />
-              <stop offset="95%" stop-color="rgba(99,102,241,0)" />
+              <stop offset="0%" style="stop-color:var(--chart-tokens);stop-opacity:0.14" />
+              <stop offset="100%" style="stop-color:var(--chart-tokens);stop-opacity:0.14" />
             </linearGradient>
             <linearGradient id="gradCost" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stop-color="rgba(245,158,11,0.28)" />
-              <stop offset="95%" stop-color="rgba(245,158,11,0)" />
+              <stop offset="0%" style="stop-color:var(--chart-cost);stop-opacity:0.14" />
+              <stop offset="100%" style="stop-color:var(--chart-cost);stop-opacity:0.14" />
             </linearGradient>
             <linearGradient id="gradRpm" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stop-color="rgba(20,184,166,0.28)" />
-              <stop offset="95%" stop-color="rgba(20,184,166,0)" />
+              <stop offset="0%" style="stop-color:var(--chart-rpm);stop-opacity:0.14" />
+              <stop offset="100%" style="stop-color:var(--chart-rpm);stop-opacity:0.14" />
             </linearGradient>
           </defs>
           ${yTicks}
           <path d="${area}" fill="url(#${fillId})" />
           <path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" vector-effect="non-scaling-stroke" />
+          <circle cx="${pts[pts.length - 1][0].toFixed(1)}" cy="${pts[pts.length - 1][1].toFixed(1)}" r="3.5" fill="${stroke}" />
           ${xLabels}
         </svg>`;
+    }
+
+    function groupHeadLabel() {
+      return state.groupBy === 'model' ? 'Model' : (state.groupBy === 'agent' ? 'Agent' : (state.groupBy === 'hour' ? 'Hour' : 'Day'));
     }
 
     function renderTable() {
@@ -795,8 +800,8 @@
       const showRpm = ['today', '24h', '7d', '30d'].includes(state.period);
       const rpmHeader = showRpm ? ['RPM'] : [];
       const head = costs
-        ? ['Key', 'Requests', ...rpmHeader, 'Input $', 'Output $', 'Total $']
-        : ['Key', 'Requests', ...rpmHeader, 'Input + cache', 'Cache read', 'Cache write', 'Output', 'Total'];
+        ? [groupHeadLabel(), 'Requests', ...rpmHeader, 'Input cost', 'Output cost', 'Total cost']
+        : [groupHeadLabel(), 'Requests', ...rpmHeader, 'Input + cache', 'Cache read', 'Cache write', 'Output', 'Total'];
       $('tableHead').innerHTML = `<tr>${head.map((h, i) => {
         const title = h === 'Cache read' || h === 'Cache write'
           ? 'Provider-reported cache detail; may overlap Input + cache and Total.'
@@ -972,7 +977,7 @@
         }
         applyLoadedPayload(payload, { fromCache: false });
       } catch {
-        if (!quiet) $('meta').innerHTML = '<span class="err">Failed to load API</span>';
+        if (!quiet) $('meta').innerHTML = '<span class="err">Server unreachable. Start TokenLab, then reload.</span>';
         // Still retry while bootstrapping empty UI
         if (state.awaitingData || state.scanning) scheduleScanPoll();
       } finally {

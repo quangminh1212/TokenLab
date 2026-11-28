@@ -325,8 +325,8 @@ const PROVIDER_ICON_FILE = {
 };
 
 const PROV_COLORS = [
-  '#00A19A', '#0d9488', '#2563eb', '#7c3aed', '#db2777',
-  '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#4f46e5',
+  '#188078', '#102020', '#3fb0a6', '#5b7f86', '#126660',
+  '#8fd0c8', '#2f4a52', '#4a9c8f', '#0e4a45', '#6fa3ab',
 ];
 
 function providerKey(provider) {
@@ -584,7 +584,7 @@ async function loadMeta() {
     const health = await fetch('/api/health').then((r) => r.json());
     $('meta').textContent = `v${health.version || ''}`;
   } catch {
-    $('meta').innerHTML = '<span class="err">API offline</span>';
+    $('meta').innerHTML = '<span class="err">Server unreachable. Start TokenLab, then reload.</span>';
   }
 }
 
@@ -620,8 +620,8 @@ async function loadPricing(opts = {}) {
     }
   } catch (err) {
     console.error('[model] loadPricing', err);
-    setStatus('Load failed');
-    $('modelList').innerHTML = '<div class="empty">Failed to load models</div>';
+    setStatus('Couldn\'t load prices. Select Refresh to try again.');
+    $('modelList').innerHTML = '<div class="empty">Couldn\'t load models. Check your connection and select Refresh.</div>';
   }
 }
 
@@ -649,7 +649,7 @@ async function pushRatesLive(opts = {}) {
   }
   if (!customRatesLoaded) {
     // Never send replace:true built from a customRates map that failed to load.
-    setStatus('Not loaded yet — click Refresh');
+    setStatus('Not loaded yet. Select Refresh to fetch prices.');
     return;
   }
   collectDraftFromDom();
@@ -686,7 +686,7 @@ async function pushRatesLive(opts = {}) {
     });
     renderList();
   } catch {
-    setStatus(manual ? 'Save failed' : 'Update failed');
+    setStatus(manual ? 'Couldn\'t save prices. Try again.' : 'Couldn\'t update prices. Try again.');
   } finally {
     liveSaving = false;
     if (manual) $('pricingSave').disabled = false;

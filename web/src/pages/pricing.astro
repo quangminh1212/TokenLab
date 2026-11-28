@@ -2,14 +2,14 @@
 import Base from '../layouts/Base.astro';
 import pricingMain from '../scripts/pricing-main.js?raw';
 ---
-<Base title="Model" active="model" mainClass="model-page">
+<Base title="Models" active="model" mainClass="model-page">
   <div class="usage-toolbar model-toolbar-top">
     <div>
       <h1 class="page-title">Models</h1>
-      <p class="page-sub">OpenRouter &middot; $/1M tokens</p>
+      <p class="page-sub">Prices in USD per 1M tokens, from OpenRouter. Edit a price to override it.</p>
     </div>
     <div class="usage-actions">
-      <span class="pricing-status muted" id="pricingStatus">&mdash;</span>
+      <span class="pricing-status muted" id="pricingStatus" role="status" aria-live="polite"></span>
       <button class="btn btn-with-icon" id="pricingReload" type="button">Refresh</button>
       <button class="btn btn-primary btn-with-icon" id="pricingSave" type="button">Save</button>
     </div>
@@ -18,7 +18,7 @@ import pricingMain from '../scripts/pricing-main.js?raw';
   <section class="model-or-panel">
     <div class="or-search-bar">
       <svg class="or-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-      <input id="priceSearch" class="or-search-input" type="search" placeholder="Search models&hellip;" autocomplete="off" autofocus />
+      <input id="priceSearch" class="or-search-input" type="search" placeholder="Search models&hellip;" autocomplete="off" />
     </div>
 
     <div class="or-filters">
@@ -53,17 +53,16 @@ import pricingMain from '../scripts/pricing-main.js?raw';
     </div>
 
     <div class="model-add-row">
-      <input type="text" id="priceModel" placeholder="Custom model id" />
-      <input type="number" id="priceIn" step="0.001" min="0" placeholder="In $/1M" />
-      <input type="number" id="priceOut" step="0.001" min="0" placeholder="Out $/1M" />
-      <input type="number" id="priceCache" step="0.0001" min="0" placeholder="Cache $/1M" />
+      <input type="text" id="priceModel" placeholder="Custom model id" aria-label="Custom model id" />
+      <input type="number" id="priceIn" step="0.001" min="0" placeholder="Input, e.g. 3.00" aria-label="Input price per 1M tokens" />
+      <input type="number" id="priceOut" step="0.001" min="0" placeholder="Output, e.g. 15.00" aria-label="Output price per 1M tokens" />
+      <input type="number" id="priceCache" step="0.0001" min="0" placeholder="Cache read, e.g. 0.30" aria-label="Cache read price per 1M tokens" />
       <button type="button" class="btn btn-primary btn-with-icon" id="priceAdd">Add</button>
     </div>
   </section>
 
   <footer>
-    <div>Rates from OpenRouter &middot; editable overrides apply to all agents</div>
-    <div>localhost only &middot; estimated cost, not billing</div>
+    <div>Runs locally. Costs are estimates, not billing.</div>
   </footer>
   <Fragment slot="scripts">
     <script is:inline set:html={pricingMain} />
