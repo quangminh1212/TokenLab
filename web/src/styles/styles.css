@@ -12,7 +12,7 @@
       --xlab-100: #cfe8e5;
       --on-accent: #ffffff;
       --secondary: #4a9c8f;      /* muted teal-green from the logo teal */
-      --c1: #188078; --c2: #102020; --c3: #3fb0a6; --c4: #5b7f86; --c5: #8fd0c8; --c6: #2f4a52;
+      --c1: #188078; --c2: #102020; --c3: #2f9a90; --c4: #5b7f86; --c5: #6aa9a1; --c6: #2f4a52;
       --bg: #FFFFFF;
       --bg-soft: #F5F9F9;
       --text: #102020;           /* logo ink */
@@ -27,6 +27,9 @@
       --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
       --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
       --success: #10B981;
+      --success-text: #047857;
+      --warn-text: #92400e;
+      --error-text: #b91c1c;
       --success-soft: rgba(16, 185, 129, 0.12);
       --warn: #F59E0B;
       --error: #EF4444;
@@ -70,6 +73,9 @@
       --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.4);
       --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
       --success: #81c995;
+      --success-text: #81c995;
+      --warn-text: #fdd663;
+      --error-text: #f28b82;
       --success-soft: rgba(129, 201, 149, 0.14);
       --warn: #fdd663;
       --error: #f28b82;
@@ -95,7 +101,7 @@
       background: var(--bg);
       background-image:
         radial-gradient(900px 420px at 0% -10%, var(--teal-glow), transparent 55%),
-        radial-gradient(700px 360px at 100% 0%, rgba(55, 200, 143, 0.04), transparent 50%);
+        radial-gradient(700px 360px at 100% 0%, var(--teal-glow), transparent 50%);
       -webkit-font-smoothing: antialiased;
       transition: background-color 0.3s ease, color 0.3s ease;
       overflow-x: hidden;
@@ -128,7 +134,7 @@
     }
     html.dark .topbar {
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
-      background: rgba(31, 31, 31, 0.92);
+      background: var(--header-bg);
     }
     .topbar-inner {
       max-width: 1280px; margin: 0 auto;
@@ -223,7 +229,7 @@
       height: 1rem;
     }
     .btn-primary .ui-icon {
-      stroke: #fff;
+      stroke: var(--on-accent);
     }
     .btn:hover { border-color: var(--xlab); color: var(--xlab); }
     .btn:active, .icon-btn:active { transform: translateY(1px); }
@@ -234,6 +240,7 @@
       background: var(--xlab-600); color: #fff; border-color: transparent;
       box-shadow: 0 0 0 3px var(--ring);
     }
+    .btn-primary:hover .ui-icon { stroke: #fff; }
     .btn:disabled { opacity: 0.55; cursor: not-allowed; }
     .btn-ghost {
       background: transparent; border-color: var(--border); color: var(--muted); font-weight: 600;
@@ -486,7 +493,7 @@
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--xlab) 18%, transparent);
       flex-shrink: 0;
     }
-    .st-live { color: var(--success); }
+    .st-live { color: var(--success-text); }
     .st-detected { color: var(--xlab); }
     .st-off { color: var(--muted); font-weight: 500; }
     .badge-soft {
@@ -521,7 +528,7 @@
     }
 
     .muted { color: var(--muted); }
-    .err { color: var(--error); font-weight: 600; }
+    .err { color: var(--error-text); font-weight: 600; }
     .empty {
       text-align: center; padding: 1.4rem 0.5rem; color: var(--muted); font-size: 0.88rem;
       border: 1px dashed var(--border); border-radius: 12px;
@@ -621,8 +628,8 @@ html.dark {
 .chart-head .seg-btn.active,
 #viewModeSeg .seg-btn.active {
   background: var(--xlab);
-  color: #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+  color: var(--on-accent);
+  box-shadow: var(--shadow);
 }
 
 .fetch-spin {
@@ -681,8 +688,8 @@ html.dark {
 }
 .ov-value.tone-primary { color: var(--xlab); }
 .ov-value.tone-info { color: var(--info); }
-.ov-value.tone-success { color: var(--success); }
-.ov-value.tone-warn { color: var(--warn); }
+.ov-value.tone-success { color: var(--success-text); }
+.ov-value.tone-warn { color: var(--warn-text); }
 .ov-hint { font-size: 0.65rem; color: var(--muted); line-height: 1.3; }
 
 /* Soft elevated card shell */
@@ -858,7 +865,7 @@ html.dark {
 .usage-table tbody tr:hover td {
   background: color-mix(in srgb, var(--xlab) 5%, transparent);
 }
-.usage-table .toned-cost { color: var(--warn); }
+.usage-table .toned-cost { color: var(--warn-text); }
 .usage-table .empty {
   margin: 0.75rem; border: 0; background: transparent;
 }
@@ -1716,7 +1723,10 @@ html.dark .or-prov-dd-menu {
 .or-prov-dd-opt:hover,
 .or-prov-dd-opt:focus-visible {
   background: color-mix(in srgb, var(--xlab) 10%, transparent);
-  outline: none;
+}
+.or-prov-dd-opt:focus-visible {
+  outline: 2px solid var(--xlab);
+  outline-offset: -2px;
 }
 .or-prov-dd-opt.is-active,
 .or-prov-dd-opt[aria-selected="true"] {
@@ -1927,7 +1937,7 @@ html.dark .or-prov {
   padding: 0.1rem 0.4rem;
 }
 .or-badge.free {
-  color: var(--success);
+  color: var(--success-text);
   background: var(--success-soft);
 }
 .or-badge.custom {

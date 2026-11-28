@@ -4334,10 +4334,14 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         let imported = Arc::new(imported);
         let imported_for_merge = imported.clone();
         let merged = tokio::task::spawn_blocking(move || {
-            let merged = merge_local_prefer_over_gist_rollups(&disk, &imported_for_merge, None);
+            let merged = crate::backup::merge_local_prefer_over_gist_rollups_delta(&disk, &imported_for_merge, None);
             crate::util::phase("  merge_local_prefer_over_gist_rollups");
-            // Owned, in-place pipeline: at most disk + merged are alive together.
-            let mono = enforce_monotonic_agent_days_owned(disk, merged);
+            // Owned, in-place pipeline. `None` means the merge equals `disk`: skip
+            // the full clone (the ~440MB peak) and use the clone-free equivalent.
+            let mono = match merged {
+                Some(merged) => enforce_monotonic_agent_days_owned(disk, merged),
+                None => crate::backup::enforce_monotonic_agent_days_self_owned(disk),
+            };
             crate::util::phase("  enforce_monotonic_agent_days");
             let r1 = collapse_router_daily_events_owned(mono);
             crate::util::phase("  collapse_router_daily");

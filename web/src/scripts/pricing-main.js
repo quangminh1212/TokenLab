@@ -325,8 +325,8 @@ const PROVIDER_ICON_FILE = {
 };
 
 const PROV_COLORS = [
-  '#188078', '#102020', '#3fb0a6', '#5b7f86', '#126660',
-  '#8fd0c8', '#2f4a52', '#4a9c8f', '#0e4a45', '#6fa3ab',
+  '#188078', '#4d6e6b', '#2b6b63', '#1b6e8a', '#3a5f66', '#276b5f',
+  '#5b7f86', '#126660',
 ];
 
 function providerKey(provider) {

@@ -1126,28 +1126,36 @@ fn key128(buf: &str) -> u128 {
 /// consumed and no event is cloned (first-occurrence order, richer row wins).
 pub fn merge_events_by_id_prefer_richer_owned(lists: Vec<Vec<UsageEvent>>) -> Vec<UsageEvent> {
     let total: usize = lists.iter().map(|l| l.len()).sum();
+    merge_by_id_core(total, lists.into_iter().flatten().map(std::borrow::Cow::Owned))
+}
+
+/// Shared id-merge: first-occurrence order, richer row wins. Borrowed rows are
+/// cloned only when they are actually kept, so a borrowed `local` slice never
+/// needs a full intermediate copy.
+fn merge_by_id_core<'a>(
+    total: usize,
+    rows: impl Iterator<Item = std::borrow::Cow<'a, UsageEvent>>,
+) -> Vec<UsageEvent> {
     let mut out: Vec<UsageEvent> = Vec::with_capacity(total);
     let mut index: HashMap<u128, usize> = HashMap::with_capacity(total);
     let mut buf = String::new();
-    for list in lists {
-        for e in list {
-            if e.id.is_empty() {
-                continue;
+    for e in rows {
+        if e.id.is_empty() {
+            continue;
+        }
+        buf.clear();
+        buf.push_str(&usage_machine_scope(&e));
+        buf.push('|');
+        buf.push_str(&e.id.to_str());
+        let key = key128(&buf);
+        match index.get(&key) {
+            None => {
+                index.insert(key, out.len());
+                out.push(e.into_owned());
             }
-            buf.clear();
-            buf.push_str(&usage_machine_scope(&e));
-            buf.push('|');
-            buf.push_str(&e.id.to_str());
-            let key = key128(&buf);
-            match index.get(&key) {
-                None => {
-                    index.insert(key, out.len());
-                    out.push(e);
-                }
-                Some(&i) => {
-                    if std::ptr::eq(prefer_richer_event(&out[i], &e), &e) {
-                        out[i] = e;
-                    }
+            Some(&i) => {
+                if std::ptr::eq(prefer_richer_event(&out[i], &e), &*e) {
+                    out[i] = e.into_owned();
                 }
             }
         }
@@ -2258,6 +2266,35 @@ pub fn enforce_monotonic_agent_days_owned(prev: Vec<UsageEvent>, next: Vec<Usage
         }
     }
     // Final strip: whichever side won must not reintroduce Grok residual stacks
+    drop_grok_stale_residuals_owned(out)
+}
+
+/// Equivalent to `enforce_monotonic_agent_days_owned(x.clone(), x)` without the
+/// clone: with identical snapshots every bucket's winner has the same rows, so
+/// only the regrouping, agent normalisation, cacheReported carry and the Grok
+/// strip remain.
+pub fn enforce_monotonic_agent_days_self_owned(events: Vec<UsageEvent>) -> Vec<UsageEvent> {
+    if events.is_empty() {
+        return events;
+    }
+    let events = drop_grok_stale_residuals_owned(events);
+    let total = events.len();
+    let buckets = bucketize_owned(events);
+    let mut out: Vec<UsageEvent> = Vec::with_capacity(total);
+    for (_, b) in buckets {
+        let reported_by_id: HashSet<EventId> = b
+            .events
+            .iter()
+            .filter(|ev| ev.cache_reported == Some(true))
+            .map(|ev| ev.id.clone())
+            .collect();
+        for mut event in b.events {
+            if event.cache_reported != Some(true) && reported_by_id.contains(&event.id) {
+                event.cache_reported = Some(true);
+            }
+            out.push(event);
+        }
+    }
     drop_grok_stale_residuals_owned(out)
 }
 
@@ -4547,13 +4584,24 @@ pub fn merge_local_prefer_over_gist_rollups(
     imported: &[UsageEvent],
     machine_id: Option<&str>,
 ) -> Vec<UsageEvent> {
+    merge_local_prefer_over_gist_rollups_delta(local, imported, machine_id).unwrap_or_else(|| local.to_vec())
+}
+
+/// Same as `merge_local_prefer_over_gist_rollups`, but returns `None` when the
+/// result is exactly `local` (no imports, or every import filtered out), so the
+/// caller can keep using its own copy instead of paying for a full clone.
+pub fn merge_local_prefer_over_gist_rollups_delta(
+    local: &[UsageEvent],
+    imported: &[UsageEvent],
+    machine_id: Option<&str>,
+) -> Option<Vec<UsageEvent>> {
     // Fast path: no imports -> no allocation / merge cost
     if imported.is_empty() {
-        return local.to_vec();
+        return None;
     }
     let imported_scoped = mark_imported_events(imported);
     if local.is_empty() {
-        return imported_scoped;
+        return Some(imported_scoped);
     }
 
     let mid = resolve_mid(machine_id);
@@ -4588,9 +4636,16 @@ pub fn merge_local_prefer_over_gist_rollups(
         })
         .collect();
     if filtered_imported.is_empty() {
-        return local.to_vec();
+        return None;
     }
-    merge_events_by_id_prefer_richer_owned(vec![local.to_vec(), filtered_imported])
+    let total = local.len() + filtered_imported.len();
+    Some(merge_by_id_core(
+        total,
+        local
+            .iter()
+            .map(std::borrow::Cow::Borrowed)
+            .chain(filtered_imported.into_iter().map(std::borrow::Cow::Owned)),
+    ))
 }
 
 /// Multi-machine Gist merge:
@@ -5511,6 +5566,97 @@ mod tests {
             pricing_status: PricingStatus::Priced,
             source_path: ("x.jsonl".to_string()).into(),
             ..Default::default()
+        }
+    }
+
+    /// Old behaviour of the merge: clone local, then id-merge.
+    fn merge_reference(local: &[UsageEvent], imported: &[UsageEvent]) -> Vec<UsageEvent> {
+        if imported.is_empty() {
+            return local.to_vec();
+        }
+        let imported_scoped = mark_imported_events(imported);
+        if local.is_empty() {
+            return imported_scoped;
+        }
+        let mid = resolve_mid(None);
+        let mut covered: HashSet<String> = HashSet::new();
+        for e in local {
+            if !is_gist_rollup_event(e) {
+                covered.insert(gist_coverage_key(e));
+            }
+        }
+        let filtered: Vec<UsageEvent> = imported_scoped
+            .into_iter()
+            .filter(|e| {
+                if !is_gist_rollup_event(e) {
+                    return true;
+                }
+                let m = machine_id_from_event(e);
+                if !m.is_empty() && m != mid {
+                    return true;
+                }
+                !covered.contains(&gist_coverage_key(e))
+            })
+            .collect();
+        if filtered.is_empty() {
+            return local.to_vec();
+        }
+        merge_events_by_id_prefer_richer_owned(vec![local.to_vec(), filtered])
+    }
+
+    #[test]
+    fn merge_delta_matches_clone_based_merge() {
+        let local = vec![
+            ev("a", "2026-01-01T00:00:00.000Z", "m1", 10.0, 1.0),
+            ev("b", "2026-01-02T00:00:00.000Z", "m1", 20.0, 2.0),
+            ev("b", "2026-01-02T00:00:00.000Z", "m1", 25.0, 2.5),
+            ev("c", "2026-01-03T00:00:00.000Z", "m2", 30.0, 3.0),
+        ];
+        let mut imp_dup = ev("a", "2026-01-01T00:00:00.000Z", "m1", 99.0, 9.0);
+        imp_dup.machine_scope = Some("machine:other".to_string().into());
+        let imported_sets: Vec<Vec<UsageEvent>> = vec![
+            vec![],
+            vec![ev("a", "2026-01-01T00:00:00.000Z", "m1", 10.0, 1.0)],
+            vec![ev("z", "2026-02-01T00:00:00.000Z", "m3", 5.0, 0.5), imp_dup],
+        ];
+        for imported in &imported_sets {
+            let want = merge_reference(&local, imported);
+            let got = merge_local_prefer_over_gist_rollups(&local, imported, None);
+            assert_eq!(want, got);
+            let delta = merge_local_prefer_over_gist_rollups_delta(&local, imported, None);
+            assert_eq!(delta.unwrap_or_else(|| local.clone()), want);
+        }
+        assert_eq!(merge_local_prefer_over_gist_rollups(&[], &imported_sets[2], None), merge_reference(&[], &imported_sets[2]));
+    }
+
+    #[test]
+    fn monotonic_self_matches_clone_based() {
+        let mut a = ev("a", "2026-01-02T00:00:00.000Z", "m1", 10.0, 1.0);
+        a.cache_reported = Some(true);
+        let mut a2 = ev("a", "2026-01-02T05:00:00.000Z", "m1", 12.0, 1.0);
+        a2.cache_reported = None;
+        let mut other = ev("o", "2026-01-01T00:00:00.000Z", "m1", 7.0, 0.7);
+        other.agent = AgentId::Codex;
+        let mut grok = ev("g1", "2026-01-03T00:00:00.000Z", "m1", 0.0, 0.0);
+        grok.agent = AgentId::Grok;
+        grok.source_path = "p/updates.jsonl".to_string().into();
+        let mut nodays = ev("n", "garbage", "m1", 3.0, 0.3);
+        nodays.agent = AgentId::ClaudeCode;
+        let sets: Vec<Vec<UsageEvent>> = vec![
+            vec![],
+            vec![
+                a.clone(),
+                other.clone(),
+                ev("b", "2026-01-01T09:00:00.000Z", "m1", 1.0, 0.1),
+                a2.clone(),
+                nodays.clone(),
+                grok.clone(),
+            ],
+        ];
+        for s in sets {
+            let want = enforce_monotonic_agent_days_owned(s.clone(), s.clone());
+            let got = enforce_monotonic_agent_days_self_owned(s);
+            assert_eq!(want, got);
         }
     }
 

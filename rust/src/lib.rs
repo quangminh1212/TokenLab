@@ -30,8 +30,8 @@ pub fn trim_memory() {
         extern "system" {
             fn GetProcessHeap() -> isize;
             fn HeapCompact(heap: isize, flags: u32) -> usize;
-            fn GetCurrentProcess() -> isize;
-            fn K32EmptyWorkingSet(process: isize) -> i32;
+            fn GetCurrentProcess() -> *mut core::ffi::c_void;
+            fn K32EmptyWorkingSet(process: *mut core::ffi::c_void) -> i32;
         }
         let heap = GetProcessHeap();
         if heap != 0 {
