@@ -37,8 +37,17 @@ fn cpu_ms() -> u64 {
     0
 }
 
+/// Phase logs are only emitted when `TOKENLAB_TRACE=1` (checked once).
+fn enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TOKENLAB_TRACE").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false))
+}
+
 pub fn phase(label: &str) {
     use std::io::Write;
+    if !enabled() {
+        return;
+    }
     let wall = START.get_or_init(Instant::now).elapsed().as_millis();
     let _ = writeln!(std::io::stdout(), "[phase +{wall}ms cpu={}ms] {label}", cpu_ms());
 }

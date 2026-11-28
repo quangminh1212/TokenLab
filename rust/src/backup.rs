@@ -53,6 +53,7 @@ fn log(msg: &str) {
         if !std::path::Path::new(&dir).exists() {
             std::fs::create_dir_all(&dir)?;
         }
+        crate::util::rotate_log_if_big(std::path::Path::new(&file));
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&file)?;
         f.write_all(format!("{}\r\n", message).as_bytes())?;
         Ok(())

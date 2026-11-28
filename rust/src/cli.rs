@@ -47,6 +47,7 @@ fn log(message: &str) {
     );
     let dir = log_dir();
     let _ = std::fs::create_dir_all(&dir);
+    crate::util::rotate_log_if_big(&dir.join("server.txt"));
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -248,7 +249,7 @@ async fn cmd_serve(args: &[String]) -> anyhow::Result<i32> {
         log: Some(log_fn),
         log_error: Some(log_error_fn),
     }));
-    let stop_heartbeat = start_heartbeat(15_000);
+    let stop_heartbeat = start_heartbeat(30_000);
 
     let host = get_flag_nonempty(args, "--host");
     let no_ui = has(args, "--no-ui");

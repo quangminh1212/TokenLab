@@ -621,6 +621,10 @@ pub fn decode(bytes: &[u8], expect: &SourceStamp) -> Result<Vec<UsageEvent>, Sna
 /// Read `snap` and decode it against the current stamp of `source`.
 pub fn load(snap: &std::path::Path, source: &std::path::Path) -> Result<Vec<UsageEvent>, SnapError> {
     let stamp = stamp_of(source)?;
+    // A derived file bigger than this is bogus; do not slurp it into memory.
+    if std::fs::metadata(snap)?.len() > (1u64 << 31) {
+        return Err(SnapError::Invalid("snapshot too large"));
+    }
     let bytes = std::fs::read(snap)?;
     decode(&bytes, &stamp)
 }

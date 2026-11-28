@@ -127,7 +127,7 @@ pub fn start_heartbeat(interval_ms: u64) -> Box<dyn Fn() + Send + Sync> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         LAST_RUNTIME_TICK.store(now_ms_u64(), Ordering::Relaxed);
         handle.spawn(async {
-            let mut iv = tokio::time::interval(Duration::from_secs(15));
+            let mut iv = tokio::time::interval(Duration::from_secs(20));
             loop {
                 iv.tick().await;
                 LAST_RUNTIME_TICK.store(now_ms_u64(), Ordering::Relaxed);

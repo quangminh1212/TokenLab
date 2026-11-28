@@ -49,6 +49,7 @@ fn log(message: &str) {
     );
     let dir = log_dir();
     let _ = std::fs::create_dir_all(&dir);
+    crate::util::rotate_log_if_big(&dir.join("tray.txt"));
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

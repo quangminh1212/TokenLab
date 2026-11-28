@@ -488,6 +488,7 @@ fn light_log(message: &str) {
     let dir = pjoin(&[base.as_str(), "tokenlab"]);
     let file = pjoin(&[dir.as_str(), "server.txt"]);
     let line = format!("[{}] {}\r\n", to_iso_string(now_ms()).unwrap_or_default(), message);
+    crate::util::rotate_log_if_big(std::path::Path::new(&file));
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&file) {
         let _ = f.write_all(line.as_bytes());
     }
@@ -906,22 +907,29 @@ fn refresh_agent_event_counts(base: &[AgentStatus], cache: &[UsageEvent]) -> Vec
 
 /// Filter a read snapshot by period; the parallel index is returned when the
 /// snapshot was sorted.
-/// Return freed heap pages to the OS (Windows keeps them in the process heap).
-fn release_memory_to_os() {
-    #[cfg(windows)]
-    {
-        extern "system" {
-            fn GetProcessHeap() -> *mut std::ffi::c_void;
-            fn HeapCompact(h: *mut std::ffi::c_void, flags: u32) -> usize;
-        }
-        // SAFETY: both are plain kernel32 calls on the process heap handle.
-        unsafe {
-            let h = GetProcessHeap();
-            if !h.is_null() {
-                HeapCompact(h, 0);
-            }
-        }
+/// Return freed memory to the OS: drop unreferenced interned strings, compact the
+/// process heap and trim the working set. Debounced: any number of requests within
+/// the settle window collapse into one trim run after the burst of allocations
+/// (scan, period index rebuild) has finished, so it never runs mid-burst.
+fn schedule_trim(handle: &tokio::runtime::Handle) {
+    static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return;
     }
+    handle.spawn(async move {
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        PENDING.store(false, std::sync::atomic::Ordering::Release);
+        let _ = tokio::task::spawn_blocking(|| {
+            crate::types::IStr::purge_unused();
+            crate::trim_memory();
+            crate::util::phase(&format!(
+                "trim done: jsonl={:?} events={:?}",
+                crate::util::jsonl_cache_stats(),
+                crate::util::event_cache_stats()
+            ));
+        })
+        .await;
+    });
 }
 
 fn filter_snapshot(
@@ -1125,9 +1133,9 @@ impl AppState {
             g.live_rate_memo = None;
             g.dash_period_stats = None;
         }
-        // Hand freed transient scan memory back to the OS.
+        // Hand freed transient scan memory back to the OS (debounced).
         if sorted {
-            self.handle.spawn_blocking(release_memory_to_os);
+            schedule_trim(&self.handle);
         }
         // After a full sorted set (boot / scan finalize): rebuild the period
         // index in the background so the next period switch is a map lookup.
@@ -1135,6 +1143,7 @@ impl AppState {
             let this = self.clone();
             self.handle.spawn(async move {
                 this.rebuild_dash_period_stats().await;
+                schedule_trim(&this.handle);
             });
         }
     }
@@ -1492,6 +1501,7 @@ impl AppState {
         let local = Arc::new(Mutex::new(ScanLocal::default()));
         let progress = Arc::new(Mutex::new(Progress::default()));
         let result = self.scan_body(full, &prev, &local, &progress).await;
+        schedule_trim(&self.handle);
         match result {
             Ok(n) => Ok(n),
             Err(err) => {
@@ -3649,12 +3659,12 @@ impl AppState {
             g.listeners.push(tx.clone());
         }
 
-        // Keep-alive ping every 15s; ends (and de-registers) when the client
+        // Keep-alive ping every 30s; ends (and de-registers) when the client
         // goes away or the server is closing.
         let state = self.clone();
         let mut shutdown_rx = self.shutdown.subscribe();
         self.handle.spawn(async move {
-            let mut interval = tokio::time::interval_at(Instant::now() + Duration::from_secs(15), Duration::from_secs(15));
+            let mut interval = tokio::time::interval_at(Instant::now() + Duration::from_secs(30), Duration::from_secs(30));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             if !*shutdown_rx.borrow() {
                 loop {
@@ -4416,36 +4426,41 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         let this = state.clone();
         state.handle.spawn(async move {
             let _ = load_done.await;
-            // Bound the wait so an unreachable remote cannot delay the first local
-            // scan; the shared sync futures keep running in the background.
-            let _ = tokio::time::timeout(
-                Duration::from_secs(15),
-                futures::future::join(
-                    this.sync_vps_mirrors("boot", MIRROR_SYNC_TIMEOUT_MS),
-                    this.sync_ubuntu_usage("boot"),
-                ),
-            )
-            .await;
+            // Mirror syncs (python) run as their own tasks; the scan below does not wait
+            // for them. They are throttled/bounded by their own script timeouts.
+            let sync_started_at = now_ms();
+            let vps = this.sync_vps_mirrors("boot", MIRROR_SYNC_TIMEOUT_MS);
+            let ubuntu = this.sync_ubuntu_usage("boot");
             if this.inner.lock().cache.is_empty() {
+                // Nothing to show yet: the mirrors are the only data source, so wait
+                // for them (bounded) before the initial full scan.
+                let _ = tokio::time::timeout(Duration::from_secs(15), futures::future::join(vps, ubuntu)).await;
                 if let Err(err) = this.rescan(true).await {
                     swarn(&format!("[tokenlab] initial full scan failed: {err}"));
                 }
                 return;
             }
-            // Give the browser a short quiet window to render the warm snapshot,
-            // then refresh only hot remote mirrors. Manual Refresh remains the
-            // explicit full historical scan for local agents.
-            let light = this.clone();
-            this.handle.spawn(async move {
-                tokio::time::sleep(Duration::from_millis(2_500)).await;
-                if !scan_periodic_enabled() {
-                    return;
-                }
-                if let Err(err) = light.rescan(false).await {
-                    swarn(&format!("[tokenlab] initial light scan failed: {err}"));
-                }
-            });
             slog("[tokenlab] warm cache served; deferred full local scan (use Refresh for a full scan)");
+            if !scan_periodic_enabled() {
+                return;
+            }
+            // Warm snapshot is already served; refresh hot local agents right away with
+            // whatever mirrors are on disk, then once more if a mirror sync finished
+            // meanwhile so the final data equals the old "sync, then scan" order.
+            if let Err(err) = this.rescan(false).await {
+                swarn(&format!("[tokenlab] initial light scan failed: {err}"));
+            }
+            let (a, b) = futures::future::join(vps, ubuntu).await;
+            let synced_since = {
+                let g = this.inner.lock();
+                g.last_mirror_sync_at.max(g.last_ubuntu_mirror_sync_at) > sync_started_at
+            };
+            if (a || b) && synced_since {
+                this.inner.lock().last_recent_light_scan_at = 0.0;
+                if let Err(err) = this.rescan(false).await {
+                    swarn(&format!("[tokenlab] post-mirror light scan failed: {err}"));
+                }
+            }
         });
     }
     {
