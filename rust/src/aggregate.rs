@@ -5,7 +5,7 @@
 //! `Map` + stable `Array.prototype.sort` semantics (insertion-ordered maps,
 //! stable sorts) so output is numerically and positionally identical.
 
-use crate::pricing::{get_rate_for_model, price_cost_parts, CostParts};
+use crate::pricing::{get_rate_for_model, price_cost_parts, price_cost_parts_with_rate, CostParts};
 use crate::types::{jsnum, AgentId, GroupBy, GroupRow, Period, StatsResult, TokenTotals, UsageEvent};
 use crate::util::{
     normalize_agent_id, normalize_model_for_agent, now_ms, or_zero, to_iso_string,
@@ -409,7 +409,7 @@ fn bump(map: &mut IndexMap<String, GroupRow>, key: &str, e: &UsageEvent, parts: 
 ///
 /// `bounds` maps each period to its inclusive start (ms); a missing/`None`
 /// entry means unbounded.
-pub fn precompute_dashboard_periods(
+pub fn precompute_dashboard_periods_generic(
     events: &[UsageEvent],
     timestamps_ms: &[f64],
     bounds: &HashMap<DashPeriodKey, Option<f64>>,
@@ -551,6 +551,234 @@ pub fn precompute_dashboard_periods(
                     hour: hour_stats,
                 },
                 usage_rpm: compute_active_usage_rpm_iter(rpm_rows()),
+            },
+        );
+    }
+    out
+}
+
+
+/// Per distinct (agent, model): everything derived from the pair, computed once.
+struct ModelMemo {
+    rate: crate::types::ModelRate,
+    info: EventInfo,
+    model_key: String,
+    all_key: String,
+    unresolved: bool,
+    unresolved_all: bool,
+}
+
+/// Streaming peak-minute tracker; valid only for timestamp-sorted input.
+#[derive(Clone, Copy)]
+struct Peak {
+    minute: i64,
+    count: f64,
+    peak: f64,
+    live: bool,
+}
+
+impl Peak {
+    fn new() -> Peak {
+        Peak { minute: i64::MIN, count: 0.0, peak: 0.0, live: false }
+    }
+    #[inline]
+    fn add(&mut self, minute: i64, req: f64) {
+        if minute == self.minute {
+            self.count += req;
+        } else {
+            self.minute = minute;
+            self.count = req;
+        }
+        if self.count > self.peak {
+            self.peak = self.count;
+        }
+        self.live = true;
+    }
+}
+
+struct Slot {
+    row: GroupRow,
+    peak: Peak,
+}
+
+fn bump_slot(
+    map: &mut IndexMap<String, Slot>,
+    key: &str,
+    e: &UsageEvent,
+    parts: &CostParts,
+    info: &EventInfo,
+    rpm: Option<(i64, f64)>,
+) {
+    if !map.contains_key(key) {
+        map.insert(key.to_string(), Slot { row: new_row(key), peak: Peak::new() });
+    }
+    let slot = map.get_mut(key).unwrap();
+    add_with_parts(&mut slot.row.totals, e, parts, info);
+    if let Some((m, r)) = rpm {
+        slot.peak.add(m, r);
+    }
+}
+
+struct FastAcc {
+    totals: TokenTotals,
+    agent: IndexMap<String, Slot>,
+    model: IndexMap<String, Slot>,
+    day: IndexMap<String, Slot>,
+    hour: IndexMap<String, Slot>,
+    // period-wide request counters (compute_active_usage_rpm_iter equivalent)
+    requests: f64,
+    last_minute: i64,
+    active_minutes: f64,
+    live_minute: Peak,
+}
+
+impl FastAcc {
+    fn new() -> FastAcc {
+        FastAcc {
+            totals: empty_totals(),
+            agent: IndexMap::new(),
+            model: IndexMap::new(),
+            day: IndexMap::new(),
+            hour: IndexMap::new(),
+            requests: 0.0,
+            last_minute: i64::MIN,
+            active_minutes: 0.0,
+            live_minute: Peak::new(),
+        }
+    }
+}
+
+/// Same output as [`precompute_dashboard_periods_generic`], but per-(agent,
+/// model) facts are computed once and peak-RPM is tracked in the same single
+/// pass (requires timestamp-sorted input; otherwise falls back).
+pub fn precompute_dashboard_periods(
+    events: &[UsageEvent],
+    timestamps_ms: &[f64],
+    bounds: &HashMap<DashPeriodKey, Option<f64>>,
+    now: f64,
+) -> IndexMap<DashPeriodKey, PrecomputedPeriodStats> {
+    let n = events.len();
+    let use_ts = timestamps_ms.len() == n;
+    if !use_ts || !timestamps_ms.windows(2).all(|w| w[0] <= w[1]) {
+        return precompute_dashboard_periods_generic(events, timestamps_ms, bounds, now);
+    }
+    let keys = DashPeriodKey::ALL;
+    let mut accs: Vec<FastAcc> = keys.iter().map(|_| FastAcc::new()).collect();
+    let starts: Vec<Option<f64>> = keys.iter().map(|k| bounds.get(k).copied().flatten()).collect();
+    let mut memo: HashMap<(AgentId, Option<&str>), ModelMemo> = HashMap::new();
+    let mut hour_cache: (i64, String, String) = (i64::MIN, String::new(), String::new());
+    for (i, e) in events.iter().enumerate() {
+        let t = timestamps_ms[i];
+        if !t.is_finite() || t > now + 5_000.0 {
+            continue;
+        }
+        let mm = memo.entry((e.agent, e.model.as_deref())).or_insert_with(|| {
+            let model = normalize_model_for_agent(e.model.as_deref(), Some(e.agent.as_str()));
+            let rate = get_rate_for_model(model.as_deref()).rate;
+            let discounts_cache = matches!(rate.cache_read_per_1m, Some(c) if c < rate.input_per_1m);
+            ModelMemo {
+                info: EventInfo { estimated_rate: rate.estimated == Some(true), discounts_cache },
+                rate,
+                model_key: model_group_key(e, false),
+                all_key: model_group_key(e, true),
+                unresolved: has_unresolved_model(e, false),
+                unresolved_all: has_unresolved_model(e, true),
+            }
+        });
+        let parts = price_cost_parts_with_rate(
+            &mm.rate,
+            or_zero(e.input_tokens),
+            or_zero(e.output_tokens),
+            or_zero(e.cache_read_tokens),
+            or_zero(e.cache_write_tokens),
+            e.estimated_cost,
+        );
+        let hb = (t / 3_600_000.0).floor() as i64;
+        if hour_cache.0 != hb {
+            hour_cache = (
+                hb,
+                iso_prefix(t, 10).unwrap_or_default(),
+                format!("{}:00", iso_prefix(t, 13).unwrap_or_default()),
+            );
+        }
+        let minute = (t / 60_000.0).floor() as i64;
+        let reqs = event_request_count(e);
+        let live = e.estimated != Some(true);
+        let rpm = if live { Some((minute, reqs)) } else { None };
+        let agent_key = e.agent.as_str();
+        for (pi, pk) in keys.iter().enumerate() {
+            if let Some(s) = starts[pi] {
+                if t < s {
+                    continue;
+                }
+            }
+            let a = &mut accs[pi];
+            let is_all = *pk == DashPeriodKey::All;
+            add_with_parts(&mut a.totals, e, &parts, &mm.info);
+            bump_slot(&mut a.agent, agent_key, e, &parts, &mm.info, rpm);
+            let (unres, mkey) = if is_all { (mm.unresolved_all, &mm.all_key) } else { (mm.unresolved, &mm.model_key) };
+            if !unres {
+                bump_slot(&mut a.model, mkey, e, &parts, &mm.info, rpm);
+            }
+            bump_slot(&mut a.day, hour_cache.1.as_str(), e, &parts, &mm.info, rpm);
+            if *pk == DashPeriodKey::Today || *pk == DashPeriodKey::H24 {
+                bump_slot(&mut a.hour, hour_cache.2.as_str(), e, &parts, &mm.info, rpm);
+            }
+            a.requests += reqs;
+            if a.last_minute != minute {
+                a.active_minutes += 1.0;
+                a.last_minute = minute;
+            }
+            if live {
+                a.live_minute.add(minute, reqs);
+            }
+        }
+    }
+
+    let mut out: IndexMap<DashPeriodKey, PrecomputedPeriodStats> = IndexMap::new();
+    for (pi, pk) in keys.iter().enumerate() {
+        let a = std::mem::replace(&mut accs[pi], FastAcc::new());
+        let since = if *pk == DashPeriodKey::All { None } else { Some(pk.as_str()) };
+        let totals = a.totals;
+        let finish = |map: IndexMap<String, Slot>, group_by: GroupBy, sort: SortBy| {
+            let mut groups: Vec<GroupRow> = map
+                .into_values()
+                .map(|mut s| {
+                    if s.peak.live {
+                        s.row.rpm = Some(s.peak.peak);
+                    }
+                    s.row
+                })
+                .collect();
+            sort_groups(&mut groups, sort);
+            StatsResult {
+                totals: totals.clone(),
+                groups,
+                group_by,
+                period: Period { since: since.map(|s| s.to_string()), until: None },
+            }
+        };
+        let rpm = a.live_minute.peak;
+        let mean_rpm = if a.active_minutes > 0.0 { a.requests / a.active_minutes } else { 0.0 };
+        let usage_rpm = ActiveUsageRpm {
+            requests: a.requests,
+            active_minutes: a.active_minutes,
+            rpm,
+            rps: rpm / 60.0,
+            mean_rpm,
+            method: "peak_minute",
+            unit: "req/min",
+        };
+        let agent_stats = finish(a.agent, GroupBy::Agent, SortBy::Cost);
+        let model_stats = finish(a.model, GroupBy::Model, SortBy::Cost);
+        let day_stats = finish(a.day, GroupBy::Day, SortBy::Tokens);
+        let hour_stats = finish(a.hour, GroupBy::Hour, SortBy::Tokens);
+        out.insert(
+            *pk,
+            PrecomputedPeriodStats {
+                built_at: now,
+                by_group: ByGroup { agent: agent_stats, model: model_stats, day: day_stats, hour: hour_stats },
+                usage_rpm,
             },
         );
     }
@@ -1417,6 +1645,39 @@ mod tests {
     }
 
     // ---- extras ----
+
+    #[test]
+    fn precompute_fast_matches_generic() {
+        let mut s = sample();
+        // fan out: duplicate with shifted ids/timestamps and mixed estimated flags
+        let base = s.clone();
+        for k in 1..40u32 {
+            for (j, e) in base.iter().enumerate() {
+                let mut c = e.clone();
+                c.id = format!("{}-{}-{}", e.id.to_str(), k, j).into();
+                let ms = e.timestamp.js_ms() + (k as f64) * 37_000.0 + (j as f64) * 1_000.0;
+                c.timestamp = crate::util::to_iso_string(ms).unwrap().into();
+                if (k + j as u32) % 3 == 0 {
+                    c.estimated = Some(true);
+                }
+                s.push(c);
+            }
+        }
+        let mut pairs: Vec<(f64, UsageEvent)> = s.into_iter().map(|e| (e.timestamp.js_ms(), e)).collect();
+        pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let ts: Vec<f64> = pairs.iter().map(|p| p.0).collect();
+        let s: Vec<UsageEvent> = pairs.into_iter().map(|p| p.1).collect();
+        let now = ts.last().copied().unwrap() + 1000.0;
+        let mut bounds = HashMap::new();
+        bounds.insert(DashPeriodKey::Today, Some(ts[ts.len() / 2]));
+        bounds.insert(DashPeriodKey::H24, Some(ts[ts.len() / 3]));
+        bounds.insert(DashPeriodKey::D7, Some(ts[ts.len() / 5]));
+        bounds.insert(DashPeriodKey::D30, Some(ts[ts.len() / 7]));
+        bounds.insert(DashPeriodKey::All, None);
+        let fast = precompute_dashboard_periods(&s, &ts, &bounds, now);
+        let slow = precompute_dashboard_periods_generic(&s, &ts, &bounds, now);
+        assert_eq!(fast, slow);
+    }
 
     #[test]
     fn precompute_periods_filters_and_groups() {

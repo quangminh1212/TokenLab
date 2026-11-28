@@ -3181,6 +3181,7 @@ async fn load_scan_cache_candidate_ex(file_path: &str) -> Option<(Vec<UsageEvent
     }
     match read_scan_cache_file(file_path).await {
         Ok(events) => {
+            crate::util::phase("scan cache json parsed");
             let events = drop_legacy_codex_proxy_attributions_owned(events);
             if events.is_empty() {
                 None
@@ -3277,6 +3278,7 @@ pub async fn load_scan_cache() -> Vec<UsageEvent> {
     if let Some((main_events, salvaged)) = load_scan_cache_candidate_ex(&p).await {
         if !main_events.is_empty() {
             if !salvaged {
+                crate::util::phase("scan cache legacy-drop done");
                 let mut v = collapse_exact_usage_duplicates_owned(collapse_router_daily_events_owned(main_events));
                 v.shrink_to_fit();
                 return v;
@@ -4476,11 +4478,19 @@ pub fn merge_local_prefer_over_gist_rollups(
 
     let mid = resolve_mid(machine_id);
     let mut covered: HashSet<String> = HashSet::new();
+    let mut last_key: (String, String) = (String::new(), String::new());
     for e in local {
         if is_gist_rollup_event(e) {
             continue;
         }
+        // Consecutive local rows mostly share day/agent/model: skip rebuilding the key.
+        let probe = e.timestamp.with_str(|t| slice_prefix(t, 10));
+        let sig = format!("{}|{}", e.agent.as_str(), e.model.as_deref().unwrap_or("\u{1}"));
+        if last_key.0 == probe && last_key.1 == sig {
+            continue;
+        }
         covered.insert(gist_coverage_key(e));
+        last_key = (probe, sig);
     }
     let filtered_imported: Vec<UsageEvent> = imported_scoped
         .into_iter()
@@ -4500,7 +4510,7 @@ pub fn merge_local_prefer_over_gist_rollups(
     if filtered_imported.is_empty() {
         return local.to_vec();
     }
-    merge_events_by_id_prefer_richer(&[local, &filtered_imported])
+    merge_events_by_id_prefer_richer_owned(vec![local.to_vec(), filtered_imported])
 }
 
 /// Multi-machine Gist merge:

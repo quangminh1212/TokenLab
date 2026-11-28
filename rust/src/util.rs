@@ -13,6 +13,7 @@ pub mod model;
 pub mod pathx;
 pub mod scan_index;
 pub mod period;
+pub mod phase;
 pub mod zstd;
 
 pub use cache::*;
@@ -24,4 +25,5 @@ pub use jsonl::*;
 pub use model::*;
 pub use pathx::PathFlavor;
 pub use period::*;
+pub use phase::{phase, phase_init};
 pub use zstd::*;

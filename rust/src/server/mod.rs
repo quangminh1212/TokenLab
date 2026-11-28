@@ -1365,7 +1365,10 @@ impl AppState {
                 g.last_quick_save_at = now_ms();
                 (g.cache.clone(), if full { SaveMode::Full } else { SaveMode::Quick })
             };
-            if let Err(err) = save_scan_cache(&events, SaveScanCacheOpts { mode }).await {
+            crate::util::phase("save_scan_cache start");
+            let saved = save_scan_cache(&events, SaveScanCacheOpts { mode }).await;
+            crate::util::phase("save_scan_cache end");
+            if let Err(err) = saved {
                 swarn(&format!("[tokenlab] save scan cache failed: {err}"));
             }
         });
@@ -1560,7 +1563,9 @@ impl AppState {
             let source = prev.clone();
             let _ = tokio::task::spawn_blocking(move || crate::util::scan_index::begin(source)).await;
         }
+        crate::util::phase("scan_all start");
         agents::scan_all(opts).await;
+        crate::util::phase("scan_all done");
         if full {
             let summary = tokio::task::spawn_blocking(crate::util::scan_index::finish).await;
             if let Ok((reused, parsed, saved)) = summary {
@@ -1584,6 +1589,7 @@ impl AppState {
             })
             .await
             .map_err(|e| e.to_string())?;
+            crate::util::phase("light: fresh cache check done");
             let stats = stat_summary(&local.lock().agent_stats);
             let tick_ms = js_num_to_string((now_ms() - light_tick_started).floor());
             if cached {
@@ -1599,7 +1605,9 @@ impl AppState {
             .await
             .map_err(|e| e.to_string())?;
             let applied_len = events.len();
+            crate::util::phase("light: delta applied");
             self.set_cache(events, true, Some(ts)).await;
+            crate::util::phase("light: set_cache done");
             self.bump_scan("complete");
             self.schedule_save_scan_cache(false);
             let tick_ms = js_num_to_string((now_ms() - light_tick_started).floor());
@@ -4302,8 +4310,12 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         }
         let _ready_guard = ReadyGuard(state.clone());
         // Events from other machines / restore, and the last local scan snapshot.
+        crate::util::phase_init();
+        crate::util::phase("boot: load start");
         let imported = load_imported_events().await;
+        crate::util::phase("imported events loaded");
         let disk = load_scan_cache().await;
+        crate::util::phase("scan cache loaded (parse+collapse)");
         let imported_len = imported.len();
         let disk_len = disk.len();
         // Union import + disk, then collapse within machine scope: local clones
@@ -4313,17 +4325,23 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         let imported_for_merge = imported.clone();
         let merged = tokio::task::spawn_blocking(move || {
             let merged = merge_local_prefer_over_gist_rollups(&disk, &imported_for_merge, None);
+            crate::util::phase("  merge_local_prefer_over_gist_rollups");
             // Owned, in-place pipeline: at most disk + merged are alive together.
             let mono = enforce_monotonic_agent_days_owned(disk, merged);
-            let c3 = collapse_exact_usage_duplicates_owned(collapse_source_path_rollups_owned(
-                collapse_router_daily_events_owned(mono),
-            ));
+            crate::util::phase("  enforce_monotonic_agent_days");
+            let r1 = collapse_router_daily_events_owned(mono);
+            crate::util::phase("  collapse_router_daily");
+            let r2 = collapse_source_path_rollups_owned(r1);
+            crate::util::phase("  collapse_source_path_rollups");
+            let c3 = collapse_exact_usage_duplicates_owned(r2);
+            crate::util::phase("  collapse_exact_dups");
             // Disk saves write timestamp-sorted (already-sorted input is left untouched).
             let (mut events, ts) = sort_events_by_time_owned(c3);
             events.shrink_to_fit();
             (events, ts)
         })
         .await;
+        crate::util::phase("merge/collapse/sort done");
         let (events, ts) = match merged {
             Ok(v) => v,
             Err(err) => {
@@ -4335,6 +4353,7 @@ pub async fn start_server(opts: ServerOptions) -> anyhow::Result<ServerHandle> {
         };
         state.inner.lock().imported_events = imported;
         state.set_cache(events, true, Some(ts)).await;
+        crate::util::phase("warm cache ready (set_cache)");
         if disk_len > 0 {
             slog(&format!("[tokenlab] loaded {disk_len} cached scan events"));
         }

@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 fn main() {
+    tokenlab::util::phase_init();
     // Bound rayon (backup) to 2 threads instead of one per core.
     let _ = rayon::ThreadPoolBuilder::new().num_threads(2).build_global();
 

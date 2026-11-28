@@ -692,7 +692,7 @@ pub fn price_cost_parts(
     price_cost_parts_with_rate(&lookup.rate, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, actual_total)
 }
 
-fn price_cost_parts_with_rate(
+pub fn price_cost_parts_with_rate(
     rate: &ModelRate,
     input_tokens: f64,
     output_tokens: f64,
