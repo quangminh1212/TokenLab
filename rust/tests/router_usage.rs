@@ -406,7 +406,7 @@ async fn does_not_stamp_yesterday_daily_rollup_into_next_local_morning_today_lea
     assert!(events.iter().any(is_est), "a partial history window must retain the daily floor");
     assert_eq!(events.len(), 8);
     for e in &events {
-        assert_eq!(&e.timestamp[..10], "2026-07-27");
+        assert_eq!(&e.timestamp.to_str()[..10], "2026-07-27");
     }
     let today_start = "2026-07-27T17:00:00.000Z";
     let in_today = filter_by_period(&events, Some(today_start), None, Some("UTC"));
@@ -646,7 +646,7 @@ async fn stamps_daily_rollups_with_real_last_request_time_not_future_noon_utc() 
         "daily ts must stay on {today}, got {}",
         pickle.timestamp
     );
-    let ts = chrono::DateTime::parse_from_rfc3339(&pickle.timestamp).unwrap().timestamp_millis();
+    let ts = chrono::DateTime::parse_from_rfc3339(&pickle.timestamp.to_str()).unwrap().timestamp_millis();
     let mins = (chrono::Utc::now().timestamp_millis() - ts).div_euclid(60_000);
     assert!(mins >= 0, "timestamp must not be in the future (mins={mins})");
 }
@@ -669,7 +669,7 @@ async fn daily_without_history_never_invents_a_future_noon_utc_timestamp() {
     );
     let events = parse(&[dir.path()], AgentId::NineRouter).await;
     let pickle = events.iter().find(|e| model_of(e) == "big-pickle").expect("pickle");
-    let t = chrono::DateTime::parse_from_rfc3339(&pickle.timestamp)
+    let t = chrono::DateTime::parse_from_rfc3339(&pickle.timestamp.to_str())
         .unwrap_or_else(|_| panic!("bad ts {}", pickle.timestamp))
         .timestamp_millis();
     assert!(

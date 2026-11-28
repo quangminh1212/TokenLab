@@ -47,7 +47,7 @@ impl Drop for Fixture {
 
 fn evt(id: &str, f: impl FnOnce(&mut UsageEvent)) -> UsageEvent {
     let mut e = UsageEvent {
-        id: id.to_string(),
+        id: id.to_string().into(),
         agent: AgentId::Devin,
         model: None,
         timestamp: "2026-07-15T00:00:00.000Z".into(),
@@ -93,7 +93,7 @@ fn build_period_stats_covers_by_model_and_by_agent_for_all_dashboard_periods() {
         evt("p1", |e| {
             e.agent = AgentId::Grok;
             e.model = Some("grok-4.5".into());
-            e.timestamp = iso(now - 60_000.0);
+            e.timestamp = iso(now - 60_000.0).into();
             e.input_tokens = 1000.0;
             e.total_tokens = 1100.0;
             e.estimated_cost = Some(2.0);
@@ -101,7 +101,7 @@ fn build_period_stats_covers_by_model_and_by_agent_for_all_dashboard_periods() {
         evt("p2", |e| {
             e.agent = AgentId::Windsurf;
             e.model = Some("swe-1-6".into());
-            e.timestamp = iso(now - 2.0 * DAY_MS);
+            e.timestamp = iso(now - 2.0 * DAY_MS).into();
             e.input_tokens = 500.0;
             e.total_tokens = 550.0;
             e.estimated_cost = Some(1.0);
@@ -109,7 +109,7 @@ fn build_period_stats_covers_by_model_and_by_agent_for_all_dashboard_periods() {
         evt("p3", |e| {
             e.agent = AgentId::Grok;
             e.model = Some("grok-4.5".into());
-            e.timestamp = iso(now - 10.0 * DAY_MS);
+            e.timestamp = iso(now - 10.0 * DAY_MS).into();
             e.input_tokens = 200.0;
             e.total_tokens = 220.0;
             e.estimated_cost = Some(0.5);
@@ -136,7 +136,7 @@ fn build_gist_restore_rollups_uses_hour_buckets_for_recent_day_for_older() {
         evt("r1", |e| {
             e.agent = AgentId::Grok;
             e.model = Some("grok-4.5 (xAI)".into());
-            e.timestamp = iso(now - 30.0 * 60_000.0);
+            e.timestamp = iso(now - 30.0 * 60_000.0).into();
             e.input_tokens = 100.0;
             e.total_tokens = 110.0;
             e.estimated_cost = Some(1.0);
@@ -144,7 +144,7 @@ fn build_gist_restore_rollups_uses_hour_buckets_for_recent_day_for_older() {
         evt("r2", |e| {
             e.agent = AgentId::Grok;
             e.model = Some("grok-4.5".into());
-            e.timestamp = iso(now - 20.0 * 60_000.0);
+            e.timestamp = iso(now - 20.0 * 60_000.0).into();
             e.input_tokens = 50.0;
             e.total_tokens = 55.0;
             e.estimated_cost = Some(0.5);
@@ -153,7 +153,7 @@ fn build_gist_restore_rollups_uses_hour_buckets_for_recent_day_for_older() {
             e.agent = AgentId::Windsurf;
             e.model = Some("swe-1-6".into());
             // older than 8d hour window -> daily bucket
-            e.timestamp = iso(now - 12.0 * DAY_MS);
+            e.timestamp = iso(now - 12.0 * DAY_MS).into();
             e.input_tokens = 10.0;
             e.total_tokens = 11.0;
             e.estimated_cost = Some(0.1);
@@ -261,7 +261,7 @@ fn merge_multi_machine_gist_rollups_sums_two_hosts_and_replaces_same_host() {
         &[evt("a1", |e| {
             e.agent = AgentId::Grok;
             e.model = Some("grok-4.5".into());
-            e.timestamp = ts();
+            e.timestamp = ts().into();
             e.input_tokens = 100.0;
             e.total_tokens = 110.0;
             e.estimated_cost = Some(2.0);
@@ -273,7 +273,7 @@ fn merge_multi_machine_gist_rollups_sums_two_hosts_and_replaces_same_host() {
         &[evt("b1", |e| {
             e.agent = AgentId::Grok;
             e.model = Some("grok-4.5".into());
-            e.timestamp = ts();
+            e.timestamp = ts().into();
             e.input_tokens = 50.0;
             e.total_tokens = 55.0;
             e.estimated_cost = Some(1.0);
@@ -293,7 +293,7 @@ fn merge_multi_machine_gist_rollups_sums_two_hosts_and_replaces_same_host() {
         &[evt("a2", |e| {
             e.agent = AgentId::Grok;
             e.model = Some("grok-4.5".into());
-            e.timestamp = ts();
+            e.timestamp = ts().into();
             e.input_tokens = 200.0;
             e.total_tokens = 220.0;
             e.estimated_cost = Some(4.0);
@@ -316,7 +316,7 @@ fn bulk(prefix: &str, n: usize) -> Vec<UsageEvent> {
             evt(&format!("{prefix}-{i}"), |e| {
                 e.agent = if i % 2 == 0 { AgentId::Grok } else { AgentId::Windsurf };
                 e.model = Some(if i % 3 == 0 { "grok-4.5" } else { "swe-1-6" }.into());
-                e.timestamp = iso(now - (i % 40) as f64 * DAY_MS);
+                e.timestamp = iso(now - (i % 40) as f64 * DAY_MS).into();
                 e.input_tokens = 100.0 + i as f64;
                 e.total_tokens = 110.0 + i as f64;
                 e.estimated_cost = Some(0.01 * (i as f64 + 1.0));
@@ -386,7 +386,7 @@ async fn build_gist_full_backup_multi_machine_sums_period_stats_cost() {
     let events_a = vec![evt("ma1", |e| {
         e.agent = AgentId::Grok;
         e.model = Some("grok-4.5".into());
-        e.timestamp = now.clone();
+        e.timestamp = now.clone().into();
         e.input_tokens = 1000.0;
         e.total_tokens = 1100.0;
         e.estimated_cost = Some(10.0);
@@ -394,7 +394,7 @@ async fn build_gist_full_backup_multi_machine_sums_period_stats_cost() {
     let events_b = vec![evt("mb1", |e| {
         e.agent = AgentId::Grok;
         e.model = Some("grok-4.5".into());
-        e.timestamp = now.clone();
+        e.timestamp = now.clone().into();
         e.input_tokens = 500.0;
         e.total_tokens = 550.0;
         e.estimated_cost = Some(5.0);
@@ -429,7 +429,7 @@ fn gist_restore_rollups_match_source_totals_for_dashboard_periods() {
             evt(&format!("acc-{i}"), |e| {
                 e.agent = if i % 2 == 0 { AgentId::Grok } else { AgentId::Devin };
                 e.model = Some(if i % 3 == 0 { "grok-4.5" } else { "glm-5-2" }.into());
-                e.timestamp = iso(now - i as f64 * 3_600_000.0); // last 120 hours
+                e.timestamp = iso(now - i as f64 * 3_600_000.0).into(); // last 120 hours
                 e.input_tokens = 100.0 + i as f64;
                 e.output_tokens = 10.0;
                 e.total_tokens = 110.0 + i as f64;

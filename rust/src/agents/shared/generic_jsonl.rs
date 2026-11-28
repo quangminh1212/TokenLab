@@ -63,6 +63,10 @@ pub async fn parse_generic_jsonl(roots: &[String], options: &GenericJsonlOptions
         .await;
 
         for file in files {
+            // Unchanged files are served from the previous scan (scan_index);
+            // the closure is the pure per-file parse.
+            let mut file_events = crate::util::scan_index::events_for_file(options.agent, &file, || async {
+            let mut events: Vec<UsageEvent> = Vec::new();
             // Cached JSONL parse: unchanged files skip read + JSON.parse.
             let rows = if file.ends_with(".jsonl") {
                 read_jsonl_cached(&file, Some(MAX_FILE_BYTES)).await?
@@ -71,7 +75,7 @@ pub async fn parse_generic_jsonl(roots: &[String], options: &GenericJsonlOptions
             };
             let rows = match rows {
                 Some(r) if !r.is_empty() => r,
-                _ => continue,
+                _ => return Ok(events),
             };
 
             let mut idx: u64 = 0;
@@ -105,10 +109,10 @@ pub async fn parse_generic_jsonl(roots: &[String], options: &GenericJsonlOptions
                         idx.to_string().as_str(),
                         js_num_to_string(buckets.input_tokens).as_str(),
                         js_num_to_string(buckets.output_tokens).as_str(),
-                    ]),
+                    ]).into(),
                     agent: options.agent,
                     model: model.map(Into::into),
-                    timestamp,
+                    timestamp: timestamp.into(),
                     input_tokens: buckets.input_tokens,
                     output_tokens: buckets.output_tokens,
                     cache_read_tokens: buckets.cache_read_tokens,
@@ -119,6 +123,10 @@ pub async fn parse_generic_jsonl(roots: &[String], options: &GenericJsonlOptions
                     ..Default::default()
                 }));
             }
+            Ok::<_, anyhow::Error>(events)
+            })
+            .await?;
+            events.append(&mut file_events);
         }
     }
 

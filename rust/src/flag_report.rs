@@ -5,7 +5,7 @@
 //! single number. Days are UTC calendar days.
 
 use crate::types::{jsnum, UsageEvent};
-use crate::util::{js_date_parse, js_num_to_string, js_number_from_str, js_to_fixed, to_iso_string};
+use crate::util::{js_num_to_string, js_number_from_str, js_to_fixed, to_iso_string};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -230,7 +230,7 @@ fn to_timed_points(events: &[UsageEvent]) -> Vec<TimedPoint> {
         if e.estimated == Some(true) {
             continue;
         }
-        let at_ms = js_date_parse(&e.timestamp);
+        let at_ms = e.timestamp.js_ms();
         if !at_ms.is_finite() {
             continue;
         }
@@ -417,8 +417,8 @@ mod tests {
 
     fn ev(ts: &str) -> UsageEvent {
         UsageEvent {
-            id: ts.to_string(),
-            timestamp: ts.to_string(),
+            id: ts.to_string().into(),
+            timestamp: ts.to_string().into(),
             ..Default::default()
         }
     }

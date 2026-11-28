@@ -93,7 +93,7 @@ async fn build_recent_live_events_keeps_same_second_requests_and_newest_duplicat
         ..base()
     };
     let future = UsageEvent { id: "future-rollup".into(), timestamp: "2026-07-31T05:02:00.000Z".into(), ..base() };
-    let stamps: Vec<f64> = [&old, &newest, &sibling, &future].iter().map(|e| js_date_parse(&e.timestamp)).collect();
+    let stamps: Vec<f64> = [&old, &newest, &sibling, &future].iter().map(|e| js_date_parse(&e.timestamp.to_str())).collect();
     let cache = vec![old, newest, sibling, future];
 
     let events = build_recent_live_events(
@@ -115,7 +115,7 @@ async fn build_recent_live_events_keeps_same_second_requests_and_newest_duplicat
     }
     clear_hot_mirror_cache();
 
-    let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
+    let ids: Vec<String> = events.iter().map(|e| e.id.to_string()).collect();
     assert_eq!(
         ids,
         vec!["sibling", "newest", "old"],

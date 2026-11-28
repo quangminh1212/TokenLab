@@ -164,8 +164,8 @@ fn sample_evt(id: &str, ts: &str) -> UsageEvent {
     }
 }
 
-fn ids(events: &[UsageEvent]) -> Vec<&str> {
-    events.iter().map(|e| e.id.as_str()).collect()
+fn ids(events: &[UsageEvent]) -> Vec<String> {
+    events.iter().map(|e| e.id.to_string()).collect()
 }
 
 #[test]

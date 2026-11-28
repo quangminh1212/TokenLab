@@ -11,6 +11,7 @@ pub mod js;
 pub mod jsonl;
 pub mod model;
 pub mod pathx;
+pub mod scan_index;
 pub mod period;
 pub mod zstd;
 

@@ -534,11 +534,15 @@ impl Ctx {
         let file_events = cached_events_arc(
             file,
             move || async move {
-                let mut produced = Vec::new();
-                if let Some(rows) = read_jsonl_cached(&f, None).await? {
-                    parse_jsonl_rows(&mut produced, &rows, &f, file_mtime_ms);
-                }
-                Ok(produced)
+                // Unchanged rollouts come from the previous scan (scan_index).
+                crate::util::scan_index::events_for_file(AgentId::Codex, &f, || async {
+                    let mut produced = Vec::new();
+                    if let Some(rows) = read_jsonl_cached(&f, None).await? {
+                        parse_jsonl_rows(&mut produced, &rows, &f, file_mtime_ms);
+                    }
+                    Ok(produced)
+                })
+                .await
             },
             EventCacheOpts::default(),
         )
@@ -1026,10 +1030,10 @@ async fn parse_codex_sqlite_state(root: &str, seen_rollouts: &mut HashSet<String
 
             if tokens.is_finite() && tokens > 0.0 {
                 events.push(apply_pricing(UsageEvent {
-                    id: summary_id.clone(),
+                    id: summary_id.clone().into(),
                     agent: AgentId::Codex,
                     model: Some(model.into()),
-                    timestamp: ts,
+                    timestamp: ts.into(),
                     input_tokens: js_round(tokens),
                     output_tokens: 0.0,
                     cache_read_tokens: 0.0,
@@ -1460,10 +1464,10 @@ fn parse_jsonl_rows(events: &mut Vec<UsageEvent>, rows: &[Value], file: &str, fi
                 idx.to_string().as_str(),
                 js_num_to_string(input).as_str(),
                 js_num_to_string(output).as_str(),
-            ]),
+            ]).into(),
             agent: AgentId::Codex,
             model: row_model.map(Into::into),
-            timestamp: ts,
+            timestamp: ts.into(),
             input_tokens: input,
             output_tokens: output,
             cache_read_tokens: cache_read,
@@ -1523,10 +1527,10 @@ fn emit_content_estimates(
                 i.to_string().as_str(),
                 js_num_to_string(input).as_str(),
                 js_num_to_string(output).as_str(),
-            ]),
+            ]).into(),
             agent: AgentId::Codex,
             model: Some(m.into()),
-            timestamp: ts,
+            timestamp: ts.into(),
             input_tokens: input,
             output_tokens: output,
             cache_read_tokens: 0.0,
@@ -1553,10 +1557,10 @@ fn collect_from_json(events: &mut Vec<UsageEvent>, data: &Value, file: &str, fil
                     None => continue,
                 };
                 events.push(apply_pricing(UsageEvent {
-                    id: stable_id(&["codex", file, "json", i.to_string().as_str(), js_num_to_string(b.input).as_str()]),
+                    id: stable_id(&["codex", file, "json", i.to_string().as_str(), js_num_to_string(b.input).as_str()]).into(),
                     agent: AgentId::Codex,
                     model: (extract_model(&[Some(row)])).map(Into::into),
-                    timestamp: extract_timestamp(&[Some(row), Some(&mtime_val)]),
+                    timestamp: extract_timestamp(&[Some(row), Some(&mtime_val)]).into(),
                     input_tokens: b.input,
                     output_tokens: b.output,
                     cache_read_tokens: b.cache_read,

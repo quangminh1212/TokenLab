@@ -10,7 +10,7 @@
 use crate::agents::shared::env::{env_chain, path_env, unique};
 use crate::agents::{parse_fn, AgentModule};
 use crate::pricing::{apply_pricing, apply_pricing_with};
-use crate::types::{AgentId, UsageEvent};
+use crate::types::{AgentId, EventId, UsageEvent};
 use crate::util::{
     app_data_dir, env_nonempty, home_dir, js_date_parse, js_num_to_string, js_trim, now_ms, num, path_exists, pjoin,
     read_text, stable_id, to_iso_string,
@@ -201,10 +201,10 @@ fn base_event(
     file: &str,
 ) -> UsageEvent {
     UsageEvent {
-        id,
+        id: id.into(),
         agent: AgentId::Qwencoder,
         model: Some(model.into()),
-        timestamp,
+        timestamp: timestamp.into(),
         input_tokens: input,
         output_tokens: output,
         cache_read_tokens: cache_read,
@@ -220,7 +220,7 @@ fn base_event(
 // Parser
 // ---------------------------------------------------------------------------
 
-fn push_new(events: &mut Vec<UsageEvent>, seen: &mut HashSet<String>, batch: Vec<UsageEvent>) {
+fn push_new(events: &mut Vec<UsageEvent>, seen: &mut HashSet<EventId>, batch: Vec<UsageEvent>) {
     for e in batch {
         if seen.contains(&e.id) {
             continue;
@@ -232,7 +232,7 @@ fn push_new(events: &mut Vec<UsageEvent>, seen: &mut HashSet<String>, batch: Vec
 
 pub async fn parse_qwen_coder(roots: Vec<String>) -> anyhow::Result<Vec<UsageEvent>> {
     let mut events: Vec<UsageEvent> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashSet<EventId> = HashSet::new();
 
     for root in &roots {
         if !path_exists(root).await {
@@ -766,7 +766,7 @@ mod tests {
         );
         let events = parse_qwen_coder(vec![root.path().to_string_lossy().to_string()]).await.unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(&events[0].timestamp[..10], "2026-08-01");
+        assert_eq!(&events[0].timestamp.to_str()[..10], "2026-08-01");
         assert_eq!(events[0].input_tokens, 5000.0);
     }
 

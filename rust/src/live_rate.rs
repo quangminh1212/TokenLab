@@ -505,10 +505,10 @@ fn row_to_live_event(row: &Map<String, Value>, agent: &str, source: &str) -> Opt
         .map(|s| s.to_string());
 
     Some(UsageEvent {
-        id: format!("hotlive:{agent}:{native_id}"),
+        id: format!("hotlive:{agent}:{native_id}").into(),
         agent: AgentId::from_id(agent).unwrap_or(AgentId::Custom),
         model: model.map(Into::into),
-        timestamp: ts,
+        timestamp: ts.into(),
         input_tokens,
         output_tokens,
         cache_read_tokens,
@@ -583,7 +583,7 @@ pub fn clear_hot_mirror_cache() {
 }
 
 fn in_live_window(e: &UsageEvent, start: f64, now: f64) -> bool {
-    let t = js_date_parse(&e.timestamp);
+    let t = e.timestamp.js_ms();
     t.is_finite() && t >= start && t <= now + 5_000.0
 }
 
@@ -632,11 +632,11 @@ pub async fn load_hot_mirror_live_events(now_ms: f64, lookback_minutes: f64, tai
             if !is_live_request_event(&e) {
                 continue;
             }
-            let t = js_date_parse(&e.timestamp);
+            let t = e.timestamp.js_ms();
             if !t.is_finite() || t < start || t > now_ms + 5_000.0 {
                 continue;
             }
-            if !seen.insert(e.id.clone()) {
+            if !seen.insert(e.id.clone().to_string()) {
                 continue;
             }
             out.push(e);
@@ -664,14 +664,14 @@ fn recent_key(e: &UsageEvent) -> String {
     // Collapse twin cache vs mirror copies of the same call at millisecond
     // precision. Second precision dropped legitimate bursts from the same
     // model with equal token counts.
-    let parsed = js_date_parse(&e.timestamp);
+    let parsed = e.timestamp.js_ms();
     let ts = if parsed.is_finite() {
         match to_iso_string(parsed) {
             Some(iso) => iso.chars().take(23).collect::<String>(),
-            None => e.timestamp.clone(),
+            None => e.timestamp.clone().to_string(),
         }
     } else {
-        e.timestamp.clone()
+        e.timestamp.clone().to_string()
     };
     let agent = if e.agent == AgentId::Xlabrouter { "routerlab" } else { e.agent.as_str() };
     [
@@ -691,8 +691,8 @@ fn put_recent(by_key: &mut IndexMap<String, UsageEvent>, e: &UsageEvent) {
             by_key.insert(key, e.clone());
         }
         Some(previous) => {
-            let previous_ts = js_date_parse(&previous.timestamp);
-            let next_ts = js_date_parse(&e.timestamp);
+            let previous_ts = previous.timestamp.js_ms();
+            let next_ts = e.timestamp.js_ms();
             // Reverse cache traversal sees newest first. Never let an older
             // duplicate overwrite it; a same-time mirror row may still win when
             // it is richer.
@@ -726,7 +726,7 @@ pub async fn build_recent_live_events(cache: &[UsageEvent], opts: &RecentLiveOpt
 
     let agent_filter = opts.agent.as_deref().filter(|a| !a.is_empty());
     let in_period = |e: &UsageEvent| -> bool {
-        let t = js_date_parse(&e.timestamp);
+        let t = e.timestamp.js_ms();
         if !t.is_finite() {
             return false;
         }
@@ -799,7 +799,7 @@ pub async fn build_recent_live_events(cache: &[UsageEvent], opts: &RecentLiveOpt
     let mut rows: Vec<UsageEvent> = by_key.into_values().collect();
     // Stable sort, newest first (Array.prototype.sort).
     rows.sort_by(|a, b| {
-        let (ta, tb) = (js_date_parse(&a.timestamp), js_date_parse(&b.timestamp));
+        let (ta, tb) = (a.timestamp.js_ms(), b.timestamp.js_ms());
         tb.partial_cmp(&ta).unwrap_or(std::cmp::Ordering::Equal)
     });
     rows.truncate(limit.trunc() as usize);
@@ -855,7 +855,7 @@ where
         if !is_live_request_event(e) {
             return;
         }
-        let t = js_date_parse(&e.timestamp);
+        let t = e.timestamp.js_ms();
         if !t.is_finite() || t > now_ms + 5_000.0 {
             return;
         }
@@ -898,7 +898,7 @@ where
             if e.estimated == Some(true) {
                 continue;
             }
-            let t = js_date_parse(&e.timestamp);
+            let t = e.timestamp.js_ms();
             if t.is_finite() && t >= window_start && t <= now_ms + 5_000.0 {
                 recent.push(e.clone());
             }
@@ -1061,7 +1061,7 @@ mod tests {
         clear_hot_mirror_cache();
         let now = 1_800_000_000_000.0;
         let mk = |offset_s: f64, est: bool| UsageEvent {
-            timestamp: to_iso_string(now - offset_s * 1000.0).unwrap(),
+            timestamp: to_iso_string(now - offset_s * 1000.0).unwrap().into(),
             input_tokens: 10.0,
             total_tokens: 10.0,
             estimated: Some(est),

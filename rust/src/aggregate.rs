@@ -8,7 +8,7 @@
 use crate::pricing::{get_rate_for_model, price_cost_parts, CostParts};
 use crate::types::{jsnum, AgentId, GroupBy, GroupRow, Period, StatsResult, TokenTotals, UsageEvent};
 use crate::util::{
-    js_date_parse, normalize_agent_id, normalize_model_for_agent, now_ms, or_zero, to_iso_string,
+    normalize_agent_id, normalize_model_for_agent, now_ms, or_zero, to_iso_string,
 };
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -217,7 +217,7 @@ fn group_key(e: &UsageEvent, by: GroupBy, ts_ms: Option<f64>, all_time_model_ali
     }
     let t = match ts_ms {
         Some(t) if t.is_finite() => t,
-        _ => js_date_parse(&e.timestamp),
+        _ => e.timestamp.js_ms(),
     };
     if !t.is_finite() {
         return "unknown".to_string();
@@ -437,7 +437,7 @@ pub fn precompute_dashboard_periods(
     let mut hour_cache: (i64, String, String) = (i64::MIN, String::new(), String::new());
 
     for (i, e) in events.iter().enumerate() {
-        let t = if use_ts { timestamps_ms[i] } else { js_date_parse(&e.timestamp) };
+        let t = if use_ts { timestamps_ms[i] } else { e.timestamp.js_ms() };
         if !t.is_finite() {
             continue;
         }
@@ -511,7 +511,7 @@ pub fn precompute_dashboard_periods(
         let since = if pk == DashPeriodKey::All { None } else { Some(pk.as_str()) };
         let rpm_idx = a.rpm_events;
         let rpm_idx_ref = &rpm_idx;
-        let rpm_rows = move || rpm_idx_ref.iter().map(move |&i| (&events[i], if use_ts { timestamps_ms[i] } else { js_date_parse(&events[i].timestamp) }));
+        let rpm_rows = move || rpm_idx_ref.iter().map(move |&i| (&events[i], if use_ts { timestamps_ms[i] } else { events[i].timestamp.js_ms() }));
         let mut agent_stats = finish(a.agent, GroupBy::Agent, SortBy::Cost, since);
         agent_stats.totals = a.totals.clone();
         let mut model_stats = finish(a.model, GroupBy::Model, SortBy::Cost, since);
@@ -576,7 +576,7 @@ pub fn count_active_minutes(events: &[UsageEvent]) -> usize {
     }
     let mut buckets: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for e in events {
-        let t = js_date_parse(&e.timestamp);
+        let t = e.timestamp.js_ms();
         if !t.is_finite() {
             continue;
         }
@@ -611,7 +611,7 @@ pub struct ActiveUsageRpm {
 /// peak (one timestamp for a whole day's requests would fake a huge peak) but
 /// still count toward `requests` and `activeMinutes`.
 pub fn compute_active_usage_rpm(events: &[UsageEvent]) -> ActiveUsageRpm {
-    compute_active_usage_rpm_iter(events.iter().map(|e| (e, js_date_parse(&e.timestamp))))
+    compute_active_usage_rpm_iter(events.iter().map(|e| (e, e.timestamp.js_ms())))
 }
 
 /// Same as [`compute_active_usage_rpm`] over borrowed rows with precomputed
@@ -695,7 +695,7 @@ pub fn rpm_by_group(
         events.iter().enumerate().map(|(i, e)| {
             let t = match ts {
                 Some(t) => t[i],
-                None => js_date_parse(&e.timestamp),
+                None => e.timestamp.js_ms(),
             };
             (e, t)
         }),
@@ -806,7 +806,7 @@ pub fn compute_live_request_rate(events: &[UsageEvent], window_minutes: f64, now
         if e.estimated == Some(true) {
             continue;
         }
-        let t = js_date_parse(&e.timestamp);
+        let t = e.timestamp.js_ms();
         // Open-closed window (start, now] with small clock-skew tolerance
         if !t.is_finite() || t <= start || t > now + 5_000.0 {
             continue;
@@ -946,6 +946,7 @@ pub fn cost_report(events: &[UsageEvent], since: Option<&str>, until: Option<&st
 mod tests {
     use super::*;
     use crate::types::PricingStatus;
+    use crate::util::js_date_parse;
 
     fn sample() -> Vec<UsageEvent> {
         vec![
@@ -1421,7 +1422,7 @@ mod tests {
     fn precompute_periods_filters_and_groups() {
         let s = sample();
         let now = js_date_parse("2026-07-11T12:00:00.000Z");
-        let ts: Vec<f64> = s.iter().map(|e| js_date_parse(&e.timestamp)).collect();
+        let ts: Vec<f64> = s.iter().map(|e| e.timestamp.js_ms()).collect();
         let mut bounds = HashMap::new();
         bounds.insert(DashPeriodKey::Today, Some(js_date_parse("2026-07-11T10:30:00.000Z")));
         bounds.insert(DashPeriodKey::All, None);

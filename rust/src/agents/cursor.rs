@@ -60,14 +60,17 @@ pub async fn parse_cursor(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
         .await;
 
         for file in candidates {
+            // Unchanged files are served from the previous scan (scan_index).
+            let mut file_events = crate::util::scan_index::events_for_file(AgentId::Cursor, &file, || async {
+            let mut events: Vec<UsageEvent> = Vec::new();
             // Never slurp pathological files (multi-hundred-MB) into memory.
             match stamp_file(&file).await {
                 Some(s) if s.size <= MAX_FILE_BYTES => {}
-                _ => continue,
+                _ => return Ok(events),
             }
             let text = match read_text(&file).await {
                 Some(t) if !t.is_empty() => t,
-                _ => continue,
+                _ => return Ok(events),
             };
 
             if file.ends_with(".jsonl") {
@@ -76,12 +79,12 @@ pub async fn parse_cursor(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
                     idx += 1;
                     push_from_object(&mut events, &row, &file, idx);
                 }
-                continue;
+                return Ok(events);
             }
 
             let data: Value = match serde_json::from_str(&text) {
                 Ok(d) => d,
-                Err(_) => continue,
+                Err(_) => return Ok(events),
             };
             match &data {
                 Value::Array(a) => {
@@ -100,6 +103,10 @@ pub async fn parse_cursor(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
                 }
                 _ => {}
             }
+            Ok::<_, anyhow::Error>(events)
+            })
+            .await?;
+            events.append(&mut file_events);
         }
     }
 
@@ -165,10 +172,10 @@ fn push_from_object(events: &mut Vec<UsageEvent>, row: &Value, file: &str, idx: 
             idx.to_string().as_str(),
             js_num_to_string(input).as_str(),
             js_num_to_string(output).as_str(),
-        ]),
+        ]).into(),
         agent: AgentId::Cursor,
         model: model.map(Into::into),
-        timestamp: ts,
+        timestamp: ts.into(),
         input_tokens: input,
         output_tokens: output,
         cache_read_tokens: cache_read,

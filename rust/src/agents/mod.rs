@@ -5,9 +5,9 @@
 //! remote snapshot variant), [`scan_all`], [`detect_agents`] and the
 //! OpenClaw/Hermes mirror dedupe.
 
-use crate::types::{AgentId, AgentStatus, UsageEvent};
+use crate::types::{AgentId, AgentStatus, Ts, UsageEvent};
 use crate::util::{
-    js_date_parse, js_num_to_string, js_trim, now_ms, path_exists, with_path_env_override, PathEnvOverride,
+    js_num_to_string, js_trim, now_ms, path_exists, with_path_env_override, PathEnvOverride,
     PathFlavor,
 };
 use once_cell::sync::Lazy;
@@ -349,7 +349,7 @@ fn openclaw_keep_mask(openclaw: &[&UsageEvent], hermes: &[&UsageEvent]) -> Vec<b
             Some(m) if !m.is_empty() => m,
             _ => continue,
         };
-        let timestamp = js_date_parse(&event.timestamp);
+        let timestamp = event.timestamp.js_ms();
         if !timestamp.is_finite() {
             continue;
         }
@@ -370,7 +370,7 @@ fn openclaw_keep_mask(openclaw: &[&UsageEvent], hermes: &[&UsageEvent]) -> Vec<b
                 Some(m) if !m.is_empty() => m,
                 _ => return true,
             };
-            let timestamp = js_date_parse(&event.timestamp);
+            let timestamp = event.timestamp.js_ms();
             if !timestamp.is_finite() {
                 return true;
             }
@@ -615,13 +615,13 @@ pub async fn scan_all_enabled(enabled: Option<HashMap<AgentId, bool>>) -> Vec<Us
 pub async fn detect_agents(events: &[UsageEvent]) -> Vec<AgentStatus> {
     // O(n) counts + last timestamp - avoid storing 100k+ event arrays per agent
     let mut counts: HashMap<AgentId, f64> = HashMap::new();
-    let mut last_at: HashMap<AgentId, &str> = HashMap::new();
+    let mut last_at: HashMap<AgentId, &Ts> = HashMap::new();
     for e in events {
         *counts.entry(e.agent).or_insert(0.0) += 1.0;
         match last_at.get(&e.agent) {
-            Some(prev) if e.timestamp.as_str() <= *prev => {}
+            Some(prev) if e.timestamp <= **prev => {}
             _ => {
-                last_at.insert(e.agent, e.timestamp.as_str());
+                last_at.insert(e.agent, &e.timestamp);
             }
         }
     }

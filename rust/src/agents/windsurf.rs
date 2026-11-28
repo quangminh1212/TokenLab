@@ -197,10 +197,10 @@ async fn parse_json_artifacts(root: &str, seen: &mut HashSet<String>) -> Vec<Usa
                     idx.to_string().as_str(),
                     js_num_to_string(buckets.input_tokens).as_str(),
                     js_num_to_string(buckets.output_tokens).as_str(),
-                ]),
+                ]).into(),
                 agent: AgentId::Windsurf,
                 model: (extract_model(&[Some(row), r.get("usage"), r.get("message")])).map(Into::into),
-                timestamp: extract_timestamp(&[Some(row), r.get("usage"), r.get("message")]),
+                timestamp: extract_timestamp(&[Some(row), r.get("usage"), r.get("message")]).into(),
                 input_tokens: buckets.input_tokens,
                 output_tokens: buckets.output_tokens,
                 cache_read_tokens: buckets.cache_read_tokens,
@@ -374,10 +374,10 @@ fn parse_windsurf_sqlite_inner(
                             table.as_str(),
                             i.to_string().as_str(),
                             js_num_to_string(buckets.input_tokens).as_str(),
-                        ]),
+                        ]).into(),
                         agent: AgentId::Windsurf,
                         model: (extract_model(&[Some(&row_v)])).map(Into::into),
-                        timestamp: extract_timestamp(&[Some(&row_v)]),
+                        timestamp: extract_timestamp(&[Some(&row_v)]).into(),
                         input_tokens: buckets.input_tokens,
                         output_tokens: buckets.output_tokens,
                         cache_read_tokens: buckets.cache_read_tokens,
@@ -439,10 +439,10 @@ fn push_usage_from_unknown(events: &mut Vec<UsageEvent>, value: &Value, source_p
                 tag,
                 i.to_string().as_str(),
                 js_num_to_string(buckets.input_tokens).as_str(),
-            ]),
+            ]).into(),
             agent: AgentId::Windsurf,
             model: (extract_model(&[Some(c)])).map(Into::into),
-            timestamp: extract_timestamp(&[Some(c)]),
+            timestamp: extract_timestamp(&[Some(c)]).into(),
             input_tokens: buckets.input_tokens,
             output_tokens: buckets.output_tokens,
             cache_read_tokens: buckets.cache_read_tokens,
@@ -595,10 +595,10 @@ async fn parse_cascade_sessions(root: &str, seen: &mut HashSet<String>) -> Vec<U
 
         // One event per trajectory file - id must not change when tokens grow mid-session.
         events.push(apply_pricing(UsageEvent {
-            id: stable_id(&["windsurf", kind, session_id.as_str(), file.as_str()]),
+            id: stable_id(&["windsurf", kind, session_id.as_str(), file.as_str()]).into(),
             agent: AgentId::Windsurf,
             model: Some(model.into()),
-            timestamp,
+            timestamp: timestamp.into(),
             input_tokens,
             output_tokens,
             cache_read_tokens,
@@ -958,6 +958,6 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].input_tokens, 7.0);
         assert_eq!(events[0].output_tokens, 3.0);
-        assert!(events[0].id.len() == 24);
+        assert!(events[0].id.to_str().len() == 24);
     }
 }

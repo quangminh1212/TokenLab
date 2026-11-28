@@ -83,6 +83,6 @@ fn scan_reconciliation_keeps_a_mirrored_openclaw_call_counted_once_under_hermes(
     };
 
     let result = dedupe_mirrored_openclaw_events(&[mirror, unrelated], &[hermes]);
-    let ids: Vec<&str> = result.iter().map(|e| e.id.as_str()).collect();
+    let ids: Vec<String> = result.iter().map(|e| e.id.to_string()).collect();
     assert_eq!(ids, vec!["other-request"]);
 }

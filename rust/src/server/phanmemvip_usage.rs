@@ -90,7 +90,7 @@ fn summarize_event_usage(events: &[UsageEvent], date: &str) -> EventUsage {
         if event.estimated == Some(true) || event.request_count.map_or(false, |c| c > 1.0) {
             continue;
         }
-        let timestamp = js_date_parse(&event.timestamp);
+        let timestamp = event.timestamp.js_ms();
         if !timestamp.is_finite() || timestamp < day_start || timestamp >= day_end {
             continue;
         }
@@ -222,7 +222,7 @@ mod tests {
         UsageEvent {
             agent: AgentId::Litellm,
             model: Some(model.to_string().into()),
-            timestamp: ts.to_string(),
+            timestamp: ts.to_string().into(),
             ..Default::default()
         }
     }

@@ -36,10 +36,10 @@ impl Ev {
     }
     fn build(self) -> UsageEvent {
         UsageEvent {
-            id: self.id.to_string(),
+            id: self.id.to_string().into(),
             agent: AgentId::Grok,
             model: Some(self.model.to_string().into()),
-            timestamp: self.timestamp.to_string(),
+            timestamp: self.timestamp.to_string().into(),
             input_tokens: self.input,
             output_tokens: self.output,
             cache_read_tokens: self.cache_read,
@@ -90,7 +90,7 @@ fn collapse_source_path_rollups_drops_ghost_grok_residual_out0_when_real_usage_e
     let other = other.build();
 
     let out = collapse_source_path_rollups(&[real, g1, g2, live, other]);
-    let ids: HashSet<&str> = out.iter().map(|e| e.id.as_str()).collect();
+    let ids: HashSet<String> = out.iter().map(|e| e.id.to_string()).collect();
     assert!(ids.contains("real-tc-1"));
     assert!(ids.contains("live-residual"), "keep estimated residual with out>0");
     assert!(ids.contains("other-residual"), "keep residual when path has no real usage");
@@ -224,7 +224,7 @@ fn prefer_richer_residual_heavier_than_real_still_keeps_non_estimated_real() {
     ghost.estimated = true;
     let ghost = ghost.build();
     let collapsed = collapse_source_path_rollups(&[residual_trap, real, ghost]);
-    let by_id: HashMap<&str, &UsageEvent> = collapsed.iter().map(|e| (e.id.as_str(), e)).collect();
+    let by_id: HashMap<String, &UsageEvent> = collapsed.iter().map(|e| (e.id.to_string(), e)).collect();
     assert!(by_id.contains_key(id), "real usage id must survive collapse");
     assert_eq!(by_id[id].estimated, Some(false));
     assert_eq!(by_id[id].output_tokens, 3_415.0);

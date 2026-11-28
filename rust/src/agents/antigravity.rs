@@ -744,10 +744,10 @@ fn parse_proxy_db_sync(db_path: &str) -> Vec<UsageEvent> {
             &js_num_to_string(cache_read_tokens),
         ]);
         let partial = UsageEvent {
-            id,
+            id: id.into(),
             agent: AgentId::Antigravity,
             model: model.map(Into::into),
-            timestamp: ts,
+            timestamp: ts.into(),
             input_tokens,
             output_tokens,
             cache_read_tokens,
@@ -1059,10 +1059,10 @@ fn parse_one_transcript(
             &js_num_to_string(output_tokens),
         ]);
         out.push(apply_pricing(UsageEvent {
-            id,
+            id: id.into(),
             agent: AgentId::Antigravity,
             model: Some(model.clone().into()),
-            timestamp: ts,
+            timestamp: ts.into(),
             input_tokens,
             output_tokens,
             cache_read_tokens: 0.0,
@@ -1207,10 +1207,10 @@ fn parse_conversation_dbs_sync(ide_root: &str, already_covered: &HashSet<String>
         ]);
         let request_count = if gen_count > 0 { gen_count } else { (step_count + 3) / 4 };
         events.push(apply_pricing(UsageEvent {
-            id,
+            id: id.into(),
             agent: AgentId::Antigravity,
             model: Some((model.unwrap_or_else(|| "gemini".to_string())).into()),
-            timestamp: ts,
+            timestamp: ts.into(),
             input_tokens,
             output_tokens,
             cache_read_tokens: 0.0,
@@ -1330,10 +1330,10 @@ fn parse_explicit_usage_files_sync(roots: &[String]) -> Result<Vec<UsageEvent>, 
                     &js_num_to_string(b.output_tokens),
                 ]);
                 events.push(apply_pricing(UsageEvent {
-                    id,
+                    id: id.into(),
                     agent: AgentId::Antigravity,
                     model: model.map(Into::into),
-                    timestamp,
+                    timestamp: timestamp.into(),
                     input_tokens: b.input_tokens,
                     output_tokens: b.output_tokens,
                     cache_read_tokens: b.cache_read_tokens,
@@ -1371,7 +1371,7 @@ fn parse_antigravity_sync(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
 
     fn push(events: &mut Vec<UsageEvent>, seen: &mut HashSet<String>, batch: Vec<UsageEvent>) {
         for e in batch {
-            if !seen.insert(e.id.clone()) {
+            if !seen.insert(e.id.clone().to_string()) {
                 continue;
             }
             events.push(e);

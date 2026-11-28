@@ -49,7 +49,7 @@ fn legacy_codex_proxy_attribution_is_removed_while_native_and_litellm_rows_remai
         },
     ];
     let out = drop_legacy_codex_proxy_attributions(&rows);
-    let ids: Vec<&str> = out.iter().map(|r| r.id.as_str()).collect();
+    let ids: Vec<String> = out.iter().map(|r| r.id.to_string()).collect();
     assert_eq!(ids, vec!["codex-native", "litellm-source"]);
 }
 

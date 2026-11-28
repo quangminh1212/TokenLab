@@ -359,10 +359,10 @@ struct EventSpec<'a> {
 fn make_event(s: EventSpec<'_>) -> UsageEvent {
     apply_pricing_with(
         UsageEvent {
-            id: s.id,
+            id: s.id.into(),
             agent: AgentId::Grok,
             model: Some(s.model.to_string().into()),
-            timestamp: s.timestamp,
+            timestamp: s.timestamp.into(),
             input_tokens: s.input,
             output_tokens: s.output,
             cache_read_tokens: s.cache_read,
@@ -629,7 +629,7 @@ fn timestamp_from_session_id(session_id: &str) -> Option<String> {
 fn latest_event_timestamp(events: &[&UsageEvent]) -> Option<f64> {
     let mut latest: Option<f64> = None;
     for e in events {
-        let ms = js_date_parse(&e.timestamp);
+        let ms = e.timestamp.js_ms();
         if !ms.is_finite() {
             continue;
         }
@@ -784,12 +784,12 @@ async fn parse_grok_session(dir: &str) -> Result<Vec<UsageEvent>> {
         events.extend(persisted.events.iter().cloned());
         // Keep only usage written after the persisted rollup (active turn only).
         if let Some(updated_at) = &persisted.updated_at {
-            events.extend(from_updates.iter().filter(|e| is_after_timestamp(&e.timestamp, updated_at)).cloned());
+            events.extend(from_updates.iter().filter(|e| is_after_timestamp(&e.timestamp.to_str(), updated_at)).cloned());
         }
     } else if !from_updates.is_empty() {
         let latest_real_ts = latest_event_timestamp(&real_updates);
         let snapshot_ts = match usage_snapshot.last() {
-            Some(e) => js_date_parse(&e.timestamp),
+            Some(e) => e.timestamp.js_ms(),
             None => f64::NAN,
         };
         if usage_snapshot.is_empty()

@@ -249,10 +249,10 @@ fn parse_devin_sqlite_blocking(db_path: &str, events: &mut Vec<UsageEvent>) -> r
             // stable across path casing so remounts don't duplicate.
             // row_id alone is enough - hashing tokens re-created ids when
             // cache fields were refined and double-counted cache usage.
-            id: stable_id(&["devin", db_key.as_str(), sid.as_str(), row_id_str.as_str()]),
+            id: stable_id(&["devin", db_key.as_str(), sid.as_str(), row_id_str.as_str()]).into(),
             agent: AgentId::Devin,
             model: model.map(Into::into),
-            timestamp: ts,
+            timestamp: ts.into(),
             input_tokens: buckets.input_tokens,
             output_tokens: buckets.output_tokens,
             cache_read_tokens: buckets.cache_read_tokens,

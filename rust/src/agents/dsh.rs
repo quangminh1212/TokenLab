@@ -6,7 +6,7 @@ use crate::agents::{parse_fn, AgentModule};
 use crate::pricing::apply_pricing;
 use crate::types::{AgentId, UsageEvent};
 use crate::util::{
-    decompress_zstd_frames, js_date_parse, js_num_to_string, js_trim, now_ms, stable_id, stamp_file,
+    decompress_zstd_frames, js_num_to_string, js_trim, now_ms, stable_id, stamp_file,
     walk_files, PathFlavor, WalkOptions,
 };
 use indexmap::IndexMap;
@@ -359,10 +359,10 @@ fn parse_session_file_sync(file: &str) -> Option<Vec<UsageEvent>> {
         };
 
         events.push(apply_pricing(UsageEvent {
-            id: stable_id(&["dsh", file, seq.as_str()]),
+            id: stable_id(&["dsh", file, seq.as_str()]).into(),
             agent: AgentId::Dsh,
             model: model.map(Into::into),
-            timestamp: extract_timestamp(&[p, message]),
+            timestamp: extract_timestamp(&[p, message]).into(),
             input_tokens,
             output_tokens: buckets.output_tokens,
             cache_read_tokens,
@@ -386,7 +386,13 @@ async fn parse_dsh_files(roots: &[String], modified_after: Option<f64>) -> Vec<U
     let mut events = Vec::new();
     for file in files {
         // Ignore a damaged or partially written session and keep the other history.
-        if let Some(mut e) = parse_session_file(file).await {
+        // Unchanged sessions are served from the previous scan (scan_index);
+        // a damaged one errors out here so it is never recorded.
+        let parsed = crate::util::scan_index::events_for_file(AgentId::Dsh, &file, || async {
+            parse_session_file(file.clone()).await.ok_or_else(|| anyhow::anyhow!("unreadable session"))
+        })
+        .await;
+        if let Ok(mut e) = parsed {
             events.append(&mut e);
         }
     }
@@ -428,7 +434,7 @@ async fn parse_dsh_light(roots: Vec<String>) -> anyhow::Result<Vec<UsageEvent>> 
             DSH_LIGHT_SIG.lock().insert(key, stored);
         }
     }
-    Ok(events.into_iter().filter(|e| js_date_parse(&e.timestamp) >= cutoff).collect())
+    Ok(events.into_iter().filter(|e| e.timestamp.js_ms() >= cutoff).collect())
 }
 
 pub fn agent() -> AgentModule {

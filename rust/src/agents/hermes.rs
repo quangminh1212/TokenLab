@@ -203,7 +203,7 @@ fn token_buckets_from_hermes_row(row: &Value) -> Option<HermesBuckets> {
 
 fn base_event(id: String, model: Option<String>, workspace: Option<String>, source_path: &str) -> UsageEvent {
     UsageEvent {
-        id,
+        id: id.into(),
         agent: AgentId::Hermes,
         model: model.map(Into::into),
         workspace: workspace.map(Into::into),
@@ -381,7 +381,7 @@ async fn parse_hermes_json_file(file: &str) -> Vec<UsageEvent> {
                     workspace,
                     file,
                 );
-                ev.timestamp = extract_timestamp(&[Some(r)]);
+                ev.timestamp = extract_timestamp(&[Some(r)]).into();
                 ev.input_tokens = input_tokens;
                 ev.output_tokens = output_tokens;
                 ev.cache_read_tokens = cache_read_tokens;
@@ -400,7 +400,7 @@ async fn parse_hermes_json_file(file: &str) -> Vec<UsageEvent> {
                     workspace,
                     file,
                 );
-                ev.timestamp = extract_timestamp(&[Some(r)]);
+                ev.timestamp = extract_timestamp(&[Some(r)]).into();
                 ev.input_tokens = b.input_tokens;
                 ev.output_tokens = b.output_tokens;
                 ev.cache_read_tokens = b.cache_read_tokens;
@@ -591,7 +591,7 @@ fn gap_fill_sessions_over_smu(
             str_of(row, "cwd").map(|s| s.to_string()),
             db_path,
         );
-        ev.timestamp = extract_timestamp(&[co(row, &["ended_at", "started_at"]), Some(row)]);
+        ev.timestamp = extract_timestamp(&[co(row, &["ended_at", "started_at"]), Some(row)]).into();
         ev.input_tokens = d_in;
         ev.output_tokens = d_out;
         ev.cache_read_tokens = d_cr;
@@ -648,14 +648,14 @@ fn emit_summary_row(
             let mut ev = base.clone();
             // Suffix keeps each split row distinct and stable across rescans.
             if n > 1 {
-                ev.id = format!("{}-s{}", base.id, p);
+                ev.id = format!("{}-s{}", base.id, p).into();
             }
             ev.input_tokens = part.input_tokens;
             ev.output_tokens = part.output_tokens;
             ev.cache_read_tokens = part.cache_read_tokens;
             ev.cache_write_tokens = part.cache_write_tokens;
             ev.request_count = Some(part.request_count);
-            ev.timestamp = part.timestamp;
+            ev.timestamp = part.timestamp.into();
             if cache_reported {
                 ev.cache_reported = Some(true);
             }
@@ -669,7 +669,7 @@ fn emit_summary_row(
         }
     } else {
         let mut ev = base;
-        ev.timestamp = timestamp;
+        ev.timestamp = timestamp.into();
         ev.input_tokens = input;
         ev.output_tokens = output;
         ev.cache_read_tokens = cache_read;
@@ -889,7 +889,7 @@ fn read_messages_usage(conn: &rusqlite::Connection, db_path: &str, msg_table: &s
             None,
             db_path,
         );
-        ev.timestamp = extract_timestamp(&[Some(row)]);
+        ev.timestamp = extract_timestamp(&[Some(row)]).into();
         ev.input_tokens = b.input_tokens;
         ev.output_tokens = b.output_tokens;
         ev.cache_read_tokens = b.cache_read_tokens;
@@ -1091,6 +1091,7 @@ pub async fn parse_hermes_light(roots: Vec<String>) -> anyhow::Result<Vec<UsageE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Ts;
     use std::path::Path;
 
     const SCHEMA: &str = "
@@ -1156,10 +1157,10 @@ mod tests {
         assert_eq!(sum(&opus, |e| e.cache_read_tokens), 500.0);
         assert!((sum(&opus, |e| e.estimated_cost.unwrap_or(0.0)) - 0.05).abs() < 1e-9);
         assert_eq!(sum(&opus, |e| e.request_count.unwrap_or(0.0)), 3.0);
-        let times: HashSet<&str> = opus.iter().map(|e| e.timestamp.as_str()).collect();
+        let times: HashSet<&Ts> = opus.iter().map(|e| &e.timestamp).collect();
         assert_eq!(times.len(), 3);
         assert!(opus.iter().all(|e| e.workspace.as_deref() == Some("C:\\Dev\\Demo")));
-        assert!(opus.iter().all(|e| e.id.contains("-s")));
+        assert!(opus.iter().all(|e| e.id.to_str().contains("-s")));
         assert!(events.iter().all(|e| e.agent == AgentId::Hermes && e.source_path.ends_with("state.db")));
     }
 
@@ -1280,7 +1281,7 @@ mod tests {
         assert!((sum(&events, |e| e.estimated_cost.unwrap_or(0.0)) - 12.5).abs() < 1e-6);
         let busiest = events.iter().map(|e| e.request_count.unwrap_or(0.0)).fold(0.0_f64, f64::max);
         assert!(busiest < 100.0, "busiest minute {busiest}");
-        let days: HashSet<&str> = events.iter().map(|e| &e.timestamp[..10]).collect();
+        let days: HashSet<String> = events.iter().map(|e| e.timestamp.to_str()[..10].to_string()).collect();
         assert!(days.contains("2026-08-03"));
         assert!(days.contains("2026-08-04"));
     }

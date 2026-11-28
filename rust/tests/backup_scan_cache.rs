@@ -57,7 +57,7 @@ impl Drop for Fixture {
 
 fn evt(id: &str, f: impl FnOnce(&mut UsageEvent)) -> UsageEvent {
     let mut e = UsageEvent {
-        id: id.to_string(),
+        id: id.to_string().into(),
         agent: AgentId::Devin,
         model: None,
         timestamp: "2026-07-15T00:00:00.000Z".into(),
@@ -143,7 +143,7 @@ async fn scan_cache_drops_legacy_codex_proxy_rows_on_read_and_full_save_high_wat
     .unwrap();
 
     let loaded = load_scan_cache().await;
-    let mut ids: Vec<String> = loaded.iter().map(|e| e.id.clone()).collect();
+    let mut ids: Vec<String> = loaded.iter().map(|e| e.id.to_string()).collect();
     ids.sort();
     assert_eq!(
         ids,
@@ -231,7 +231,7 @@ async fn save_scan_cache_keeps_the_prior_agent_day_high_water_during_a_full_scan
     let loaded = load_scan_cache().await;
     let same_day: Vec<&UsageEvent> = loaded
         .iter()
-        .filter(|e| e.agent == AgentId::Routerlab && &e.timestamp[..10] == "2026-05-25")
+        .filter(|e| e.agent == AgentId::Routerlab && e.timestamp.starts_with("2026-05-25"))
         .collect();
     assert!(
         same_day.iter().map(|e| e.total_tokens).sum::<f64>() >= 5_100_000.0,

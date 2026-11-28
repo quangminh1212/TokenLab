@@ -218,17 +218,17 @@ fn compute_live_request_rate_uses_sliding_window_mean() {
     let now = tokenlab::util::js_date_parse("2026-07-27T12:00:00.000Z");
     let base = sample()[0].clone();
     let events = vec![
-        UsageEvent { id: "live-1".into(), timestamp: iso_ms(now - 30_000.0), request_count: Some(2.0), estimated: Some(false), ..base.clone() },
-        UsageEvent { id: "live-2".into(), timestamp: iso_ms(now - 90_000.0), request_count: Some(3.0), estimated: Some(false), ..base.clone() },
-        UsageEvent { id: "live-3".into(), timestamp: iso_ms(now - 150_000.0), request_count: Some(1.0), estimated: Some(false), ..base.clone() },
+        UsageEvent { id: "live-1".into(), timestamp: iso_ms(now - 30_000.0).into(), request_count: Some(2.0), estimated: Some(false), ..base.clone() },
+        UsageEvent { id: "live-2".into(), timestamp: iso_ms(now - 90_000.0).into(), request_count: Some(3.0), estimated: Some(false), ..base.clone() },
+        UsageEvent { id: "live-3".into(), timestamp: iso_ms(now - 150_000.0).into(), request_count: Some(1.0), estimated: Some(false), ..base.clone() },
         // > 3 min: excluded
-        UsageEvent { id: "old".into(), timestamp: iso_ms(now - 400_000.0), request_count: Some(100.0), estimated: Some(false), ..base.clone() },
+        UsageEvent { id: "old".into(), timestamp: iso_ms(now - 400_000.0).into(), request_count: Some(100.0), estimated: Some(false), ..base.clone() },
         // estimated rollup: skipped
-        UsageEvent { id: "daily-fat".into(), timestamp: iso_ms(now - 20_000.0), estimated: Some(true), request_count: Some(500.0), ..base.clone() },
+        UsageEvent { id: "daily-fat".into(), timestamp: iso_ms(now - 20_000.0).into(), estimated: Some(true), request_count: Some(500.0), ..base.clone() },
         // zero-token probe: skipped
         UsageEvent {
             id: "probe".into(),
-            timestamp: iso_ms(now - 10_000.0),
+            timestamp: iso_ms(now - 10_000.0).into(),
             estimated: Some(false),
             input_tokens: 0.0,
             output_tokens: 0.0,

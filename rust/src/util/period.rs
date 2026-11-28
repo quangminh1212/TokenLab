@@ -32,7 +32,7 @@ pub fn filter_by_period(
     events
         .iter()
         .filter(|e| {
-            let t = js_date_parse(&e.timestamp);
+            let t = e.timestamp.js_ms();
             if t.is_nan() {
                 return false;
             }
@@ -57,7 +57,7 @@ pub fn build_timestamp_index(events: &[UsageEvent]) -> Vec<f64> {
     events
         .iter()
         .map(|e| {
-            let t = js_date_parse(&e.timestamp);
+            let t = e.timestamp.js_ms();
             if t.is_nan() {
                 0.0
             } else {
@@ -242,7 +242,7 @@ mod tests {
     use super::*;
 
     fn ev(ts: &str) -> UsageEvent {
-        UsageEvent { timestamp: ts.to_string(), ..Default::default() }
+        UsageEvent { timestamp: ts.to_string().into(), ..Default::default() }
     }
 
     #[test]

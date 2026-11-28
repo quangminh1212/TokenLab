@@ -1,19 +1,15 @@
 //! Port of `src/tray.ts`.
 //!
 //! System tray icon while serve is running.
-//! Windows: PowerShell NotifyIcon (no native dependencies).
-//! Other platforms: no-op (returns `None`).
+//! Windows: in-process native Win32 notification icon (`Shell_NotifyIconW`) on a
+//! dedicated small-stack thread that blocks in `GetMessageW` (zero idle CPU, no
+//! child process). Other platforms: no-op (returns `None`).
 
-use crate::autostart::{icon_search_dirs, materialize_embedded_icon};
-use crate::util::{env_nonempty, open_browser};
+use crate::autostart::icon_search_dirs;
+use crate::util::env_nonempty;
 use chrono::{SecondsFormat, Utc};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tokio::sync::Notify;
 
 /// Handle returned by [`start_tray`]; `stop()` is idempotent.
 #[derive(Clone)]
@@ -65,407 +61,494 @@ fn log_error(message: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// icon
+// pure helpers (platform independent, unit-tested)
 
-fn resolve_icon_path() -> Option<String> {
-    let names = ["favicon.ico", "logo.png", "favicon-32x32.png"];
-    for dir in icon_search_dirs() {
-        for name in names {
-            let p = dir.join(name);
-            if p.exists() {
-                return Some(p.to_string_lossy().trim_start_matches("\\\\?\\").to_string());
-            }
+/// Truncate to at most `max` UTF-16 code units without splitting a surrogate pair.
+#[allow(dead_code)]
+fn utf16_truncated(s: &str, max: usize) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::with_capacity(max.min(s.len()));
+    let mut buf = [0u16; 2];
+    for ch in s.chars() {
+        let enc = ch.encode_utf16(&mut buf);
+        if out.len() + enc.len() > max {
+            break;
         }
+        out.extend_from_slice(enc);
     }
-    // Not next to the binary: fall back to the icon bundled in the executable.
-    materialize_embedded_icon()
+    out
 }
 
-// ---------------------------------------------------------------------------
-// PowerShell script
-
-const PS_TEMPLATE: &str = r##"
-$ErrorActionPreference = 'Continue'
-try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-[System.Windows.Forms.Application]::EnableVisualStyles()
-
-$icon = New-Object System.Windows.Forms.NotifyIcon
-$tip = '@@TOOLTIP@@'
-if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
-$icon.Text = $tip
-$icon.Visible = $true
-
-$iconPath = '@@ICON@@'.Trim()
-$loadedIcon = $false
-if ($iconPath -ne '' -and (Test-Path -LiteralPath $iconPath)) {
-  try {
-    if ($iconPath.ToLower().EndsWith('.ico')) {
-      $icon.Icon = New-Object System.Drawing.Icon($iconPath)
-    } else {
-      $bmp = [System.Drawing.Image]::FromFile($iconPath)
-      $h = (New-Object System.Drawing.Bitmap $bmp).GetHicon()
-      $icon.Icon = [System.Drawing.Icon]::FromHandle($h)
+/// Pick the ICO directory entry best matching `target` pixels: the smallest image
+/// that is at least `target` wide, else the largest. Returns `(offset, size)`.
+#[allow(dead_code)]
+fn pick_ico_entry(data: &[u8], target: u32) -> Option<(usize, usize)> {
+    if data.len() < 6 || data[0] != 0 || data[1] != 0 || data[2] != 1 || data[3] != 0 {
+        return None;
     }
-    $loadedIcon = $true
-    [Console]::Out.WriteLine("icon-loaded:$iconPath")
-  } catch {
-    [Console]::Out.WriteLine("icon-error:" + $_.Exception.Message)
-  }
-} else {
-  [Console]::Out.WriteLine("icon-missing:$iconPath")
-}
-if (-not $loadedIcon) {
-  $icon.Icon = [System.Drawing.SystemIcons]::Application
-}
-$icon.Visible = $true
-[Console]::Out.WriteLine("tray-visible")
-
-$menu = New-Object System.Windows.Forms.ContextMenuStrip
-$openItem = New-Object System.Windows.Forms.ToolStripMenuItem('Open Dashboard')
-$sep = New-Object System.Windows.Forms.ToolStripSeparator
-$quitItem = New-Object System.Windows.Forms.ToolStripMenuItem('Quit')
-[void]$menu.Items.Add($openItem)
-[void]$menu.Items.Add($sep)
-[void]$menu.Items.Add($quitItem)
-$icon.ContextMenuStrip = $menu
-
-function Emit-Open {
-  [Console]::Out.WriteLine('open')
-  [Console]::Out.Flush()
-}
-function Emit-Quit {
-  try { $icon.Visible = $false; $icon.Dispose() } catch {}
-  [Console]::Out.WriteLine('quit')
-  [Console]::Out.Flush()
-  [System.Windows.Forms.Application]::Exit()
-}
-
-$openItem.add_Click({ Emit-Open })
-$icon.add_DoubleClick({ Emit-Open })
-$icon.add_Click({
-  param($sender, $e)
-  if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Emit-Open }
-})
-$quitItem.add_Click({ Emit-Quit })
-
-# Hidden form hosts the WinForms message loop (required for NotifyIcon)
-$form = New-Object System.Windows.Forms.Form
-$form.Text = '@@TITLE@@'
-$form.WindowState = 'Minimized'
-$form.ShowInTaskbar = $false
-$form.Opacity = 0
-$form.ShowIcon = $false
-$form.FormBorderStyle = 'FixedToolWindow'
-$form.Size = New-Object System.Drawing.Size(1, 1)
-$form.add_Load({
-  $icon.Visible = $true
-  try {
-    $icon.ShowBalloonTip(5000, '@@TITLE@@', 'TokenLab is running. Click the tray icon to open the dashboard.', [System.Windows.Forms.ToolTipIcon]::Info)
-  } catch {}
-  [Console]::Out.WriteLine('form-loaded')
-  [Console]::Out.Flush()
-})
-$form.add_FormClosing({
-  try { $icon.Visible = $false; $icon.Dispose() } catch {}
-})
-$form.add_Shown({ $form.Hide() })
-
-# Exit when the server process is gone (panic exit / taskkill leave no other signal)
-$parentPid = @@PPID@@
-$watch = New-Object System.Windows.Forms.Timer
-$watch.Interval = 3000
-$watch.add_Tick({
-  if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) {
-    try { $icon.Visible = $false; $icon.Dispose() } catch {}
-    [System.Windows.Forms.Application]::Exit()
-  }
-})
-$watch.Start()
-
-[System.Windows.Forms.Application]::Run($form)
-"##;
-
-/// Build a compact PowerShell script that hosts a NotifyIcon with context menu.
-/// Communicates via stdout lines: open | quit
-fn build_ps_script(_url: &str, title: &str, tooltip: &str, icon_path: Option<&str>) -> String {
-    let esc = |s: &str| s.replace('\'', "''");
-    let title = esc(title);
-    let tooltip = esc(tooltip);
-    let icon = icon_path.map(esc).unwrap_or_default();
-    // Order matters: user-controlled values are substituted last-to-first so a
-    // value containing a later placeholder cannot be re-expanded.
-    PS_TEMPLATE
-        .replace("@@PPID@@", &std::process::id().to_string())
-        .replace("@@TITLE@@", "\u{0}TITLE\u{0}")
-        .replace("@@ICON@@", "\u{0}ICON\u{0}")
-        .replace("@@TOOLTIP@@", "\u{0}TOOLTIP\u{0}")
-        .replace("\u{0}TOOLTIP\u{0}", &tooltip)
-        .replace("\u{0}ICON\u{0}", &icon)
-        .replace("\u{0}TITLE\u{0}", &title)
-        .trim()
-        .to_string()
-}
-
-// ---------------------------------------------------------------------------
-// supervisor loop
-
-const MAX_TRAY_RESTARTS: u32 = 20;
-
-/// Write the tray script with a UTF-8 BOM: Windows PowerShell 5.1 decodes a
-/// BOM-less `.ps1` with the ANSI code page (mojibake / broken non-ASCII paths).
-fn write_script_file(path: &str, script: &str) -> std::io::Result<()> {
-    let mut bytes: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
-    bytes.extend_from_slice(script.as_bytes());
-    std::fs::write(path, bytes)
-}
-
-/// Best-effort removal of `tray-*.ps1` files left by crashed/killed runs.
-fn sweep_stale_scripts(dir: &Path, keep: &Path) {
-    let rd = match std::fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-    for ent in rd.flatten() {
-        let p = ent.path();
-        if p == keep {
+    let count = u16::from_le_bytes([data[4], data[5]]) as usize;
+    let mut best: Option<(u32, usize, usize)> = None; // (width, offset, size)
+    for i in 0..count {
+        let e = data.get(6 + i * 16..6 + i * 16 + 16)?;
+        let w = if e[0] == 0 { 256 } else { e[0] as u32 };
+        let size = u32::from_le_bytes([e[8], e[9], e[10], e[11]]) as usize;
+        let off = u32::from_le_bytes([e[12], e[13], e[14], e[15]]) as usize;
+        if size == 0 || off.checked_add(size)? > data.len() {
             continue;
         }
-        let name = ent.file_name().to_string_lossy().to_string();
-        if !(name.starts_with("tray-") && name.ends_with(".ps1")) {
-            continue;
-        }
-        let old = ent
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.elapsed().ok())
-            .map(|d| d > Duration::from_secs(24 * 3600))
-            .unwrap_or(false);
-        if old {
-            let _ = std::fs::remove_file(&p);
-        }
-    }
-}
-
-struct TrayState {
-    url: String,
-    on_quit: Arc<dyn Fn() + Send + Sync>,
-    script_path: String,
-    script: String,
-    child_pid: AtomicU32,
-    stopped: AtomicBool,
-    user_quit: AtomicBool,
-    restart_attempts: AtomicU32,
-    child_alive: AtomicBool,
-    wake: Notify,
-}
-
-impl TrayState {
-    fn cleanup_script(&self) {
-        if !self.script_path.is_empty() {
-            let _ = std::fs::remove_file(&self.script_path);
-        }
-    }
-
-    fn should_stop(&self) -> bool {
-        self.stopped.load(Ordering::SeqCst) || self.user_quit.load(Ordering::SeqCst)
-    }
-
-    fn stop(&self) {
-        if self.stopped.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        // Wakes the supervisor loop: it kills the child / cancels a pending restart.
-        self.wake.notify_one();
-        self.cleanup_script();
-    }
-
-    /// Synchronously kill the PowerShell tray host (used right before
-    /// `process::exit`, when the async kill in `tray_loop` would never run).
-    fn kill_child_blocking(&self) {
-        let pid = self.child_pid.load(Ordering::SeqCst);
-        if pid == 0 {
-            return;
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(0x0800_0000)
-                .status();
-        }
-    }
-
-    /// Make sure the script exists (Temp cleanup / AV may have removed it).
-    fn ensure_script(&self) {
-        if !std::path::Path::new(&self.script_path).exists() {
-            if let Err(e) = write_script_file(&self.script_path, &self.script) {
-                log_error(&format!("Failed to rewrite tray script: {e}"));
-            }
-        }
-    }
-
-    /// Sleep for `delay`, returning early (true) when stop was requested.
-    async fn interruptible_sleep(&self, delay: Duration) -> bool {
-        if self.should_stop() {
-            return true;
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(delay) => self.should_stop(),
-            _ = self.wake.notified() => true,
-        }
-    }
-}
-
-async fn pump_lines<R: AsyncRead + Unpin>(reader: R, state: Arc<TrayState>, is_stdout: bool) {
-    let mut lines = BufReader::new(reader).lines();
-    while let Ok(Some(raw)) = lines.next_line().await {
-        let line = raw.trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-        if !is_stdout {
-            log_error(&format!("Tray stderr: {line}"));
-            continue;
-        }
-        log(&format!("Tray stdout: {line}"));
-        if line == "open" {
-            open_browser(&state.url);
-        } else if line == "quit" {
-            state.user_quit.store(true, Ordering::SeqCst);
-            state.stop();
-            (state.on_quit)();
-        }
-    }
-}
-
-fn spawn_powershell(script_path: &str) -> std::io::Result<tokio::process::Child> {
-    // -STA is required for WinForms NotifyIcon message pump
-    let mut cmd = tokio::process::Command::new("powershell.exe");
-    cmd.args([
-        "-NoProfile",
-        "-STA",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-File",
-        script_path,
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW (windowsHide)
-    }
-    cmd.spawn()
-}
-
-async fn tray_loop(state: Arc<TrayState>) {
-    loop {
-        if state.should_stop() {
-            return;
-        }
-        state.ensure_script();
-        match spawn_powershell(&state.script_path) {
-            Err(e) => {
-                log_error(&format!("Failed to spawn PowerShell tray: {e}"));
-                let attempts = state.restart_attempts.load(Ordering::SeqCst);
-                if !state.should_stop() && attempts < MAX_TRAY_RESTARTS {
-                    let attempts = attempts + 1;
-                    state.restart_attempts.store(attempts, Ordering::SeqCst);
-                    let delay = std::cmp::min(30_000u64, 2_000 * attempts as u64);
-                    if state.interruptible_sleep(Duration::from_millis(delay)).await {
-                        return;
-                    }
-                    continue;
+        let better = match best {
+            None => true,
+            Some((bw, _, _)) => {
+                if bw >= target {
+                    w >= target && w < bw
+                } else {
+                    w > bw
                 }
-                state.cleanup_script();
+            }
+        };
+        if better {
+            best = Some((w, off, size));
+        }
+    }
+    best.map(|(_, o, s)| (o, s))
+}
+
+#[cfg(windows)]
+fn resolve_icon_bytes() -> Vec<u8> {
+    for dir in icon_search_dirs() {
+        if let Ok(b) = std::fs::read(dir.join("favicon.ico")) {
+            if pick_ico_entry(&b, 16).is_some() {
+                return b;
+            }
+        }
+    }
+    include_bytes!("../../web/public/assets/favicon.ico").to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// Windows implementation
+
+#[cfg(windows)]
+mod win {
+    use super::*;
+    use crate::util::open_browser;
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    const WM_NULL: u32 = 0x0000;
+    const WM_DESTROY: u32 = 0x0002;
+    const WM_CLOSE: u32 = 0x0010;
+    const WM_COMMAND: u32 = 0x0111;
+    const WM_LBUTTONUP: u32 = 0x0202;
+    const WM_RBUTTONUP: u32 = 0x0205;
+    const WM_TRAYICON: u32 = 0x8000 + 1;
+    const ID_OPEN: usize = 1;
+    const ID_QUIT: usize = 2;
+    const NIM_ADD: u32 = 0;
+    const NIM_DELETE: u32 = 2;
+    const NIF_MESSAGE: u32 = 1;
+    const NIF_ICON: u32 = 2;
+    const NIF_TIP: u32 = 4;
+    const NIF_INFO: u32 = 0x10;
+    const NIIF_INFO: u32 = 1;
+    const MF_STRING: u32 = 0;
+    const MF_SEPARATOR: u32 = 0x800;
+    const TPM_RIGHTBUTTON: u32 = 0x2;
+    const TPM_BOTTOMALIGN: u32 = 0x20;
+    const SM_CXSMICON: i32 = 49;
+    const IDI_APPLICATION: usize = 32512;
+    const TRAY_UID: u32 = 1;
+
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    #[repr(C)]
+    struct Msg {
+        hwnd: usize,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+        time: u32,
+        pt: Point,
+    }
+
+    type WndProc = unsafe extern "system" fn(usize, u32, usize, isize) -> isize;
+
+    #[repr(C)]
+    struct WndClassW {
+        style: u32,
+        wnd_proc: WndProc,
+        cls_extra: i32,
+        wnd_extra: i32,
+        instance: usize,
+        icon: usize,
+        cursor: usize,
+        background: usize,
+        menu_name: *const u16,
+        class_name: *const u16,
+    }
+
+    #[repr(C)]
+    struct NotifyIconDataW {
+        cb_size: u32,
+        hwnd: usize,
+        uid: u32,
+        flags: u32,
+        callback_message: u32,
+        icon: usize,
+        tip: [u16; 128],
+        state: u32,
+        state_mask: u32,
+        info: [u16; 256],
+        timeout_or_version: u32,
+        info_title: [u16; 64],
+        info_flags: u32,
+        guid_item: [u8; 16],
+        balloon_icon: usize,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn RegisterClassW(wc: *const WndClassW) -> u16;
+        fn CreateWindowExW(
+            ex_style: u32,
+            class_name: *const u16,
+            window_name: *const u16,
+            style: u32,
+            x: i32,
+            y: i32,
+            w: i32,
+            h: i32,
+            parent: usize,
+            menu: usize,
+            instance: usize,
+            param: *const c_void,
+        ) -> usize;
+        fn DefWindowProcW(hwnd: usize, msg: u32, wp: usize, lp: isize) -> isize;
+        fn GetMessageW(msg: *mut Msg, hwnd: usize, min: u32, max: u32) -> i32;
+        fn TranslateMessage(msg: *const Msg) -> i32;
+        fn DispatchMessageW(msg: *const Msg) -> isize;
+        fn PostMessageW(hwnd: usize, msg: u32, wp: usize, lp: isize) -> i32;
+        fn PostQuitMessage(code: i32);
+        fn DestroyWindow(hwnd: usize) -> i32;
+        fn RegisterWindowMessageW(s: *const u16) -> u32;
+        fn CreatePopupMenu() -> usize;
+        fn AppendMenuW(menu: usize, flags: u32, id: usize, text: *const u16) -> i32;
+        fn TrackPopupMenu(
+            menu: usize,
+            flags: u32,
+            x: i32,
+            y: i32,
+            reserved: i32,
+            hwnd: usize,
+            rect: *const c_void,
+        ) -> i32;
+        fn DestroyMenu(menu: usize) -> i32;
+        fn GetCursorPos(pt: *mut Point) -> i32;
+        fn SetForegroundWindow(hwnd: usize) -> i32;
+        fn GetSystemMetrics(index: i32) -> i32;
+        fn LoadIconW(instance: usize, name: usize) -> usize;
+        fn CreateIconFromResourceEx(
+            bits: *const u8,
+            size: u32,
+            is_icon: i32,
+            version: u32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> usize;
+        fn DestroyIcon(icon: usize) -> i32;
+    }
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn Shell_NotifyIconW(message: u32, data: *const NotifyIconDataW) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetModuleHandleW(name: *const u16) -> usize;
+    }
+
+    struct Shared {
+        url: String,
+        title: String,
+        tooltip: String,
+        on_quit: Arc<dyn Fn() + Send + Sync>,
+        hwnd: AtomicUsize,
+        hicon: AtomicUsize,
+        taskbar_msg: AtomicU32,
+        stopped: AtomicBool,
+    }
+
+    static SHARED: Mutex<Option<Arc<Shared>>> = Mutex::new(None);
+
+    fn shared() -> Option<Arc<Shared>> {
+        SHARED.lock().ok().and_then(|g| g.clone())
+    }
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn make_data(sh: &Shared, hwnd: usize) -> NotifyIconDataW {
+        // SAFETY: plain-old-data struct, all-zero is a valid value.
+        let mut d: NotifyIconDataW = unsafe { std::mem::zeroed() };
+        d.cb_size = std::mem::size_of::<NotifyIconDataW>() as u32;
+        d.hwnd = hwnd;
+        d.uid = TRAY_UID;
+        d.flags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        d.callback_message = WM_TRAYICON;
+        d.icon = sh.hicon.load(Ordering::SeqCst);
+        let tip = utf16_truncated(&sh.tooltip, 63);
+        d.tip[..tip.len()].copy_from_slice(&tip);
+        d
+    }
+
+    fn add_icon(sh: &Shared, hwnd: usize, balloon: bool) -> bool {
+        let mut d = make_data(sh, hwnd);
+        if balloon {
+            d.flags |= NIF_INFO;
+            let text = utf16_truncated(
+                "TokenLab is running. Click the tray icon to open the dashboard.",
+                255,
+            );
+            d.info[..text.len()].copy_from_slice(&text);
+            let title = utf16_truncated(&sh.title, 63);
+            d.info_title[..title.len()].copy_from_slice(&title);
+            d.info_flags = NIIF_INFO;
+            d.timeout_or_version = 5000;
+        }
+        // SAFETY: d is fully initialised and outlives the call.
+        unsafe { Shell_NotifyIconW(NIM_ADD, &d) != 0 }
+    }
+
+    fn delete_icon(sh: &Shared) {
+        let hwnd = sh.hwnd.load(Ordering::SeqCst);
+        if hwnd == 0 {
+            return;
+        }
+        // SAFETY: plain-old-data struct, all-zero is a valid value.
+        let mut d: NotifyIconDataW = unsafe { std::mem::zeroed() };
+        d.cb_size = std::mem::size_of::<NotifyIconDataW>() as u32;
+        d.hwnd = hwnd;
+        d.uid = TRAY_UID;
+        unsafe {
+            Shell_NotifyIconW(NIM_DELETE, &d);
+        }
+    }
+
+    fn load_icon() -> usize {
+        let bytes = resolve_icon_bytes();
+        // SAFETY: FFI; the slice is valid for the call.
+        unsafe {
+            let cx = GetSystemMetrics(SM_CXSMICON).max(16);
+            if let Some((off, size)) = pick_ico_entry(&bytes, cx as u32) {
+                let h = CreateIconFromResourceEx(
+                    bytes[off..].as_ptr(),
+                    size as u32,
+                    1,
+                    0x0003_0000,
+                    cx,
+                    cx,
+                    0,
+                );
+                if h != 0 {
+                    return h;
+                }
+            }
+            LoadIconW(0, IDI_APPLICATION)
+        }
+    }
+
+    unsafe fn show_menu(hwnd: usize) {
+        let menu = CreatePopupMenu();
+        if menu == 0 {
+            return;
+        }
+        AppendMenuW(menu, MF_STRING, ID_OPEN, wide("Open Dashboard").as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+        AppendMenuW(menu, MF_STRING, ID_QUIT, wide("Quit").as_ptr());
+        let mut pt = Point { x: 0, y: 0 };
+        GetCursorPos(&mut pt);
+        // Required so the menu dismisses when the user clicks elsewhere.
+        SetForegroundWindow(hwnd);
+        TrackPopupMenu(
+            menu,
+            TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
+            pt.x,
+            pt.y,
+            0,
+            hwnd,
+            std::ptr::null(),
+        );
+        PostMessageW(hwnd, WM_NULL, 0, 0);
+        DestroyMenu(menu);
+    }
+
+    unsafe extern "system" fn wnd_proc(hwnd: usize, msg: u32, wp: usize, lp: isize) -> isize {
+        let sh = match shared() {
+            Some(s) => s,
+            None => return DefWindowProcW(hwnd, msg, wp, lp),
+        };
+        match msg {
+            WM_TRAYICON => {
+                match (lp as u32) & 0xFFFF {
+                    WM_LBUTTONUP => open_browser(&sh.url),
+                    WM_RBUTTONUP => show_menu(hwnd),
+                    _ => {}
+                }
+                0
+            }
+            WM_COMMAND => {
+                match wp & 0xFFFF {
+                    ID_OPEN => open_browser(&sh.url),
+                    ID_QUIT => {
+                        log("Tray quit");
+                        delete_icon(&sh);
+                        sh.stopped.store(true, Ordering::SeqCst);
+                        (sh.on_quit)();
+                        DestroyWindow(hwnd);
+                    }
+                    _ => {}
+                }
+                0
+            }
+            WM_CLOSE => {
+                DestroyWindow(hwnd);
+                0
+            }
+            WM_DESTROY => {
+                delete_icon(&sh);
+                PostQuitMessage(0);
+                0
+            }
+            m if m != 0 && m == sh.taskbar_msg.load(Ordering::SeqCst) => {
+                // Explorer restarted: re-add the icon.
+                if !sh.stopped.load(Ordering::SeqCst) {
+                    let ok = add_icon(&sh, hwnd, false);
+                    log(&format!("TaskbarCreated: icon re-added ok={ok}"));
+                }
+                0
+            }
+            _ => DefWindowProcW(hwnd, msg, wp, lp),
+        }
+    }
+
+    fn run_thread(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
+        unsafe {
+            let hinst = GetModuleHandleW(std::ptr::null());
+            let class = wide("TokenLabTrayWindow");
+            let wc = WndClassW {
+                style: 0,
+                wnd_proc,
+                cls_extra: 0,
+                wnd_extra: 0,
+                instance: hinst,
+                icon: 0,
+                cursor: 0,
+                background: 0,
+                menu_name: std::ptr::null(),
+                class_name: class.as_ptr(),
+            };
+            RegisterClassW(&wc);
+            sh.taskbar_msg.store(
+                RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
+                Ordering::SeqCst,
+            );
+            // Ordinary (never shown) top-level window: message-only windows do not
+            // receive the TaskbarCreated broadcast.
+            let title = wide(&sh.title);
+            let hwnd = CreateWindowExW(
+                0,
+                class.as_ptr(),
+                title.as_ptr(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                hinst,
+                std::ptr::null(),
+            );
+            if hwnd == 0 {
+                log_error("CreateWindowExW failed for tray window");
+                let _ = ready.send(false);
                 return;
             }
-            Ok(mut child) => {
-                log(&format!("PowerShell child spawned, pid: {}", child.id().unwrap_or(0)));
-                state.child_alive.store(true, Ordering::SeqCst);
-                state.child_pid.store(child.id().unwrap_or(0), Ordering::SeqCst);
-                // After a successful spawn, slowly decay restart counter
-                {
-                    let st = state.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(60)).await;
-                        if !st.stopped.load(Ordering::SeqCst)
-                            && st.child_alive.load(Ordering::SeqCst)
-                        {
-                            let cur = st.restart_attempts.load(Ordering::SeqCst);
-                            if cur > 0 {
-                                st.restart_attempts.store(cur - 1, Ordering::SeqCst);
-                            }
-                        }
-                    });
-                }
-                let mut readers = Vec::new();
-                if let Some(out) = child.stdout.take() {
-                    readers.push(tokio::spawn(pump_lines(out, state.clone(), true)));
-                }
-                if let Some(err) = child.stderr.take() {
-                    readers.push(tokio::spawn(pump_lines(err, state.clone(), false)));
-                }
-
-                let code: Option<i32> = tokio::select! {
-                    status = child.wait() => match status {
-                        Ok(s) => s.code(),
-                        Err(e) => {
-                            log_error(&format!("Tray child error: {e}"));
-                            None
-                        }
-                    },
-                    _ = state.wake.notified() => {
-                        let _ = child.start_kill();
-                        let _ = child.wait().await;
-                        None
-                    }
-                };
-                state.child_alive.store(false, Ordering::SeqCst);
-                state.child_pid.store(0, Ordering::SeqCst);
-                // Drain remaining stdout so a final "quit"/"open" line is not lost.
-                for r in readers {
-                    let _ = tokio::time::timeout(Duration::from_millis(500), r).await;
-                }
-                log(&format!(
-                    "Tray child exited with code: {} userQuit: {} stopped: {}",
-                    code.map(|c| c.to_string()).unwrap_or_else(|| "null".to_string()),
-                    state.user_quit.load(Ordering::SeqCst),
-                    state.stopped.load(Ordering::SeqCst)
-                ));
-                if state.should_stop() {
-                    state.cleanup_script();
-                    return;
-                }
-                // Unexpected exit (Explorer crash, PowerShell killed, etc.) - revive tray
-                let attempts = state.restart_attempts.load(Ordering::SeqCst);
-                if attempts >= MAX_TRAY_RESTARTS {
-                    log_error("Tray restart limit reached; server keeps running without tray");
-                    state.cleanup_script();
-                    return;
-                }
-                let attempts = attempts + 1;
-                state.restart_attempts.store(attempts, Ordering::SeqCst);
-                let delay = std::cmp::min(30_000u64, 1_500 * attempts as u64);
-                log(&format!(
-                    "Tray unexpected exit - restarting in {delay}ms (attempt {attempts}/{MAX_TRAY_RESTARTS})"
-                ));
-                if state.interruptible_sleep(Duration::from_millis(delay)).await {
-                    return;
-                }
+            sh.hwnd.store(hwnd, Ordering::SeqCst);
+            let hicon = load_icon();
+            sh.hicon.store(hicon, Ordering::SeqCst);
+            if !add_icon(&sh, hwnd, true) {
+                log_error("Shell_NotifyIconW(NIM_ADD) failed");
+            } else {
+                log("tray-visible");
             }
+            let _ = ready.send(true);
+
+            let mut msg: Msg = std::mem::zeroed();
+            while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            if hicon != 0 {
+                DestroyIcon(hicon);
+            }
+            sh.hwnd.store(0, Ordering::SeqCst);
         }
+        log("Tray thread exited");
+    }
+
+    pub fn start(opts: TrayOptions, title: String, tooltip: String) -> Option<TrayHandle> {
+        let sh = Arc::new(Shared {
+            url: opts.url,
+            title,
+            tooltip,
+            on_quit: opts.on_quit,
+            hwnd: AtomicUsize::new(0),
+            hicon: AtomicUsize::new(0),
+            taskbar_msg: AtomicU32::new(0),
+            stopped: AtomicBool::new(false),
+        });
+        if let Ok(mut g) = SHARED.lock() {
+            *g = Some(sh.clone());
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let th = sh.clone();
+        let spawned = std::thread::Builder::new()
+            .name("tokenlab-tray".into())
+            .stack_size(256 * 1024)
+            .spawn(move || run_thread(th, tx));
+        if let Err(e) = spawned {
+            log_error(&format!("Failed to spawn tray thread: {e}"));
+            return None;
+        }
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(true) => {}
+            _ => return None,
+        }
+        let st = sh.clone();
+        Some(TrayHandle {
+            stop_fn: Arc::new(move || {
+                if st.stopped.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                // Remove the icon synchronously (process may exit right after),
+                // then let the tray thread tear its window down.
+                delete_icon(&st);
+                let hwnd = st.hwnd.load(Ordering::SeqCst);
+                if hwnd != 0 {
+                    unsafe {
+                        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                    }
+                }
+            }),
+        })
     }
 }
 
@@ -482,62 +565,24 @@ pub async fn start_tray(opts: TrayOptions) -> Option<TrayHandle> {
 
     let title = opts
         .title
+        .clone()
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "TokenLab".to_string());
     let tooltip = opts
         .tooltip
+        .clone()
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "TokenLab \u{2014} click to open dashboard".to_string());
-    let icon_path = resolve_icon_path();
-    log(&format!(
-        "Resolved icon path: {}",
-        icon_path.clone().unwrap_or_else(|| "null".to_string())
-    ));
-    let script = build_ps_script(&opts.url, &title, &tooltip, icon_path.as_deref());
 
-    // Write script to a temp .ps1 - more reliable than -Command with long scripts
-    let script_path = {
-        let dir = std::env::temp_dir().join("tokenlab");
-        let res = std::fs::create_dir_all(&dir).and_then(|_| {
-            let p = dir.join(format!("tray-{}.ps1", std::process::id()));
-            sweep_stale_scripts(&dir, &p);
-            write_script_file(&p.to_string_lossy(), &script).map(|_| p)
-        });
-        match res {
-            Ok(p) => {
-                let p = p.to_string_lossy().to_string();
-                log(&format!("Tray script written: {} bytes: {}", p, script.encode_utf16().count()));
-                p
-            }
-            Err(e) => {
-                log_error(&format!("Failed to write tray script: {e}"));
-                return None;
-            }
-        }
-    };
-
-    let state = Arc::new(TrayState {
-        url: opts.url,
-        on_quit: opts.on_quit,
-        script_path,
-        script,
-        child_pid: AtomicU32::new(0),
-        stopped: AtomicBool::new(false),
-        user_quit: AtomicBool::new(false),
-        restart_attempts: AtomicU32::new(0),
-        child_alive: AtomicBool::new(false),
-        wake: Notify::new(),
-    });
-
-    tokio::spawn(tray_loop(state.clone()));
-
-    let st = state.clone();
-    Some(TrayHandle {
-        stop_fn: Arc::new(move || {
-            st.stop();
-            st.kill_child_blocking();
-        }),
-    })
+    #[cfg(windows)]
+    {
+        win::start(opts, title, tooltip)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (opts, title, tooltip);
+        None
+    }
 }
 
 #[cfg(test)]
@@ -545,19 +590,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ps_script_escapes_and_substitutes() {
-        let s = build_ps_script("http://x/", "Tok'en", "tip", Some("C:\\a'b\\favicon.ico"));
-        assert!(s.starts_with("$ErrorActionPreference = 'Continue'"));
-        assert!(s.contains("$tip = 'tip'"));
-        assert!(s.contains("$form.Text = 'Tok''en'"));
-        assert!(s.contains("$iconPath = 'C:\\a''b\\favicon.ico'.Trim()"));
-        assert!(!s.contains("@@"));
-        assert!(s.ends_with("[System.Windows.Forms.Application]::Run($form)"));
+    fn tooltip_truncates_on_utf16_boundary() {
+        let s = "a".repeat(70);
+        assert_eq!(utf16_truncated(&s, 63).len(), 63);
+        // 62 units + a surrogate pair (2 units) would exceed 63: pair dropped whole.
+        let s = format!("{}\u{1F600}", "a".repeat(62));
+        assert_eq!(utf16_truncated(&s, 63).len(), 62);
+        assert_eq!(utf16_truncated("TokenLab \u{2014} x", 63).len(), 12);
+    }
+
+    fn ico(entries: &[(u8, usize, usize)], total: usize) -> Vec<u8> {
+        let mut d = vec![0, 0, 1, 0, entries.len() as u8, 0];
+        for (w, off, size) in entries {
+            d.extend_from_slice(&[*w, *w, 0, 0, 1, 0, 32, 0]);
+            d.extend_from_slice(&(*size as u32).to_le_bytes());
+            d.extend_from_slice(&(*off as u32).to_le_bytes());
+        }
+        d.resize(total, 0);
+        d
     }
 
     #[test]
-    fn ps_script_without_icon() {
-        let s = build_ps_script("u", "T", "t", None);
-        assert!(s.contains("$iconPath = ''.Trim()"));
+    fn ico_entry_selection() {
+        let d = ico(&[(16, 100, 10), (32, 110, 10), (0, 120, 10)], 200);
+        assert_eq!(pick_ico_entry(&d, 16), Some((100, 10)));
+        assert_eq!(pick_ico_entry(&d, 20), Some((110, 10)));
+        assert_eq!(pick_ico_entry(&d, 300), Some((120, 10)));
+        // out-of-range entry skipped
+        let d = ico(&[(16, 500, 10), (32, 110, 10)], 200);
+        assert_eq!(pick_ico_entry(&d, 16), Some((110, 10)));
+        assert_eq!(pick_ico_entry(b"nope", 16), None);
     }
 }

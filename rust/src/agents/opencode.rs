@@ -278,10 +278,10 @@ fn parse_opencode_record(
     ]);
 
     let event = apply_pricing(UsageEvent {
-        id: stable_id(&["opencode", key.as_str()]),
+        id: stable_id(&["opencode", key.as_str()]).into(),
         agent: AgentId::Opencode,
         model: model.map(Into::into),
-        timestamp,
+        timestamp: timestamp.into(),
         input_tokens: buckets.input_tokens,
         output_tokens: buckets.output_tokens,
         cache_read_tokens: buckets.cache_read_tokens,
@@ -739,10 +739,10 @@ fn parse_open_code_database_blocking(db_path: &str, index: &mut EventIndex) -> r
 
         let key = format!("session-rollup:{session_id}");
         let event = apply_pricing(UsageEvent {
-            id: stable_id(&["opencode", key.as_str()]),
+            id: stable_id(&["opencode", key.as_str()]).into(),
             agent: AgentId::Opencode,
             model: model.map(Into::into),
-            timestamp: extract_timestamp(&[rollup.updated_at.as_ref(), rollup.created_at.as_ref()]),
+            timestamp: extract_timestamp(&[rollup.updated_at.as_ref(), rollup.created_at.as_ref()]).into(),
             input_tokens,
             output_tokens,
             cache_read_tokens,

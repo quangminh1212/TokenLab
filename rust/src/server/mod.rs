@@ -65,7 +65,7 @@ use crate::pricing::{
 };
 use crate::process_guard::write_heartbeat;
 use crate::rate_guard::{resolve_rate_spec, RateConfigInput};
-use crate::types::{AgentId, AgentStatus, GroupBy, ModelRate, UsageEvent};
+use crate::types::{AgentId, AgentStatus, EventId, GroupBy, ModelRate, Ts, UsageEvent};
 use crate::util::{
     app_data_dir, build_timestamp_index, cwd_string, env_nonempty, filter_by_period,
     filter_by_period_sorted_detailed, sorted_period_range, host_platform, js_date_parse, js_num_to_string, js_number_from_str,
@@ -287,15 +287,15 @@ fn usage_source_key(source_path: &str) -> String {
 }
 
 fn dedupe_fresh_by_id(fresh: &[UsageEvent]) -> Vec<UsageEvent> {
-    let mut by_id: IndexMap<&str, &UsageEvent> = IndexMap::new();
+    let mut by_id: IndexMap<&EventId, &UsageEvent> = IndexMap::new();
     for event in fresh {
         if event.id.is_empty() {
             continue;
         }
-        match by_id.get_mut(event.id.as_str()) {
+        match by_id.get_mut(&event.id) {
             Some(slot) => *slot = prefer_richer_event(*slot, event),
             None => {
-                by_id.insert(event.id.as_str(), event);
+                by_id.insert(&event.id, event);
             }
         }
     }
@@ -372,7 +372,7 @@ pub fn apply_periodic_light_delta(
     fresh_by_agent: &IndexMap<String, Vec<UsageEvent>>,
 ) -> (Vec<UsageEvent>, Vec<f64>) {
     let mut replace_paths: HashMap<&str, HashSet<String>> = HashMap::new();
-    let mut replace_ids: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut replace_ids: HashMap<&str, HashSet<&EventId>> = HashMap::new();
     let mut small_agents: IndexSet<&str> = IndexSet::new();
     for (agent, fresh) in fresh_by_agent {
         if fresh.is_empty() {
@@ -383,7 +383,7 @@ pub fn apply_periodic_light_delta(
             let mut ids = HashSet::new();
             for event in fresh {
                 if !event.id.is_empty() {
-                    ids.insert(event.id.as_str());
+                    ids.insert(&event.id);
                 }
                 let source = usage_source_key(&event.source_path);
                 if !source.is_empty() {
@@ -410,7 +410,7 @@ pub fn apply_periodic_light_delta(
             if !source.is_empty() && paths.contains(&source) {
                 continue;
             }
-            if !event.id.is_empty() && replace_ids.get(agent).map_or(false, |ids| ids.contains(event.id.as_str())) {
+            if !event.id.is_empty() && replace_ids.get(agent).map_or(false, |ids| ids.contains(&event.id)) {
                 let key = format!("{}|{}", agent, event.id);
                 let richer = match shadowed.get(&key) {
                     Some(existing) => prefer_richer_event(existing, event).clone(),
@@ -436,7 +436,7 @@ pub fn apply_periodic_light_delta(
     }
     if !use_ts {
         for event in &kept {
-            let parsed = js_date_parse(&event.timestamp);
+            let parsed = event.timestamp.js_ms();
             kept_ts.push(if parsed.is_nan() { 0.0 } else { parsed });
         }
     }
@@ -759,10 +759,10 @@ fn usage_sig(e: &UsageEvent) -> String {
 
 /// True when every fresh row is already in the cache with the same totals.
 fn light_fresh_already_cached(fresh_by_agent: &IndexMap<String, Vec<UsageEvent>>, prev: &[UsageEvent]) -> bool {
-    let mut need: HashMap<&str, String> = HashMap::new();
+    let mut need: HashMap<&EventId, String> = HashMap::new();
     for events in fresh_by_agent.values() {
         for event in events {
-            need.insert(event.id.as_str(), usage_sig(event));
+            need.insert(&event.id, usage_sig(event));
         }
     }
     if need.is_empty() {
@@ -770,7 +770,7 @@ fn light_fresh_already_cached(fresh_by_agent: &IndexMap<String, Vec<UsageEvent>>
     }
     let mut found = 0usize;
     for event in prev {
-        let want = match need.get(event.id.as_str()) {
+        let want = match need.get(&event.id) {
             Some(w) => w,
             None => continue,
         };
@@ -883,14 +883,14 @@ fn rebuild_merge(
 
 fn refresh_agent_event_counts(base: &[AgentStatus], cache: &[UsageEvent]) -> Vec<AgentStatus> {
     let mut counts: HashMap<&str, f64> = HashMap::new();
-    let mut last_at: HashMap<&str, &str> = HashMap::new();
+    let mut last_at: HashMap<&str, &Ts> = HashMap::new();
     for e in cache {
         let agent = e.agent.as_str();
         *counts.entry(agent).or_insert(0.0) += 1.0;
         match last_at.get(agent) {
-            Some(prev) if e.timestamp.as_str() <= *prev => {}
+            Some(prev) if e.timestamp <= **prev => {}
             _ => {
-                last_at.insert(agent, e.timestamp.as_str());
+                last_at.insert(agent, &e.timestamp);
             }
         }
     }
@@ -1554,7 +1554,22 @@ impl AppState {
             timeout_ms: Some(if full { 0.0 } else { 90_000.0 }),
             on_agent_done: Some(self.make_on_agent_done(full, local.clone(), progress.clone())),
         };
+        // Full scans skip files whose (size, mtime) fingerprint is unchanged and
+        // whose previous events are provably what the parser emitted (scan_index).
+        if full {
+            let source = prev.clone();
+            let _ = tokio::task::spawn_blocking(move || crate::util::scan_index::begin(source)).await;
+        }
         agents::scan_all(opts).await;
+        if full {
+            let summary = tokio::task::spawn_blocking(crate::util::scan_index::finish).await;
+            if let Ok((reused, parsed, saved)) = summary {
+                slog(&format!(
+                    "[tokenlab] scan index: {reused} files reused, {parsed} parsed{}",
+                    if saved { "" } else { " (index not saved)" }
+                ));
+            }
+        }
 
         if !full {
             Self::clear_progress_timer(progress);
@@ -2946,7 +2961,7 @@ impl AppState {
                         return false;
                     }
                 }
-                let t = js_date_parse(&e.timestamp);
+                let t = e.timestamp.js_ms();
                 if !t.is_finite() {
                     return false;
                 }
@@ -3147,7 +3162,7 @@ impl AppState {
             let mut keyed: Vec<(f64, UsageEvent)> = list
                 .into_iter()
                 .map(|e| {
-                    let t = js_date_parse(&e.timestamp);
+                    let t = e.timestamp.js_ms();
                     (if t.is_nan() { f64::NEG_INFINITY } else { t }, e)
                 })
                 .collect();

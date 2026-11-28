@@ -81,10 +81,10 @@ fn set_mtime(path: &Path, secs_since_epoch: u64) {
 
 fn light_event(id: &str, agent: AgentId, timestamp: &str, source_path: &str, input: f64, output: f64) -> UsageEvent {
     UsageEvent {
-        id: id.to_string(),
+        id: id.to_string().into(),
         agent,
         model: Some(("m".to_string()).into()),
-        timestamp: timestamp.to_string(),
+        timestamp: timestamp.to_string().into(),
         input_tokens: input,
         output_tokens: output,
         cache_read_tokens: 0.0,
@@ -103,8 +103,8 @@ fn fresh_map(entries: Vec<(&str, Vec<UsageEvent>)>) -> IndexMap<String, Vec<Usag
     entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
-fn ids(events: &[UsageEvent]) -> Vec<&str> {
-    events.iter().map(|e| e.id.as_str()).collect()
+fn ids(events: &[UsageEvent]) -> Vec<String> {
+    events.iter().map(|e| e.id.to_string()).collect()
 }
 
 fn scan_opts(concurrency: usize) -> ScanAllOptions {
@@ -213,7 +213,7 @@ fn light_delta_keeps_a_richer_codex_row_that_lives_outside_the_reread_file() {
         "codex",
         vec![light_event("same", AgentId::Codex, "2026-10-08T00:00:02.000Z", "C:\\sessions\\hot.jsonl", 1.0, 1.0)],
     )]);
-    let prev_ts = vec![js_date_parse(&prev[0].timestamp)];
+    let prev_ts = vec![js_date_parse(&prev[0].timestamp.to_str())];
     let (events, _) = apply_periodic_light_delta(&prev, Some(&prev_ts), &fresh);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].input_tokens, 50.0);
@@ -305,7 +305,7 @@ fn light_delta_applies_a_large_codex_cache_without_collapsing_it() {
     assert_eq!(events.len(), 40_000 - 400 + 10);
     assert!(events.iter().any(|e| e.id == "c1"));
     assert!(!events.iter().any(|e| e.id == "c0"));
-    assert_eq!(events.last().map(|e| e.id.as_str()), Some("fresh9"));
+    assert_eq!(events.last().map(|e| e.id.to_string()), Some("fresh9".to_string()));
     assert!(elapsed < 30_000, "delta took {elapsed}ms");
 }
 

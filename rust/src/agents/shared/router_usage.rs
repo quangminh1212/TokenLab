@@ -181,7 +181,7 @@ fn scope_router_event(ev: &mut REvent, root_scope: &str) {
     if root_scope == "primary" {
         return;
     }
-    ev.event.id = stable_id(&["router-mirror-event", root_scope, &ev.event.id]);
+    ev.event.id = stable_id(&["router-mirror-event", root_scope, &ev.event.id.to_str()]).into();
     if !ev.event.source_path.contains(ROUTER_MIRROR_MARKER) {
         ev.event.source_path = format!("{}{}{}", ev.event.source_path, ROUTER_MIRROR_MARKER, root_scope).into();
     }
@@ -416,10 +416,10 @@ fn row_to_event(row: &Value, agent: AgentId, source: &str, tag: &str) -> Option<
         model_label.as_deref().unwrap_or(""),
     ]);
     let partial = UsageEvent {
-        id,
+        id: id.into(),
         agent,
         model: model_label.map(Into::into),
-        timestamp: ts,
+        timestamp: ts.into(),
         input_tokens: effective_input,
         output_tokens,
         cache_read_tokens,
@@ -799,13 +799,13 @@ fn latest_timestamp(events: &[UsageEvent]) -> Option<String> {
     let mut best: Option<String> = None;
     let mut best_ms = f64::NEG_INFINITY;
     for e in events {
-        let t = js_date_parse(&e.timestamp);
+        let t = e.timestamp.js_ms();
         if !t.is_finite() {
             continue;
         }
         if t >= best_ms {
             best_ms = t;
-            best = Some(e.timestamp.clone());
+            best = Some(e.timestamp.clone().to_string());
         }
     }
     best
@@ -1004,7 +1004,7 @@ fn daily_row_value(id: String, ts: &str, model: &str, provider: Option<&str>, p:
 
 /// Mark a synthesized rollup row (stable id, estimated flag, request count).
 fn finish_rollup(mut e: REvent, id: String, request_count: f64) -> UsageEvent {
-    e.event.id = id;
+    e.event.id = id.into();
     e.event.estimated = Some(true);
     e.event.request_count = Some(request_count);
     e.event
@@ -1199,7 +1199,7 @@ fn reconcile_events_and_daily(event_level: Vec<REvent>, daily_maps: Vec<DailySou
     let mut events_by_day: HashMap<String, Vec<UsageEvent>> = HashMap::new();
     let mut no_day: Vec<UsageEvent> = Vec::new();
     for re in event_level {
-        let day = js_slice_chars(&re.event.timestamp, 10);
+        let day = js_slice_chars(&re.event.timestamp.to_str(), 10);
         if !is_date_key(&day) {
             no_day.push(re.event);
             continue;
@@ -1267,7 +1267,7 @@ fn reconcile_events_and_daily(event_level: Vec<REvent>, daily_maps: Vec<DailySou
 // ---------------------------------------------------------------------------
 
 fn content_fingerprint(e: &UsageEvent) -> String {
-    let ts = js_slice_chars(&e.timestamp, 19);
+    let ts = js_slice_chars(&e.timestamp.to_str(), 19);
     let or0 = |x: f64| if x.is_nan() || x == 0.0 { 0.0 } else { x };
     [
         e.agent.as_str().to_string(),

@@ -8,7 +8,7 @@ use tokenlab::types::{AgentId, PricingStatus, UsageEvent};
 /// Mirror of the TS `evt()` helper: default devin row, overridden by `f`.
 fn evt(id: &str, f: impl FnOnce(&mut UsageEvent)) -> UsageEvent {
     let mut e = UsageEvent {
-        id: id.to_string(),
+        id: id.to_string().into(),
         agent: AgentId::Devin,
         model: None,
         timestamp: "2026-07-15T00:00:00.000Z".into(),
@@ -37,7 +37,7 @@ fn is_est(e: &UsageEvent) -> bool {
 }
 
 fn sorted_ids(rows: &[UsageEvent]) -> Vec<String> {
-    let mut v: Vec<String> = rows.iter().map(|e| e.id.clone()).collect();
+    let mut v: Vec<String> = rows.iter().map(|e| e.id.to_string()).collect();
     v.sort();
     v
 }
@@ -212,7 +212,7 @@ fn collapse_router_daily_events_uses_daily_when_request_rows_overshoot_remote_da
             e.input_tokens = 4_000_000.0;
             e.total_tokens = 4_010_000.0;
             e.estimated_cost = Some(10.0);
-            e.timestamp = format!("2026-07-26T10:{:02}:00.000Z", i);
+            e.timestamp = format!("2026-07-26T10:{:02}:00.000Z", i).into();
         }));
     }
     // 50 * 4.01M = 200.5M > 131M daily -> prefer daily (match VPS dashboard)
@@ -256,7 +256,7 @@ fn collapse_router_daily_events_uses_daily_when_rq_count_inflated_by_zero_token_
             e.output_tokens = 0.0;
             e.total_tokens = 0.0;
             e.estimated_cost = Some(0.0);
-            e.timestamp = format!("2026-07-27T04:30:{:02}.000Z", i);
+            e.timestamp = format!("2026-07-27T04:30:{:02}.000Z", i).into();
         }));
     }
     let merged = collapse_router_daily_events(&all);
@@ -293,7 +293,7 @@ fn collapse_router_daily_events_keeps_multi_rq_detail_and_daily_floor() {
             e.input_tokens = 100_000.0;
             e.total_tokens = 100_050.0;
             e.estimated_cost = Some(1.0);
-            e.timestamp = format!("2026-07-26T10:{:02}:00.000Z", i);
+            e.timestamp = format!("2026-07-26T10:{:02}:00.000Z", i).into();
         }));
     }
     let merged = collapse_router_daily_events(&all);
@@ -328,7 +328,7 @@ fn collapse_router_daily_events_is_idempotent_after_gap_filling() {
             e.input_tokens = 100_000.0;
             e.output_tokens = 800.0;
             e.total_tokens = 100_800.0;
-            e.timestamp = format!("2026-07-26T10:{:02}:00.000Z", i);
+            e.timestamp = format!("2026-07-26T10:{:02}:00.000Z", i).into();
         }));
     }
     let first = collapse_router_daily_events(&all);
@@ -365,7 +365,7 @@ fn collapse_router_daily_events_never_shrinks_when_partial_history_reappears() {
             e.input_tokens = 1_000.0;
             e.total_tokens = 1_010.0;
             e.estimated_cost = Some(0.01);
-            e.timestamp = format!("2026-07-27T08:{:02}:00.000Z", i);
+            e.timestamp = format!("2026-07-27T08:{:02}:00.000Z", i).into();
             e.workspace = Some("provider:vip".into());
         }));
     }

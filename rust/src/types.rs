@@ -11,10 +11,10 @@ use std::fmt;
 /// allocation (model names, source paths, workspaces repeat across ~1M events).
 /// Serializes exactly like `String`.
 #[derive(Clone, Default)]
-pub struct IStr(std::sync::Arc<str>);
+pub struct IStr(std::sync::Arc<Box<str>>);
 
 const SHARDS: usize = 16;
-type Shard = parking_lot::Mutex<std::collections::HashSet<std::sync::Arc<str>>>;
+type Shard = parking_lot::Mutex<std::collections::HashSet<IStr>>;
 
 fn interner() -> &'static [Shard; SHARDS] {
     static I: std::sync::OnceLock<[Shard; SHARDS]> = std::sync::OnceLock::new();
@@ -34,21 +34,26 @@ impl IStr {
     pub fn new(s: &str) -> IStr {
         let mut set = interner()[shard_of(s)].lock();
         if let Some(a) = set.get(s) {
-            return IStr(a.clone());
+            return a.clone();
         }
-        let a: std::sync::Arc<str> = std::sync::Arc::from(s);
+        let a = IStr(std::sync::Arc::new(Box::<str>::from(s)));
         set.insert(a.clone());
-        IStr(a)
+        a
     }
 
     pub fn as_str(&self) -> &str {
+        self.s()
+    }
+
+    #[inline]
+    fn s(&self) -> &str {
         &self.0
     }
 
     /// Drop interner entries no longer referenced by any `IStr`.
     pub fn purge_unused() {
         for sh in interner().iter() {
-            sh.lock().retain(|a| std::sync::Arc::strong_count(a) > 1);
+            sh.lock().retain(|a| std::sync::Arc::strong_count(&a.0) > 1);
         }
     }
 }
@@ -71,23 +76,23 @@ impl std::borrow::Borrow<str> for IStr {
 }
 impl fmt::Debug for IStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&*self.0, f)
+        fmt::Debug::fmt(self.s(), f)
     }
 }
 impl fmt::Display for IStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.s())
     }
 }
 impl PartialEq for IStr {
     fn eq(&self, o: &IStr) -> bool {
-        std::sync::Arc::ptr_eq(&self.0, &o.0) || *self.0 == *o.0
+        std::sync::Arc::ptr_eq(&self.0, &o.0) || self.s() == o.s()
     }
 }
 impl Eq for IStr {}
 impl std::hash::Hash for IStr {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        (*self.0).hash(h)
+        self.s().hash(h)
     }
 }
 impl PartialOrd for IStr {
@@ -97,42 +102,42 @@ impl PartialOrd for IStr {
 }
 impl Ord for IStr {
     fn cmp(&self, o: &IStr) -> std::cmp::Ordering {
-        (*self.0).cmp(&*o.0)
+        self.s().cmp(o.s())
     }
 }
 impl PartialEq<str> for IStr {
     fn eq(&self, o: &str) -> bool {
-        &*self.0 == o
+        self.s() == o
     }
 }
 impl PartialEq<&str> for IStr {
     fn eq(&self, o: &&str) -> bool {
-        &*self.0 == *o
+        self.s() == *o
     }
 }
 impl PartialEq<String> for IStr {
     fn eq(&self, o: &String) -> bool {
-        &*self.0 == o.as_str()
+        self.s() == o.as_str()
     }
 }
 impl PartialEq<std::borrow::Cow<'_, str>> for IStr {
     fn eq(&self, o: &std::borrow::Cow<'_, str>) -> bool {
-        &*self.0 == o.as_ref()
+        self.s() == o.as_ref()
     }
 }
 impl PartialEq<IStr> for str {
     fn eq(&self, o: &IStr) -> bool {
-        self == &*o.0
+        self == o.s()
     }
 }
 impl PartialEq<IStr> for &str {
     fn eq(&self, o: &IStr) -> bool {
-        *self == &*o.0
+        *self == o.s()
     }
 }
 impl PartialEq<IStr> for String {
     fn eq(&self, o: &IStr) -> bool {
-        self.as_str() == &*o.0
+        self.as_str() == o.s()
     }
 }
 impl From<&str> for IStr {
@@ -152,12 +157,12 @@ impl From<String> for IStr {
 }
 impl From<IStr> for String {
     fn from(s: IStr) -> String {
-        s.0.to_string()
+        s.s().to_string()
     }
 }
 impl Serialize for IStr {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.0)
+        s.serialize_str(self.s())
     }
 }
 impl<'de> Deserialize<'de> for IStr {
@@ -412,17 +417,523 @@ impl Default for PricingStatus {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Compact per-event scalars: timestamp and id.
+//
+// ~1M `UsageEvent`s live in RAM, so the two per-event `String`s (24 B inline +
+// a heap block each) are stored as 16-byte enums that re-serialize
+// byte-for-byte to the original string:
+//   * `Ts`: canonical `YYYY-MM-DDTHH:MM:SS.mmmZ` / `...SSZ` -> epoch ms;
+//     anything else (any non-canonical string) keeps the original text.
+//   * `EventId`: 24 lowercase-hex chars -> 12 raw bytes; anything else keeps
+//     the original text.
+// ---------------------------------------------------------------------------
+
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Format `ms` as `YYYY-MM-DDTHH:MM:SS.mmmZ` (`with_ms`) or `...SSZ`.
+fn fmt_ts(ms: i64, with_ms: bool, out: &mut [u8; 24]) -> usize {
+    let days = ms.div_euclid(86_400_000);
+    let rem = ms.rem_euclid(86_400_000);
+    let (y, mo, d) = civil_from_days(days);
+    let (h, mi, s, milli) = (rem / 3_600_000, rem / 60_000 % 60, rem / 1000 % 60, rem % 1000);
+    fn put(o: &mut [u8; 24], at: usize, v: i64, n: usize) {
+        let mut v = v;
+        for i in (0..n).rev() {
+            o[at + i] = b'0' + (v % 10) as u8;
+            v /= 10;
+        }
+    }
+    put(out, 0, y, 4);
+    out[4] = b'-';
+    put(out, 5, mo, 2);
+    out[7] = b'-';
+    put(out, 8, d, 2);
+    out[10] = b'T';
+    put(out, 11, h, 2);
+    out[13] = b':';
+    put(out, 14, mi, 2);
+    out[16] = b':';
+    put(out, 17, s, 2);
+    if with_ms {
+        out[19] = b'.';
+        put(out, 20, milli, 3);
+        out[23] = b'Z';
+        24
+    } else {
+        out[19] = b'Z';
+        20
+    }
+}
+
+fn parse_digits(b: &[u8]) -> Option<i64> {
+    let mut v = 0i64;
+    for &c in b {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        v = v * 10 + (c - b'0') as i64;
+    }
+    Some(v)
+}
+
+/// Parse a canonical timestamp; `Some((ms, has_ms))` only when formatting the
+/// result reproduces `s` exactly.
+fn parse_canonical_ts(s: &str) -> Option<(i64, bool)> {
+    let b = s.as_bytes();
+    let with_ms = match b.len() {
+        24 => true,
+        20 => false,
+        _ => return None,
+    };
+    if b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    if b[b.len() - 1] != b'Z' || (with_ms && b[19] != b'.') {
+        return None;
+    }
+    let (y, mo, d) = (parse_digits(&b[0..4])?, parse_digits(&b[5..7])?, parse_digits(&b[8..10])?);
+    let (h, mi, sec) = (parse_digits(&b[11..13])?, parse_digits(&b[14..16])?, parse_digits(&b[17..19])?);
+    let milli = if with_ms { parse_digits(&b[20..23])? } else { 0 };
+    let ms = (days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + sec) * 1000 + milli;
+    let mut buf = [0u8; 24];
+    let n = fmt_ts(ms, with_ms, &mut buf);
+    if &buf[..n] == b {
+        Some((ms, with_ms))
+    } else {
+        None
+    }
+}
+
+/// Compact ISO-8601 timestamp that serializes back to its original text.
+#[derive(Clone)]
+pub enum Ts {
+    Empty,
+    /// `YYYY-MM-DDTHH:MM:SS.mmmZ`
+    Ms(i64),
+    /// `YYYY-MM-DDTHH:MM:SSZ` (value in ms, always a multiple of 1000)
+    Sec(i64),
+    Raw(Box<Box<str>>),
+}
+
+impl Default for Ts {
+    fn default() -> Self {
+        Ts::Empty
+    }
+}
+
+impl Ts {
+    pub fn new(s: &str) -> Ts {
+        if s.is_empty() {
+            return Ts::Empty;
+        }
+        match parse_canonical_ts(s) {
+            Some((ms, true)) => Ts::Ms(ms),
+            Some((ms, false)) => Ts::Sec(ms),
+            None => Ts::Raw(Box::new(Box::from(s))),
+        }
+    }
+
+    /// Run `f` on the original text without allocating.
+    pub fn with_str<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+        let mut buf = [0u8; 24];
+        match self {
+            Ts::Empty => f(""),
+            Ts::Ms(ms) => {
+                let n = fmt_ts(*ms, true, &mut buf);
+                f(std::str::from_utf8(&buf[..n]).unwrap_or(""))
+            }
+            Ts::Sec(ms) => {
+                let n = fmt_ts(*ms, false, &mut buf);
+                f(std::str::from_utf8(&buf[..n]).unwrap_or(""))
+            }
+            Ts::Raw(s) => f(s),
+        }
+    }
+
+    pub fn to_str(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Ts::Empty => std::borrow::Cow::Borrowed(""),
+            Ts::Raw(s) => std::borrow::Cow::Borrowed(&***s),
+            _ => std::borrow::Cow::Owned(self.with_str(|s| s.to_owned())),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.with_str(|s| s.len())
+    }
+
+    pub fn starts_with(&self, p: &str) -> bool {
+        self.with_str(|s| s.starts_with(p))
+    }
+
+    pub fn ends_with(&self, p: &str) -> bool {
+        self.with_str(|s| s.ends_with(p))
+    }
+
+    pub fn contains(&self, p: &str) -> bool {
+        self.with_str(|s| s.contains(p))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Ts::Empty)
+    }
+
+    /// `js_date_parse(text)` without formatting/parsing for canonical values.
+    pub fn js_ms(&self) -> f64 {
+        match self {
+            Ts::Ms(m) | Ts::Sec(m) => *m as f64,
+            _ => self.with_str(crate::util::js_date_parse),
+        }
+    }
+
+    /// Epoch milliseconds when the text is a canonical timestamp.
+    pub fn epoch_ms(&self) -> Option<i64> {
+        match self {
+            Ts::Ms(m) | Ts::Sec(m) => Some(*m),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for Ts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.with_str(|s| fmt::Debug::fmt(s, f))
+    }
+}
+impl fmt::Display for Ts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.with_str(|s| f.write_str(s))
+    }
+}
+impl PartialEq for Ts {
+    fn eq(&self, o: &Ts) -> bool {
+        match (self, o) {
+            (Ts::Empty, Ts::Empty) => true,
+            (Ts::Ms(a), Ts::Ms(b)) | (Ts::Sec(a), Ts::Sec(b)) => a == b,
+            (Ts::Raw(a), Ts::Raw(b)) => a == b,
+            // Different variants always carry different text (canonical forms
+            // differ in length, Raw is never canonical).
+            _ => false,
+        }
+    }
+}
+impl Eq for Ts {}
+impl std::hash::Hash for Ts {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        // Consistent with `Eq`: variants never compare equal across kinds.
+        match self {
+            Ts::Empty => 0u8.hash(h),
+            Ts::Ms(v) => (1u8, *v).hash(h),
+            Ts::Sec(v) => (2u8, *v).hash(h),
+            Ts::Raw(s) => (3u8, &***s).hash(h),
+        }
+    }
+}
+impl PartialOrd for Ts {
+    fn partial_cmp(&self, o: &Ts) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for Ts {
+    /// Identical to comparing the original strings.
+    fn cmp(&self, o: &Ts) -> std::cmp::Ordering {
+        match (self, o) {
+            // Fixed-width canonical forms: numeric order == lexicographic.
+            (Ts::Ms(a), Ts::Ms(b)) | (Ts::Sec(a), Ts::Sec(b)) => a.cmp(b),
+            _ => self.with_str(|a| o.with_str(|b| a.cmp(b))),
+        }
+    }
+}
+impl PartialEq<str> for Ts {
+    fn eq(&self, o: &str) -> bool {
+        self.with_str(|s| s == o)
+    }
+}
+impl PartialEq<&str> for Ts {
+    fn eq(&self, o: &&str) -> bool {
+        self.with_str(|s| s == *o)
+    }
+}
+impl PartialEq<String> for Ts {
+    fn eq(&self, o: &String) -> bool {
+        self.with_str(|s| s == o.as_str())
+    }
+}
+impl From<&str> for Ts {
+    fn from(s: &str) -> Ts {
+        Ts::new(s)
+    }
+}
+impl From<&String> for Ts {
+    fn from(s: &String) -> Ts {
+        Ts::new(s)
+    }
+}
+impl From<String> for Ts {
+    fn from(s: String) -> Ts {
+        Ts::new(&s)
+    }
+}
+impl From<&Ts> for String {
+    fn from(t: &Ts) -> String {
+        t.to_str().into_owned()
+    }
+}
+impl From<Ts> for String {
+    fn from(t: Ts) -> String {
+        t.to_str().into_owned()
+    }
+}
+impl Serialize for Ts {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.with_str(|t| s.serialize_str(t))
+    }
+}
+impl<'de> Deserialize<'de> for Ts {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Ts;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a timestamp string")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Ts, E> {
+                Ok(Ts::new(v))
+            }
+        }
+        d.deserialize_str(V)
+    }
+}
+
+/// Compact event id: 24 lowercase-hex chars are stored as 12 bytes.
+#[derive(Clone)]
+pub enum EventId {
+    Empty,
+    Hex([u8; 12]),
+    Raw(Box<Box<str>>),
+}
+
+impl Default for EventId {
+    fn default() -> Self {
+        EventId::Empty
+    }
+}
+
+const HEXCH: &[u8; 16] = b"0123456789abcdef";
+
+impl EventId {
+    pub fn new(s: &str) -> EventId {
+        if s.is_empty() {
+            return EventId::Empty;
+        }
+        let b = s.as_bytes();
+        if b.len() == 24 {
+            fn nib(c: u8) -> Option<u8> {
+                match c {
+                    b'0'..=b'9' => Some(c - b'0'),
+                    b'a'..=b'f' => Some(c - b'a' + 10),
+                    _ => None,
+                }
+            }
+            let mut out = [0u8; 12];
+            let mut ok = true;
+            for i in 0..12 {
+                match (nib(b[2 * i]), nib(b[2 * i + 1])) {
+                    (Some(h), Some(l)) => out[i] = h << 4 | l,
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                return EventId::Hex(out);
+            }
+        }
+        EventId::Raw(Box::new(Box::from(s)))
+    }
+
+    pub fn with_str<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+        match self {
+            EventId::Empty => f(""),
+            EventId::Hex(h) => {
+                let mut buf = [0u8; 24];
+                for (i, b) in h.iter().enumerate() {
+                    buf[2 * i] = HEXCH[(b >> 4) as usize];
+                    buf[2 * i + 1] = HEXCH[(b & 15) as usize];
+                }
+                f(std::str::from_utf8(&buf).unwrap_or(""))
+            }
+            EventId::Raw(s) => f(s),
+        }
+    }
+
+    pub fn to_str(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            EventId::Empty => std::borrow::Cow::Borrowed(""),
+            EventId::Raw(s) => std::borrow::Cow::Borrowed(&***s),
+            _ => std::borrow::Cow::Owned(self.with_str(|s| s.to_owned())),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.with_str(|s| s.len())
+    }
+
+    pub fn starts_with(&self, p: &str) -> bool {
+        self.with_str(|s| s.starts_with(p))
+    }
+
+    pub fn ends_with(&self, p: &str) -> bool {
+        self.with_str(|s| s.ends_with(p))
+    }
+
+    pub fn contains(&self, p: &str) -> bool {
+        self.with_str(|s| s.contains(p))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, EventId::Empty)
+    }
+}
+
+impl fmt::Debug for EventId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.with_str(|s| fmt::Debug::fmt(s, f))
+    }
+}
+impl fmt::Display for EventId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.with_str(|s| f.write_str(s))
+    }
+}
+impl PartialEq for EventId {
+    fn eq(&self, o: &EventId) -> bool {
+        match (self, o) {
+            (EventId::Empty, EventId::Empty) => true,
+            (EventId::Hex(a), EventId::Hex(b)) => a == b,
+            (EventId::Raw(a), EventId::Raw(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+impl Eq for EventId {}
+impl std::hash::Hash for EventId {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        match self {
+            EventId::Empty => 0u8.hash(h),
+            EventId::Hex(b) => (1u8, b).hash(h),
+            EventId::Raw(s) => (2u8, &***s).hash(h),
+        }
+    }
+}
+impl PartialOrd for EventId {
+    fn partial_cmp(&self, o: &EventId) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for EventId {
+    fn cmp(&self, o: &EventId) -> std::cmp::Ordering {
+        match (self, o) {
+            (EventId::Hex(a), EventId::Hex(b)) => a.cmp(b),
+            _ => self.with_str(|a| o.with_str(|b| a.cmp(b))),
+        }
+    }
+}
+impl PartialEq<str> for EventId {
+    fn eq(&self, o: &str) -> bool {
+        self.with_str(|s| s == o)
+    }
+}
+impl PartialEq<&str> for EventId {
+    fn eq(&self, o: &&str) -> bool {
+        self.with_str(|s| s == *o)
+    }
+}
+impl PartialEq<String> for EventId {
+    fn eq(&self, o: &String) -> bool {
+        self.with_str(|s| s == o.as_str())
+    }
+}
+impl From<&str> for EventId {
+    fn from(s: &str) -> EventId {
+        EventId::new(s)
+    }
+}
+impl From<&String> for EventId {
+    fn from(s: &String) -> EventId {
+        EventId::new(s)
+    }
+}
+impl From<String> for EventId {
+    fn from(s: String) -> EventId {
+        EventId::new(&s)
+    }
+}
+impl From<&EventId> for String {
+    fn from(t: &EventId) -> String {
+        t.to_str().into_owned()
+    }
+}
+impl From<EventId> for String {
+    fn from(t: EventId) -> String {
+        t.to_str().into_owned()
+    }
+}
+impl Serialize for EventId {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.with_str(|t| s.serialize_str(t))
+    }
+}
+impl<'de> Deserialize<'de> for EventId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = EventId;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an id string")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<EventId, E> {
+                Ok(EventId::new(v))
+            }
+        }
+        d.deserialize_str(V)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageEvent {
     #[serde(default)]
-    pub id: String,
+    pub id: EventId,
     #[serde(default)]
     pub agent: AgentId,
     #[serde(default)]
     pub model: Option<IStr>,
     #[serde(default)]
-    pub timestamp: String,
+    pub timestamp: Ts,
     #[serde(default, with = "jsnum")]
     pub input_tokens: f64,
     #[serde(default, with = "jsnum")]
@@ -472,10 +983,10 @@ pub struct UsageEvent {
 impl Default for UsageEvent {
     fn default() -> Self {
         UsageEvent {
-            id: String::new(),
+            id: EventId::Empty,
             agent: AgentId::Custom,
             model: None,
-            timestamp: String::new(),
+            timestamp: Ts::Empty,
             input_tokens: 0.0,
             output_tokens: 0.0,
             cache_read_tokens: 0.0,

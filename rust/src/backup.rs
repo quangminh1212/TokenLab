@@ -19,7 +19,7 @@ use crate::openrouter_models::{
     get_open_router_fetched_at, get_open_router_models_sync, openrouter_cache_path,
     replace_open_router_cache, OpenRouterModelEntry,
 };
-use crate::types::{jsnum, AgentId, GroupBy, PricingStatus, TokenTotals, UsageEvent};
+use crate::types::{jsnum, AgentId, EventId, GroupBy, PricingStatus, TokenTotals, UsageEvent};
 use crate::util::{
     app_data_dir, env_nonempty, filter_by_period, js_date_parse, js_num_to_string, js_number_from_str,
     js_round, js_to_fixed, js_trim, normalize_agent_id, normalize_model_name, now_ms, path_exists,
@@ -1131,7 +1131,7 @@ pub fn merge_events_by_id_prefer_richer_owned(lists: Vec<Vec<UsageEvent>>) -> Ve
             buf.clear();
             buf.push_str(&usage_machine_scope(&e));
             buf.push('|');
-            buf.push_str(&e.id);
+            buf.push_str(&e.id.to_str());
             let key = key128(&buf);
             match index.get(&key) {
                 None => {
@@ -1231,9 +1231,9 @@ pub fn prune_stale_source_events(previous: &[UsageEvent], fresh: &[UsageEvent]) 
         return previous.to_vec();
     }
     let mut fresh_keys: HashSet<String> = HashSet::new();
-    let mut fresh_ids: HashSet<&str> = HashSet::new();
+    let mut fresh_ids: HashSet<&EventId> = HashSet::new();
     for e in fresh {
-        fresh_ids.insert(e.id.as_str());
+        fresh_ids.insert(&e.id);
         let source = normalized_source_path(&e.source_path);
         if source.is_empty() {
             continue;
@@ -1246,7 +1246,7 @@ pub fn prune_stale_source_events(previous: &[UsageEvent], fresh: &[UsageEvent]) 
     previous
         .iter()
         .filter(|e| {
-            if fresh_ids.contains(e.id.as_str()) {
+            if fresh_ids.contains(&e.id) {
                 return true;
             }
             let source = normalized_source_path(&e.source_path);
@@ -1269,9 +1269,9 @@ pub fn prune_stale_source_events_owned(mut previous: Vec<UsageEvent>, fresh: &[U
         return previous;
     }
     let mut fresh_keys: HashSet<String> = HashSet::new();
-    let mut fresh_ids: HashSet<&str> = HashSet::new();
+    let mut fresh_ids: HashSet<&EventId> = HashSet::new();
     for e in fresh {
-        fresh_ids.insert(e.id.as_str());
+        fresh_ids.insert(&e.id);
         let source = normalized_source_path(&e.source_path);
         if source.is_empty() {
             continue;
@@ -1282,7 +1282,7 @@ pub fn prune_stale_source_events_owned(mut previous: Vec<UsageEvent>, fresh: &[U
         return previous;
     }
     previous.retain(|e| {
-        if fresh_ids.contains(e.id.as_str()) {
+        if fresh_ids.contains(&e.id) {
             return true;
         }
         let source = normalized_source_path(&e.source_path);
@@ -1640,7 +1640,7 @@ fn gap_fill_router_day_from_dailies(dailies: &[UsageEvent], requests: &[UsageEve
             continue;
         }
 
-        let day = slice_prefix(&d.timestamp, 10);
+        let day = slice_prefix(&d.timestamp.to_str(), 10);
         let gap_id = format!(
             "gapfill:{}:{}:{}:{}",
             d.agent.as_str(),
@@ -1649,7 +1649,7 @@ fn gap_fill_router_day_from_dailies(dailies: &[UsageEvent], requests: &[UsageEve
             if ws.is_empty() { "nows" } else { ws.as_str() }
         );
         let mut ne = d.clone();
-        ne.id = gap_id;
+        ne.id = gap_id.into();
         ne.estimated = Some(true);
         ne.input_tokens = rem_in;
         ne.output_tokens = rem_out;
@@ -1717,7 +1717,7 @@ pub fn collapse_router_daily_events_owned(mut events: Vec<UsageEvent>) -> Vec<Us
         let router_day = {
             let e = &events[r];
             if is_router_usage_agent_id(e.agent) {
-                let day = slice_prefix(&e.timestamp, 10);
+                let day = slice_prefix(&e.timestamp.to_str(), 10);
                 if is_ymd(&day) {
                     Some(day)
                 } else {
@@ -1785,7 +1785,7 @@ pub fn collapse_router_daily_events_owned(mut events: Vec<UsageEvent>) -> Vec<Us
             continue;
         }
         // Gap-fill rows are already the exact remainder of the daily floor.
-        if dailies.iter().all(|e| e.id.starts_with("gapfill:")) {
+        if dailies.iter().all(|e| e.id.to_str().starts_with("gapfill:")) {
             out.extend(requests.iter().cloned());
             out.extend(dailies.iter().cloned());
             continue;
@@ -2070,7 +2070,7 @@ fn bucketize_owned(list: Vec<UsageEvent>) -> IndexMap<String, MonoBucket> {
     let mut key = String::new();
     for mut e in list {
         let agent = normalize_agent_id(Some(e.agent.as_str()));
-        let day = slice_prefix(&e.timestamp, 10);
+        let day = slice_prefix(&e.timestamp.to_str(), 10);
         let scope = usage_machine_scope(&e);
         key.clear();
         if is_ymd(&day) {
@@ -2233,14 +2233,14 @@ pub fn enforce_monotonic_agent_days_owned(prev: Vec<UsageEvent>, next: Vec<Usage
                 let p_wins = std::ptr::eq(better(&p, &n), &p);
                 let (winner, loser) = if p_wins { (p, n) } else { (n, p) };
                 // Carry cacheReported provenance onto the retained rows.
-                let reported_by_id: HashSet<&str> = loser
+                let reported_by_id: HashSet<&EventId> = loser
                     .events
                     .iter()
                     .filter(|ev| ev.cache_reported == Some(true))
-                    .map(|ev| ev.id.as_str())
+                    .map(|ev| &ev.id)
                     .collect();
                 for mut event in winner.events {
-                    if event.cache_reported != Some(true) && reported_by_id.contains(event.id.as_str()) {
+                    if event.cache_reported != Some(true) && reported_by_id.contains(&event.id) {
                         event.cache_reported = Some(true);
                     }
                     out.push(event);
@@ -2268,7 +2268,7 @@ pub fn drop_previous_litellm_daily_rollups_owned(mut previous: Vec<UsageEvent>, 
             return None;
         }
         let source = norm_path(&event.source_path);
-        let day = slice_prefix(&event.timestamp, 10);
+        let day = slice_prefix(&event.timestamp.to_str(), 10);
         if source.is_empty() || !is_ymd(&day) {
             return None;
         }
@@ -2359,7 +2359,7 @@ pub fn collapse_exact_usage_duplicates_owned(mut events: Vec<UsageEvent>) -> Vec
             if is_router_usage_agent_id(e.agent) {
                 buf.push_str(&router_mirror_scope(e));
                 buf.push('|');
-                buf.push_str(&slice_prefix(&e.timestamp, 19));
+                buf.push_str(&slice_prefix(&e.timestamp.to_str(), 19));
                 buf.push('|');
                 buf.push_str(e.model.as_deref().unwrap_or(""));
                 buf.push('|');
@@ -2369,7 +2369,7 @@ pub fn collapse_exact_usage_duplicates_owned(mut events: Vec<UsageEvent>) -> Vec
                 buf.push('|');
                 buf.push_str(e.workspace.as_deref().unwrap_or(""));
             } else {
-                buf.push_str(&e.timestamp);
+                buf.push_str(&e.timestamp.to_str());
                 buf.push('|');
                 buf.push_str(e.model.as_deref().unwrap_or(""));
                 buf.push('|');
@@ -2591,10 +2591,10 @@ fn sanitize_event_value(item: &Value) -> Option<UsageEvent> {
         None
     };
     Some(UsageEvent {
-        id,
+        id: id.into(),
         agent,
         model: model.map(Into::into),
-        timestamp,
+        timestamp: timestamp.into(),
         input_tokens,
         output_tokens,
         cache_read_tokens,
@@ -3245,7 +3245,7 @@ fn fingerprint_iter<'a>(events: impl Iterator<Item = &'a UsageEvent>) -> String 
         count += 1;
         tokens += event_token_weight(e);
         cost += cost_of(e);
-        let t = js_date_parse(&e.timestamp);
+        let t = e.timestamp.js_ms();
         if t.is_finite() && t > max_ts {
             max_ts = t;
         }
@@ -4354,10 +4354,10 @@ fn rollup_acc_to_event(row: &RollupAcc, machine_id: &str) -> UsageEvent {
         _ => "unknown",
     };
     UsageEvent {
-        id: stable_id(&[prefix, mid.as_str(), row.bucket.as_str(), row.agent.as_str(), model_key]),
+        id: stable_id(&[prefix, mid.as_str(), row.bucket.as_str(), row.agent.as_str(), model_key]).into(),
         agent: row.agent,
         model: row.model.clone().map(Into::into),
-        timestamp: to_iso_string(row.last_ts).unwrap_or_default(),
+        timestamp: to_iso_string(row.last_ts).unwrap_or_default().into(),
         input_tokens: row.input_tokens,
         output_tokens: row.output_tokens,
         cache_read_tokens: row.cache_read_tokens,
@@ -4393,7 +4393,7 @@ pub fn build_gist_restore_rollups(events: &[UsageEvent], now_ms_val: f64, machin
         if is_gist_rollup_event(e) {
             continue;
         }
-        let ts = js_date_parse(&e.timestamp);
+        let ts = e.timestamp.js_ms();
         if ts.is_nan() {
             continue;
         }
@@ -4444,7 +4444,7 @@ pub fn build_daily_agent_model_rollups(events: &[UsageEvent]) -> Vec<UsageEvent>
 
 /// day|agent|model key for collapse / anti-double-count (model case-insensitive)
 pub fn gist_coverage_key(e: &UsageEvent) -> String {
-    let day = slice_prefix(&e.timestamp, 10);
+    let day = slice_prefix(&e.timestamp.to_str(), 10);
     let model = normalize_model_name(e.model.as_deref()).unwrap_or_default().to_lowercase();
     format!("{}|{}|{}", day, e.agent.as_str(), model)
 }
@@ -5410,10 +5410,10 @@ mod tests {
 
     fn ev(id: &str, ts: &str, model: &str, tokens: f64, cost: f64) -> UsageEvent {
         UsageEvent {
-            id: id.to_string(),
+            id: id.to_string().into(),
             agent: AgentId::ClaudeCode,
             model: Some(model.to_string().into()),
-            timestamp: ts.to_string(),
+            timestamp: ts.to_string().into(),
             input_tokens: tokens,
             total_tokens: tokens,
             estimated_cost: Some(cost),

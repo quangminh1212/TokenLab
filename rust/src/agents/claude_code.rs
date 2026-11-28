@@ -317,13 +317,13 @@ pub async fn parse_claude_code(roots: &[String]) -> anyhow::Result<Vec<UsageEven
         };
         let model = candidate.model.clone();
         events.push(apply_pricing(UsageEvent {
-            id: stable_id(&["claude-code", candidate.request_key.as_str()]),
+            id: stable_id(&["claude-code", candidate.request_key.as_str()]).into(),
             agent: AgentId::ClaudeCode,
             model: model.map(Into::into),
             timestamp: candidate
                 .timestamp
                 .clone()
-                .unwrap_or_else(|| to_iso_string(now_ms()).unwrap_or_default()),
+                .unwrap_or_else(|| to_iso_string(now_ms()).unwrap_or_default()).into(),
             input_tokens,
             output_tokens: b.output_tokens,
             cache_read_tokens: b.cache_read_tokens,

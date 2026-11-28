@@ -56,13 +56,16 @@ pub async fn parse_gemini(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
         .await;
 
         for file in files {
+            // Unchanged sessions are served from the previous scan (scan_index).
+            let mut file_events = crate::util::scan_index::events_for_file(AgentId::Gemini, &file, || async {
+            let mut events: Vec<UsageEvent> = Vec::new();
             let text = match read_text(&file).await {
                 Some(t) if !t.is_empty() => t,
-                _ => continue,
+                _ => return Ok(events),
             };
             let data: Value = match serde_json::from_str(&text) {
                 Ok(d) => d,
-                Err(_) => continue,
+                Err(_) => return Ok(events),
             };
             let single;
             let messages: &[Value] = match &data {
@@ -119,10 +122,10 @@ pub async fn parse_gemini(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
                         idx.to_string().as_str(),
                         js_num_to_string(input).as_str(),
                         js_num_to_string(output).as_str(),
-                    ]),
+                    ]).into(),
                     agent: AgentId::Gemini,
                     model: model.map(Into::into),
-                    timestamp: ts,
+                    timestamp: ts.into(),
                     input_tokens: input,
                     output_tokens: output,
                     cache_read_tokens: cache_read,
@@ -133,6 +136,10 @@ pub async fn parse_gemini(roots: &[String]) -> anyhow::Result<Vec<UsageEvent>> {
                     ..Default::default()
                 }));
             }
+            Ok::<_, anyhow::Error>(events)
+            })
+            .await?;
+            events.append(&mut file_events);
         }
     }
 
